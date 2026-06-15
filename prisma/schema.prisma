@@ -1,0 +1,351 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== AUTH ====================
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  googleId     String?  @unique
+  appleId      String?  @unique
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  player    Player?
+  referee   Referee?
+  manager   Manager[]
+  notifications Notification[]
+}
+
+// ==================== TEAMS ====================
+
+model Team {
+  id        String   @id @default(uuid())
+  name      String
+  abbr      String   @db.VarChar(3)
+  color     String   @default("#C9A140")
+  logoUrl   String?
+  division  String   @default("Divize A")
+  createdAt DateTime @default(now())
+
+  managers    Manager[]
+  players     Player[]
+  homeMatches Match[]   @relation("HomeTeam")
+  awayMatches Match[]   @relation("AwayTeam")
+  inviteCodes InviteCode[]
+  payments    TeamPayment?
+}
+
+model Manager {
+  id        String   @id @default(uuid())
+  userId    String
+  teamId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, teamId])
+}
+
+model InviteCode {
+  id        String    @id @default(uuid())
+  code      String    @unique
+  teamId    String
+  usedCount Int       @default(0)
+  expiresAt DateTime?
+  createdAt DateTime  @default(now())
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+}
+
+// ==================== PLAYERS ====================
+
+model Player {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  teamId      String
+  firstName   String
+  lastName    String
+  jersey      Int
+  position    String   @default("Útočník")
+  birthdate   DateTime?
+  phone       String?
+  photoUrl    String?
+  licensed      Boolean  @default(false)
+  isSupervisor  Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team   Team @relation(fields: [teamId], references: [id])
+
+  goals        MatchEvent[] @relation("GoalScorer")
+  assists      MatchEvent[] @relation("GoalAssist")
+  penalties    MatchEvent[] @relation("PenaltyPlayer")
+  lineupSlots  LineupPlayer[]
+  mvpVotes     PostmatchData[] @relation("MvpPlayer")
+  payment      PlayerPayment?
+}
+
+// ==================== REFEREES ====================
+
+model Referee {
+  id          String         @id @default(uuid())
+  userId      String         @unique
+  firstName   String
+  lastName    String
+  phone       String?
+  photoUrl    String?
+  level       RefereeLevel   @default(C)
+  status      RefereeStatus  @default(PENDING)
+  birthNo     String?
+  address     String?
+  city        String?
+  zip         String?
+  bankAccount String?
+  bankCode    String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  matches Match[]
+  ratings RefRating[]
+}
+
+enum RefereeLevel {
+  A
+  B
+  C
+}
+
+enum RefereeStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+// ==================== MATCHES ====================
+
+model Match {
+  id         String      @id @default(uuid())
+  homeTeamId String
+  awayTeamId String
+  refereeId  String?
+  competition String     @default("FSL Liga")
+  division   String      @default("Divize A")
+  round      Int?
+  date       DateTime
+  venue      String?
+  homeScore  Int         @default(0)
+  awayScore  Int         @default(0)
+  status     MatchStatus @default(UPCOMING)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+
+  homeTeam  Team     @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam  Team     @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  referee   Referee? @relation(fields: [refereeId], references: [id])
+
+  events       MatchEvent[]
+  lineups      LineupSubmission[]
+  postmatches  PostmatchData[]
+  refRatings   RefRating[]
+}
+
+enum MatchStatus {
+  UPCOMING
+  LIVE
+  DONE
+  CANCELLED
+}
+
+model MatchEvent {
+  id         String         @id @default(uuid())
+  matchId    String
+  type       MatchEventType
+  minute     Int
+  period     Int            @default(1)
+  teamId     String?
+  scorerId   String?
+  assistId   String?
+  penaltyId  String?
+  penaltyType String?
+  createdAt  DateTime       @default(now())
+
+  match   Match   @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  scorer  Player? @relation("GoalScorer", fields: [scorerId], references: [id])
+  assist  Player? @relation("GoalAssist", fields: [assistId], references: [id])
+  penalty Player? @relation("PenaltyPlayer", fields: [penaltyId], references: [id])
+}
+
+enum MatchEventType {
+  GOAL
+  PENALTY
+  SHOOTOUT_GOAL
+  SHOOTOUT_MISS
+  PERIOD_END
+  MATCH_END
+}
+
+model LineupSubmission {
+  id        String   @id @default(uuid())
+  matchId   String
+  teamId    String
+  confirmed Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  match   Match         @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  players LineupPlayer[]
+
+  @@unique([matchId, teamId])
+}
+
+model LineupPlayer {
+  id           String  @id @default(uuid())
+  lineupId     String
+  playerId     String
+  isGoalkeeper Boolean @default(false)
+  isCaptain    Boolean @default(false)
+  jerseyOverride Int?
+
+  lineup LineupSubmission @relation(fields: [lineupId], references: [id], onDelete: Cascade)
+  player Player           @relation(fields: [playerId], references: [id])
+
+  @@unique([lineupId, playerId])
+}
+
+model PostmatchData {
+  id           String   @id @default(uuid())
+  matchId      String
+  teamId       String
+  refRating    Int?
+  refNote      String?
+  opponentMvpId String?
+  actionVideoUrl String?
+  actionDesc   String?
+  submitted    Boolean  @default(false)
+  submittedAt  DateTime?
+  createdAt    DateTime @default(now())
+
+  match       Match   @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  opponentMvp Player? @relation("MvpPlayer", fields: [opponentMvpId], references: [id])
+
+  @@unique([matchId, teamId])
+}
+
+model RefRating {
+  id        String   @id @default(uuid())
+  matchId   String
+  refereeId String
+  teamId    String
+  rating    Int
+  createdAt DateTime @default(now())
+
+  match   Match   @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  referee Referee @relation(fields: [refereeId], references: [id])
+
+  @@unique([matchId, teamId])
+}
+
+// ==================== PAYMENTS ====================
+
+model TeamPayment {
+  id             String        @id @default(uuid())
+  teamId         String        @unique
+  season         String        @default("2025/26")
+  amount         Int           @default(10000)
+  status         PaymentStatus @default(PENDING)
+  paidAt         DateTime?
+  method         String?
+  stripeId       String?
+  variableSymbol String?       @unique
+
+  team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
+}
+
+model PlayerPayment {
+  id             String        @id @default(uuid())
+  playerId       String        @unique
+  season         String        @default("2025/26")
+  licFee         Int           @default(300)
+  licStatus      PaymentStatus @default(PENDING)
+  licPaidAt      DateTime?
+  licMethod      String?
+  superLic       Boolean       @default(false)
+  superFee       Int           @default(300)
+  superStatus    PaymentStatus @default(PENDING)
+  superPaidAt    DateTime?
+  stripeId       String?
+  variableSymbol String?       @unique
+
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+}
+
+// Záznamy o zpracovaných bankovních transakcích (zabraňuje duplicitám)
+model BankTransaction {
+  id             String   @id @default(uuid())
+  transactionId  String   @unique  // ID transakce z Fio API
+  amount         Int
+  variableSymbol String?
+  senderName     String?
+  senderAccount  String?
+  date           DateTime
+  matched        Boolean  @default(false)
+  createdAt      DateTime @default(now())
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  OVERDUE
+  WAIVED
+}
+
+// ==================== NOTIFICATIONS ====================
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  body      String
+  screen    String?
+  read      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ==================== SUPERVISOR REQUESTS ====================
+
+model SupervisorRequest {
+  id        String        @id @default(uuid())
+  type      RequestType
+  teamId    String?
+  matchId   String?
+  body      String
+  note      String?
+  status    RequestStatus @default(PENDING)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+}
+
+enum RequestType {
+  MATCH_TRANSCRIPT
+  PLAYER_DISPUTE
+  LICENSE_ISSUE
+  OTHER
+}
+
+enum RequestStatus {
+  PENDING
+  IN_PROGRESS
+  APPROVED
+  REJECTED
+}
