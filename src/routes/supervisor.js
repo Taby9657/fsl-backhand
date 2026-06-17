@@ -1,6 +1,7 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const { requireSupervisor } = require('../middleware/auth');
+const { createNotification, createNotifications } = require('./notifications');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -141,15 +142,9 @@ router.post('/matches/:id/assign-referee', async (req, res, next) => {
       },
     });
 
-    // Notifikace rozhodčímu
-    await prisma.notification.create({
-      data: {
-        userId: ref.userId,
-        title:  'Nové nasazení',
-        body:   `Byl(a) jste nasazen(a) na zápas ${match.homeTeam.abbr} vs ${match.awayTeam.abbr}`,
-        screen: 'ref-detail',
-      },
-    });
+    // Notifikace rozhodčímu (+ push)
+    await createNotification(ref.userId, 'Nové nasazení',
+      `Byl(a) jste nasazen(a) na zápas ${match.homeTeam.abbr} vs ${match.awayTeam.abbr}`, 'ref-detail');
 
     res.json(match);
   } catch (err) { next(err); }
@@ -206,10 +201,9 @@ router.post('/notify', async (req, res, next) => {
       return res.status(400).json({ error: 'Chybí userIds, title nebo body' });
     }
 
-    const notifications = await prisma.notification.createMany({
-      data: userIds.map(userId => ({ userId, title, body, screen: screen || null })),
-    });
-    res.json({ sent: notifications.count });
+    const items = userIds.map(userId => ({ userId, title, body, screen: screen || null }));
+    await createNotifications(items);
+    res.json({ sent: items.length });
   } catch (err) { next(err); }
 });
 

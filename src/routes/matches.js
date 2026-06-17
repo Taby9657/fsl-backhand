@@ -1,6 +1,7 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const { requireAuth, requireSupervisor } = require('../middleware/auth');
+const { createNotifications } = require('./notifications');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -97,6 +98,56 @@ router.put('/:id', requireSupervisor, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// POST /matches/:id/start – rozhodčí zahájí zápas (UPCOMING → LIVE)
+router.post('/:id/start', requireAuth, async (req, res, next) => {
+  try {
+    const match = await prisma.match.findUnique({ where: { id: req.params.id } });
+    if (!match) return res.status(404).json({ error: 'Zápas nenalezen' });
+    const referee = await prisma.referee.findUnique({ where: { userId: req.user.id } });
+    const isReferee = referee && match.refereeId === referee.id;
+    const isSup = req.user?.player?.isSupervisor || process.env.SUPERVISOR_USER_IDS?.split(',').includes(req.user.id);
+    if (!isReferee && !isSup) return res.status(403).json({ error: 'Nemáte oprávnění' });
+
+    const updated = await prisma.match.update({
+      where: { id: req.params.id },
+      data:  { status: 'LIVE' },
+    });
+    res.json(updated);
+  } catch (err) { next(err); }
+});
+
+// POST /matches/:id/end – rozhodčí ukončí zápas (LIVE → PLAYED)
+router.post('/:id/end', requireAuth, async (req, res, next) => {
+  try {
+    const match = await prisma.match.findUnique({ where: { id: req.params.id } });
+    if (!match) return res.status(404).json({ error: 'Zápas nenalezen' });
+    const referee = await prisma.referee.findUnique({ where: { userId: req.user.id } });
+    const isReferee = referee && match.refereeId === referee.id;
+    const isSup = req.user?.player?.isSupervisor || process.env.SUPERVISOR_USER_IDS?.split(',').includes(req.user.id);
+    if (!isReferee && !isSup) return res.status(403).json({ error: 'Nemáte oprávnění' });
+
+    const updated = await prisma.match.update({
+      where: { id: req.params.id },
+      data:  { status: 'PLAYED' },
+      include: { homeTeam: true, awayTeam: true },
+    });
+
+    // Notifikace oběma vedoucím
+    const managerIds = await prisma.manager.findMany({
+      where: { teamId: { in: [match.homeTeamId, match.awayTeamId] } },
+      select: { userId: true },
+    });
+    await createNotifications(managerIds.map(m => ({
+      userId: m.userId,
+      title:  'Zápas ukončen',
+      body:   `${updated.homeTeam.abbr} ${updated.homeScore}:${updated.awayScore} ${updated.awayTeam.abbr} – vyplňte prosím postmatch formulář`,
+      screen: 'postmatch',
+    })));
+
+    res.json(updated);
+  } catch (err) { next(err); }
+});
+
 // ==================== UDÁLOSTI (GÓLY, TRESTY) ====================
 
 // POST /matches/:id/events – přidání události (gól/trest – vedoucí nebo supervisor)
@@ -106,10 +157,12 @@ router.post('/:id/events', requireAuth, async (req, res, next) => {
     const match = await prisma.match.findUnique({ where: { id: req.params.id } });
     if (!match) return res.status(404).json({ error: 'Zápas nenalezen' });
 
-    const isManager   = req.user.manager?.some(m => m.teamId === match.homeTeamId || m.teamId === match.awayTeamId);
+    const isManager    = req.user.manager?.some(m => m.teamId === match.homeTeamId || m.teamId === match.awayTeamId);
     const isSupervisor = req.user?.player?.isSupervisor ||
       process.env.SUPERVISOR_USER_IDS?.split(',').includes(req.user.id);
-    if (!isManager && !isSupervisor) return res.status(403).json({ error: 'Nemáte oprávnění' });
+    const referee      = await prisma.referee.findUnique({ where: { userId: req.user.id } });
+    const isReferee    = referee && match.refereeId === referee.id;
+    if (!isManager && !isSupervisor && !isReferee) return res.status(403).json({ error: 'Nemáte oprávnění' });
 
     const event = await prisma.matchEvent.create({
       data: {
@@ -148,10 +201,12 @@ router.delete('/:id/events/:eventId', requireAuth, async (req, res, next) => {
     if (!event || event.matchId !== req.params.id) return res.status(404).json({ error: 'Událost nenalezena' });
 
     const match = await prisma.match.findUnique({ where: { id: req.params.id } });
-    const isManager   = req.user.manager?.some(m => m.teamId === match.homeTeamId || m.teamId === match.awayTeamId);
+    const isManager    = req.user.manager?.some(m => m.teamId === match.homeTeamId || m.teamId === match.awayTeamId);
     const isSupervisor = req.user?.player?.isSupervisor ||
       process.env.SUPERVISOR_USER_IDS?.split(',').includes(req.user.id);
-    if (!isManager && !isSupervisor) return res.status(403).json({ error: 'Nemáte oprávnění' });
+    const referee2     = await prisma.referee.findUnique({ where: { userId: req.user.id } });
+    const isReferee2   = referee2 && match.refereeId === referee2.id;
+    if (!isManager && !isSupervisor && !isReferee2) return res.status(403).json({ error: 'Nemáte oprávnění' });
 
     await prisma.matchEvent.delete({ where: { id: req.params.eventId } });
 

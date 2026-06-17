@@ -93,10 +93,31 @@ router.get('/me', requireAuth, (req, res) => {
   res.json({ user: sanitizeUser(req.user) });
 });
 
+// ==================== PUSH TOKEN ====================
+// PUT /auth/push-token – uloží Expo push token pro přihlášeného uživatele
+router.put('/push-token', requireAuth, async (req, res, next) => {
+  try {
+    const { token } = req.body;
+    if (!token) return res.status(400).json({ error: 'Chybí token' });
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data:  { pushToken: token },
+    });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 // ==================== LOGOUT ====================
 // JWT je stateless – stačí smazat token na klientovi
-router.post('/logout', requireAuth, (req, res) => {
-  res.json({ message: 'Odhlášení úspěšné' });
+router.post('/logout', requireAuth, async (req, res, next) => {
+  try {
+    // Odstraň push token aby uživatel nedostával notifikace po odhlášení
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data:  { pushToken: null },
+    });
+    res.json({ message: 'Odhlášení úspěšné' });
+  } catch (err) { next(err); }
 });
 
 // Odstraní citlivé interní fieldy
