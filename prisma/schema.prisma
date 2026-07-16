@@ -71,7 +71,7 @@ model InviteCode {
 model Player {
   id          String   @id @default(uuid())
   userId      String   @unique
-  teamId      String
+  teamId      String?
   firstName   String
   lastName    String
   jersey      Int
@@ -84,8 +84,8 @@ model Player {
   createdAt     DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  team   Team @relation(fields: [teamId], references: [id])
+  user   User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  team   Team? @relation(fields: [teamId], references: [id])
 
   goals        MatchEvent[] @relation("GoalScorer")
   assists      MatchEvent[] @relation("GoalAssist")
