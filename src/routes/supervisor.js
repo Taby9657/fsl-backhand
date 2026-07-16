@@ -159,7 +159,7 @@ router.get('/teams', async (req, res, next) => {
 // POST /supervisor/teams – vytvoření týmu
 router.post('/teams', async (req, res, next) => {
   try {
-    const { name, abbr, division, color, venue } = req.body;
+    const { name, abbr, division, color, venue, conference } = req.body;
     if (!name || !abbr || !division) {
       return res.status(400).json({ error: 'Chybí name, abbr nebo division' });
     }
@@ -173,10 +173,11 @@ router.post('/teams', async (req, res, next) => {
     const team = await prisma.team.create({
       data: {
         name,
-        abbr:     abbr.toUpperCase(),
+        abbr:       abbr.toUpperCase(),
         division,
-        color:    color ?? '#C9A140',
-        venue:    venue ?? null,
+        color:      color ?? '#C9A140',
+        venue:      venue || null,
+        conference: conference || null,
       },
       include: { _count: { select: { players: true } } },
     });
@@ -187,13 +188,14 @@ router.post('/teams', async (req, res, next) => {
 // PUT /supervisor/teams/:id – úprava týmu
 router.put('/teams/:id', async (req, res, next) => {
   try {
-    const { name, abbr, division, color, venue } = req.body;
+    const { name, abbr, division, color, venue, conference } = req.body;
     const data = {};
-    if (name)     data.name     = name;
-    if (abbr)     data.abbr     = abbr.toUpperCase();
-    if (division) data.division = division;
-    if (color)    data.color    = color;
-    if (venue !== undefined) data.venue = venue;
+    if (name)                data.name       = name;
+    if (abbr)                data.abbr       = abbr.toUpperCase();
+    if (division)            data.division   = division;
+    if (color)               data.color      = color;
+    if (venue !== undefined) data.venue      = venue || null;
+    if (conference !== undefined) data.conference = conference || null;
 
     const team = await prisma.team.update({
       where: { id: req.params.id },
@@ -231,11 +233,22 @@ router.delete('/teams/:id', async (req, res, next) => {
 router.get('/divisions', async (req, res, next) => {
   try {
     const divisions = await prisma.team.groupBy({
-      by: ['division'],
+      by: ['division', 'conference'],
       _count: { division: true },
       orderBy: { division: 'asc' },
     });
     res.json(divisions);
+  } catch (err) { next(err); }
+});
+
+// GET /supervisor/conferences – strom Konference → Divize → Týmy
+router.get('/conferences', async (req, res, next) => {
+  try {
+    const teams = await prisma.team.findMany({
+      select: { id: true, name: true, abbr: true, color: true, division: true, conference: true, venue: true },
+      orderBy: [{ conference: 'asc' }, { division: 'asc' }, { name: 'asc' }],
+    });
+    res.json(teams);
   } catch (err) { next(err); }
 });
 
@@ -279,13 +292,23 @@ function generateRoundRobin(teamIds, doubleRoundRobin = false) {
 }
 
 // POST /supervisor/fixtures/preview – náhled (bez uložení)
+// Podporuje: division | conference | teamIds[]
 router.post('/fixtures/preview', async (req, res, next) => {
   try {
-    const { division, doubleRoundRobin = false } = req.body;
-    if (!division) return res.status(400).json({ error: 'Chybí division' });
+    const { division, conference, teamIds, doubleRoundRobin = false } = req.body;
 
-    const teams = await prisma.team.findMany({ where: { division } });
-    if (teams.length < 2) return res.status(400).json({ error: 'Divize potřebuje alespoň 2 týmy' });
+    let teams;
+    if (Array.isArray(teamIds) && teamIds.length >= 2) {
+      teams = await prisma.team.findMany({ where: { id: { in: teamIds } } });
+    } else if (conference) {
+      teams = await prisma.team.findMany({ where: { conference } });
+    } else if (division) {
+      teams = await prisma.team.findMany({ where: { division } });
+    } else {
+      return res.status(400).json({ error: 'Zadej division, conference nebo teamIds' });
+    }
+
+    if (teams.length < 2) return res.status(400).json({ error: 'Potřeba alespoň 2 týmy' });
 
     const fixtures = generateRoundRobin(teams.map(t => t.id), doubleRoundRobin);
     const rounds = Math.max(...fixtures.map(f => f.round));
@@ -304,34 +327,52 @@ router.post('/fixtures/preview', async (req, res, next) => {
 });
 
 // POST /supervisor/fixtures/generate – vytvoření zápasů v DB
+// Podporuje: division | conference | teamIds[]
 router.post('/fixtures/generate', async (req, res, next) => {
   try {
     const {
-      division,
-      competition    = 'FSL Liga',
-      startDate,           // ISO string prvního kola
+      division, conference, teamIds,
+      competition      = 'FSL Liga',
+      startDate,
       roundIntervalDays = 7,
-      defaultTime    = '18:00',   // HH:MM
-      defaultVenue   = null,
+      defaultTime      = '18:00',
+      defaultVenue     = null,
       doubleRoundRobin = false,
-      deleteExisting = false,
+      deleteExisting   = false,
     } = req.body;
 
-    if (!division || !startDate) {
-      return res.status(400).json({ error: 'Chybí division nebo startDate' });
+    if (!startDate) return res.status(400).json({ error: 'Chybí startDate' });
+
+    let teams;
+    let matchDivision = division ?? 'Mix';
+    let matchConference = conference ?? null;
+
+    if (Array.isArray(teamIds) && teamIds.length >= 2) {
+      teams = await prisma.team.findMany({ where: { id: { in: teamIds } } });
+      matchDivision = division || 'Mix';
+    } else if (conference) {
+      teams = await prisma.team.findMany({ where: { conference } });
+      matchConference = conference;
+      matchDivision = division || conference;
+    } else if (division) {
+      teams = await prisma.team.findMany({ where: { division } });
+    } else {
+      return res.status(400).json({ error: 'Zadej division, conference nebo teamIds' });
     }
 
-    const teams = await prisma.team.findMany({ where: { division } });
-    if (teams.length < 2) return res.status(400).json({ error: 'Divize potřebuje alespoň 2 týmy' });
+    if (teams.length < 2) return res.status(400).json({ error: 'Potřeba alespoň 2 týmy' });
 
-    // Smazat existující naplánované zápasy divize
     if (deleteExisting) {
-      await prisma.match.deleteMany({ where: { division, status: 'UPCOMING' } });
+      if (Array.isArray(teamIds) && teamIds.length >= 2) {
+        await prisma.match.deleteMany({
+          where: { status: 'UPCOMING', OR: [{ homeTeamId: { in: teamIds } }, { awayTeamId: { in: teamIds } }] },
+        });
+      } else {
+        await prisma.match.deleteMany({ where: { division: matchDivision, status: 'UPCOMING' } });
+      }
     }
 
     const fixtures = generateRoundRobin(teams.map(t => t.id), doubleRoundRobin);
-
-    // Sestavit data zápasů
     const [hour, minute] = defaultTime.split(':').map(Number);
     const base = new Date(startDate);
 
@@ -343,7 +384,7 @@ router.post('/fixtures/generate', async (req, res, next) => {
         homeTeamId:  f.homeTeamId,
         awayTeamId:  f.awayTeamId,
         round:       f.round,
-        division,
+        division:    matchDivision,
         competition,
         date:        d,
         venue:       defaultVenue,
@@ -356,7 +397,8 @@ router.post('/fixtures/generate', async (req, res, next) => {
     res.json({
       created:  matchData.length,
       rounds:   Math.max(...fixtures.map(f => f.round)),
-      division,
+      division: matchDivision,
+      conference: matchConference,
     });
   } catch (err) { next(err); }
 });

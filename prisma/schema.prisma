@@ -30,10 +30,11 @@ model Team {
   id        String   @id @default(uuid())
   name      String
   abbr      String   @db.VarChar(3)
-  color     String   @default("#C9A140")
-  logoUrl   String?
-  venue     String?
-  division  String   @default("Divize A")
+  color      String   @default("#C9A140")
+  logoUrl    String?
+  venue      String?
+  division   String   @default("Divize A")
+  conference String?
   createdAt DateTime @default(now())
 
   managers    Manager[]
