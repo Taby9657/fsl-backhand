@@ -82,16 +82,27 @@ router.post('/', requireSupervisor, async (req, res, next) => {
 // PUT /matches/:id – úprava zápasu (supervisor)
 router.put('/:id', requireSupervisor, async (req, res, next) => {
   try {
-    const { refereeId, date, venue, status, homeScore, awayScore } = req.body;
+    const { refereeId, date, venue, status, homeScore, awayScore,
+            homeTeamId, awayTeamId, round, division, competition } = req.body;
     const match = await prisma.match.update({
       where: { id: req.params.id },
       data: {
-        ...(refereeId  !== undefined && { refereeId }),
-        ...(date       && { date: new Date(date) }),
-        ...(venue      && { venue }),
-        ...(status     && { status }),
-        ...(homeScore  !== undefined && { homeScore: parseInt(homeScore) }),
-        ...(awayScore  !== undefined && { awayScore: parseInt(awayScore) }),
+        ...(refereeId    !== undefined && { refereeId: refereeId || null }),
+        ...(date         && { date: new Date(date) }),
+        ...(venue        !== undefined && { venue: venue || null }),
+        ...(status       && { status }),
+        ...(homeScore    !== undefined && { homeScore: parseInt(homeScore) }),
+        ...(awayScore    !== undefined && { awayScore: parseInt(awayScore) }),
+        ...(homeTeamId   && { homeTeamId }),
+        ...(awayTeamId   && { awayTeamId }),
+        ...(round        !== undefined && { round: round ? parseInt(round) : null }),
+        ...(division     && { division }),
+        ...(competition  && { competition }),
+      },
+      include: {
+        homeTeam: { select: { id: true, name: true, abbr: true, color: true } },
+        awayTeam: { select: { id: true, name: true, abbr: true, color: true } },
+        referee:  { select: { id: true, firstName: true, lastName: true } },
       },
     });
     res.json(match);

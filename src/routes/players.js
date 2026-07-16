@@ -96,6 +96,67 @@ router.put('/:id', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// POST /players/:id/leave-team – hráč opustí tým
+router.post('/:id/leave-team', requireAuth, async (req, res, next) => {
+  try {
+    const player = await prisma.player.findUnique({ where: { id: req.params.id } });
+    if (!player) return res.status(404).json({ error: 'Hráč nenalezen' });
+    if (player.userId !== req.user.id) return res.status(403).json({ error: 'Nemáte oprávnění' });
+    if (!player.teamId) return res.status(400).json({ error: 'Hráč není v žádném týmu' });
+
+    const updated = await prisma.player.update({
+      where: { id: req.params.id },
+      data: { teamId: null },
+    });
+    res.json({ ok: true, player: updated });
+  } catch (err) { next(err); }
+});
+
+// DELETE /players/:id/team/:teamId – manažer odebere hráče z týmu
+router.delete('/:id/team/:teamId', requireAuth, async (req, res, next) => {
+  try {
+    const player = await prisma.player.findUnique({ where: { id: req.params.id } });
+    if (!player) return res.status(404).json({ error: 'Hráč nenalezen' });
+
+    const isManager = req.user.manager?.some(m => m.teamId === req.params.teamId);
+    const isSup = req.user?.player?.isSupervisor;
+    if (!isManager && !isSup) return res.status(403).json({ error: 'Nemáte oprávnění' });
+    if (player.teamId !== req.params.teamId) return res.status(400).json({ error: 'Hráč není v tomto týmu' });
+
+    await prisma.player.update({
+      where: { id: req.params.id },
+      data: { teamId: null },
+    });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// GET /players/my-stats – osobní statistiky přihlášeného hráče
+router.get('/my/stats', requireAuth, async (req, res, next) => {
+  try {
+    const player = await prisma.player.findUnique({
+      where: { userId: req.user.id },
+      include: {
+        goals:    { include: { match: { select: { id: true, date: true, homeTeam: { select: { abbr: true } }, awayTeam: { select: { abbr: true } } } } } },
+        assists:  { include: { match: { select: { id: true, date: true, homeTeam: { select: { abbr: true } }, awayTeam: { select: { abbr: true } } } } } },
+        penalties:{ include: { match: { select: { id: true, date: true, homeTeam: { select: { abbr: true } }, awayTeam: { select: { abbr: true } } } } } },
+        mvpVotes: true,
+      },
+    });
+    if (!player) return res.status(404).json({ error: 'Hráčský profil nenalezen' });
+
+    res.json({
+      goals:     player.goals.length,
+      assists:   player.assists.length,
+      points:    player.goals.length + player.assists.length,
+      penalties: player.penalties.length,
+      mvpVotes:  player.mvpVotes.length,
+      recentGoals:    player.goals.slice(-5).reverse(),
+      recentAssists:  player.assists.slice(-5).reverse(),
+    });
+  } catch (err) { next(err); }
+});
+
 // POST /players/:id/photo – nahrání fotky
 router.post('/:id/photo', requireAuth, uploadPhoto.single('photo'), async (req, res, next) => {
   try {

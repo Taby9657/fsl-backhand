@@ -6,7 +6,7 @@ const { issueToken, requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
 const prisma = new PrismaClient();
-const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const googleClient = new OAuth2Client();
 
 // ==================== GOOGLE OAUTH ====================
 // Frontend pošle idToken z Google Sign-In SDK
@@ -15,10 +15,20 @@ router.post('/google', async (req, res, next) => {
     const { idToken } = req.body;
     if (!idToken) return res.status(400).json({ error: 'Chybí idToken' });
 
-    // Ověření tokenu u Googlu
+    // Přijmeme token od libovolného ze tří klientů (iOS, Android, Web)
+    const validAudiences = [
+      process.env.GOOGLE_WEB_CLIENT_ID,
+      process.env.GOOGLE_IOS_CLIENT_ID,
+      process.env.GOOGLE_ANDROID_CLIENT_ID,
+    ].filter(Boolean);
+
+    if (validAudiences.length === 0) {
+      return res.status(500).json({ error: 'Google OAuth není nakonfigurován' });
+    }
+
     const ticket = await googleClient.verifyIdToken({
       idToken,
-      audience: process.env.GOOGLE_CLIENT_ID,
+      audience: validAudiences,
     });
     const { sub: googleId, email, name, picture } = ticket.getPayload();
 
