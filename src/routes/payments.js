@@ -9,17 +9,27 @@ const prisma = new PrismaClient();
 
 // ==================== PŘEHLED PLATEB ====================
 
-// GET /payments/me – moje platby (hráč)
+// GET /payments/me – moje platby (hráč + vedoucí)
 router.get('/me', requireAuth, async (req, res, next) => {
   try {
     const player = await prisma.player.findUnique({
       where: { userId: req.user.id },
       include: { payment: true, team: { include: { payments: true } } },
     });
-    if (!player) return res.status(404).json({ error: 'Hráčský profil nenalezen' });
+
+    // Platba týmu – přes hráče, nebo přes vedoucího (pokud hráč nemá profil)
+    let teamPayment = player?.team?.payments ?? null;
+    if (!teamPayment && req.user.manager?.length > 0) {
+      const team = await prisma.team.findFirst({
+        where:   { managers: { some: { userId: req.user.id } } },
+        include: { payments: true },
+      });
+      teamPayment = team?.payments ?? null;
+    }
+
     res.json({
-      playerPayment: player.payment,
-      teamPayment:   player.team?.payments,
+      playerPayment: player?.payment ?? null,
+      teamPayment,
     });
   } catch (err) { next(err); }
 });
