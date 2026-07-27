@@ -128,7 +128,7 @@ router.post('/:id/start', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// POST /matches/:id/end – rozhodčí ukončí zápas (LIVE → PLAYED)
+// POST /matches/:id/end – rozhodčí ukončí zápas (LIVE → DONE)
 router.post('/:id/end', requireAuth, async (req, res, next) => {
   try {
     const match = await prisma.match.findUnique({ where: { id: req.params.id } });
@@ -140,7 +140,7 @@ router.post('/:id/end', requireAuth, async (req, res, next) => {
 
     const updated = await prisma.match.update({
       where: { id: req.params.id },
-      data:  { status: 'PLAYED' },
+      data:  { status: 'DONE' },
       include: { homeTeam: true, awayTeam: true },
     });
 
