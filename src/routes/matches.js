@@ -9,13 +9,14 @@ const prisma = new PrismaClient();
 // GET /matches – seznam zápasů
 router.get('/', async (req, res, next) => {
   try {
-    const { status, teamId, refereeId, division, limit = '50', offset = '0' } = req.query;
+    const { status, teamId, homeTeamId, refereeId, division, limit = '50', offset = '0' } = req.query;
     const matches = await prisma.match.findMany({
       where: {
-        ...(status    && { status }),
-        ...(division  && { division }),
-        ...(refereeId && { refereeId }),
-        ...(teamId    && { OR: [{ homeTeamId: teamId }, { awayTeamId: teamId }] }),
+        ...(status     && { status }),
+        ...(division   && { division }),
+        ...(refereeId  && { refereeId }),
+        ...(homeTeamId && { homeTeamId }),
+        ...(teamId     && { OR: [{ homeTeamId: teamId }, { awayTeamId: teamId }] }),
       },
       include: {
         homeTeam: { select: { id: true, name: true, abbr: true, color: true, logoUrl: true } },
