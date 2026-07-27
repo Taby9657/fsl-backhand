@@ -143,6 +143,7 @@ model Match {
   refereeId  String?
   competition String     @default("FSL Liga")
   division   String      @default("Divize A")
+  season     String      @default("2025/26")
   round      Int?
   date       DateTime
   venue      String?

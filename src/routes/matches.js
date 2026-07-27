@@ -59,7 +59,7 @@ router.get('/:id', async (req, res, next) => {
 // POST /matches – vytvoření zápasu (pouze supervisor)
 router.post('/', requireSupervisor, async (req, res, next) => {
   try {
-    const { homeTeamId, awayTeamId, refereeId, date, venue, competition, division, round } = req.body;
+    const { homeTeamId, awayTeamId, refereeId, date, venue, competition, division, season, round } = req.body;
     if (!homeTeamId || !awayTeamId || !date) {
       return res.status(400).json({ error: 'Chybí povinné údaje (domácí, hosté, datum)' });
     }
@@ -72,6 +72,7 @@ router.post('/', requireSupervisor, async (req, res, next) => {
         venue:       venue || null,
         competition: competition || 'FSL Liga',
         division:    division   || 'Divize A',
+        season:      season     || '2025/26',
         round:       round      ? parseInt(round) : null,
       },
       include: { homeTeam: true, awayTeam: true, referee: true },
@@ -84,7 +85,7 @@ router.post('/', requireSupervisor, async (req, res, next) => {
 router.put('/:id', requireSupervisor, async (req, res, next) => {
   try {
     const { refereeId, date, venue, status, homeScore, awayScore,
-            homeTeamId, awayTeamId, round, division, competition } = req.body;
+            homeTeamId, awayTeamId, round, division, competition, season } = req.body;
     const match = await prisma.match.update({
       where: { id: req.params.id },
       data: {
@@ -99,6 +100,7 @@ router.put('/:id', requireSupervisor, async (req, res, next) => {
         ...(round        !== undefined && { round: round ? parseInt(round) : null }),
         ...(division     && { division }),
         ...(competition  && { competition }),
+        ...(season       && { season }),
       },
       include: {
         homeTeam: { select: { id: true, name: true, abbr: true, color: true } },

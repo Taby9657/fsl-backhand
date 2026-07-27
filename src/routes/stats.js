@@ -4,17 +4,32 @@ const { PrismaClient } = require('@prisma/client');
 const router = express.Router();
 const prisma = new PrismaClient();
 
+// GET /stats/seasons – seznam dostupných ročníků
+router.get('/seasons', async (req, res, next) => {
+  try {
+    const rows = await prisma.match.groupBy({
+      by: ['season'],
+      orderBy: { season: 'desc' },
+    });
+    res.json(rows.map(r => r.season));
+  } catch (err) { next(err); }
+});
+
 // GET /stats/scorers – tabulka střelců
 router.get('/scorers', async (req, res, next) => {
   try {
     const { division, season, limit = '20' } = req.query;
+    const matchWhere = {
+      ...(division && { division }),
+      ...(season   && { season }),
+    };
 
     const goals = await prisma.matchEvent.groupBy({
       by: ['scorerId'],
       where: {
         type: 'GOAL',
         scorerId: { not: null },
-        ...(division && { match: { division } }),
+        ...(Object.keys(matchWhere).length && { match: matchWhere }),
       },
       _count: { scorerId: true },
       orderBy: { _count: { scorerId: 'desc' } },
@@ -41,14 +56,18 @@ router.get('/scorers', async (req, res, next) => {
 // GET /stats/assisters – tabulka nahrávačů
 router.get('/assisters', async (req, res, next) => {
   try {
-    const { division, limit = '20' } = req.query;
+    const { division, season, limit = '20' } = req.query;
+    const matchWhere = {
+      ...(division && { division }),
+      ...(season   && { season }),
+    };
 
     const assists = await prisma.matchEvent.groupBy({
       by: ['assistId'],
       where: {
         type: 'GOAL',
         assistId: { not: null },
-        ...(division && { match: { division } }),
+        ...(Object.keys(matchWhere).length && { match: matchWhere }),
       },
       _count: { assistId: true },
       orderBy: { _count: { assistId: 'desc' } },
@@ -74,9 +93,9 @@ router.get('/assisters', async (req, res, next) => {
 // GET /stats/points – kombinovaná tabulka (góly + asistence)
 router.get('/points', async (req, res, next) => {
   try {
-    const { division, limit = '20' } = req.query;
-
-    const matchWhere = division ? { match: { division } } : {};
+    const { division, season, limit = '20' } = req.query;
+    const mw = { ...(division && { division }), ...(season && { season }) };
+    const matchWhere = Object.keys(mw).length ? { match: mw } : {};
 
     const [goals, assists] = await Promise.all([
       prisma.matchEvent.groupBy({
@@ -126,14 +145,18 @@ router.get('/points', async (req, res, next) => {
 // GET /stats/mvp – tabulka MVP (počet hlasování od soupeřů)
 router.get('/mvp', async (req, res, next) => {
   try {
-    const { division, limit = '20' } = req.query;
+    const { division, season, limit = '20' } = req.query;
+    const matchWhere = {
+      ...(division && { division }),
+      ...(season   && { season }),
+    };
 
     const votes = await prisma.postmatchData.groupBy({
       by: ['opponentMvpId'],
       where: {
         opponentMvpId: { not: null },
         submitted: true,
-        ...(division && { match: { division } }),
+        ...(Object.keys(matchWhere).length && { match: matchWhere }),
       },
       _count: { opponentMvpId: true },
       orderBy: { _count: { opponentMvpId: 'desc' } },
@@ -159,10 +182,10 @@ router.get('/mvp', async (req, res, next) => {
 // GET /stats/table – tabulka (výhry/remízy/prohry/skóre)
 router.get('/table', async (req, res, next) => {
   try {
-    const { division = 'Divize A' } = req.query;
+    const { division = 'Divize A', season } = req.query;
 
     const matches = await prisma.match.findMany({
-      where: { division, status: 'DONE' },
+      where: { division, status: 'DONE', ...(season && { season }) },
       select: { homeTeamId: true, awayTeamId: true, homeScore: true, awayScore: true },
     });
 

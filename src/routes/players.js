@@ -25,13 +25,16 @@ router.get('/', async (req, res, next) => {
 // GET /players/my/stats – osobní statistiky (MUSÍ být před /:id !)
 router.get('/my/stats', requireAuth, async (req, res, next) => {
   try {
+    const { season } = req.query;
+    const matchWhere = season ? { match: { season } } : undefined;
+
     const player = await prisma.player.findUnique({
       where: { userId: req.user.id },
       include: {
-        goals:    { include: { match: { select: { id: true, date: true, homeTeam: { select: { abbr: true } }, awayTeam: { select: { abbr: true } } } } } },
-        assists:  { include: { match: { select: { id: true, date: true, homeTeam: { select: { abbr: true } }, awayTeam: { select: { abbr: true } } } } } },
-        penalties:{ include: { match: { select: { id: true, date: true, homeTeam: { select: { abbr: true } }, awayTeam: { select: { abbr: true } } } } } },
-        mvpVotes: true,
+        goals:    { where: matchWhere, include: { match: { select: { id: true, date: true, season: true, homeTeam: { select: { abbr: true } }, awayTeam: { select: { abbr: true } } } } } },
+        assists:  { where: matchWhere, include: { match: { select: { id: true, date: true, season: true, homeTeam: { select: { abbr: true } }, awayTeam: { select: { abbr: true } } } } } },
+        penalties:{ where: matchWhere, include: { match: { select: { id: true, date: true, season: true, homeTeam: { select: { abbr: true } }, awayTeam: { select: { abbr: true } } } } } },
+        mvpVotes: { where: season ? { match: { season } } : undefined },
       },
     });
     if (!player) return res.status(404).json({ error: 'Hráčský profil nenalezen' });
