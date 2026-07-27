@@ -1,8 +1,8 @@
 const express  = require('express');
 const multer   = require('multer');
-const { v2: cloudinary } = require('cloudinary');
 const { PrismaClient } = require('@prisma/client');
 const { requireAuth, requireSupervisor } = require('../middleware/auth');
+const { cloudinary } = require('../utils/fileUpload'); // sdílená nakonfigurovaná instance
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -11,12 +11,6 @@ const prisma = new PrismaClient();
 const memUpload = multer({
   storage: multer.memoryStorage(),
   limits:  { fileSize: 200 * 1024 * 1024 }, // 200 MB
-});
-
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key:    process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
 // GET /highlights – veřejný endpoint, posledních 10 highlights

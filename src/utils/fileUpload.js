@@ -37,4 +37,5 @@ module.exports = {
   uploadLogo:        makeUploader('logos'),
   uploadAction:      makeVideoUploader('action-videos'),
   uploadHighlightVideo: makeVideoUploader('highlights'),
+  cloudinary,  // sdílená nakonfigurovaná instance
 };
