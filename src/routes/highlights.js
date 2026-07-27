@@ -1,10 +1,23 @@
-const express = require('express');
+const express  = require('express');
+const multer   = require('multer');
+const { v2: cloudinary } = require('cloudinary');
 const { PrismaClient } = require('@prisma/client');
 const { requireAuth, requireSupervisor } = require('../middleware/auth');
-const { uploadHighlightVideo } = require('../utils/fileUpload');
 
 const router = express.Router();
 const prisma = new PrismaClient();
+
+// Memory storage – přijme soubor do bufferu, pak SDK upload stream do Cloudinary
+const memUpload = multer({
+  storage: multer.memoryStorage(),
+  limits:  { fileSize: 200 * 1024 * 1024 }, // 200 MB
+});
+
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key:    process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 // GET /highlights – veřejný endpoint, posledních 10 highlights
 router.get('/', async (req, res, next) => {
@@ -55,13 +68,22 @@ router.put('/:id', requireAuth, requireSupervisor, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// POST /highlights/:id/video – nahrání videa na Cloudinary
-router.post('/:id/video', requireAuth, requireSupervisor, uploadHighlightVideo.single('video'), async (req, res, next) => {
+// POST /highlights/:id/video – přímý upload videa přes Cloudinary SDK
+router.post('/:id/video', requireAuth, requireSupervisor, memUpload.single('video'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Nebyl nahrán žádný soubor' });
+
+    const result = await new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        { folder: 'fsl/highlights', resource_type: 'video' },
+        (err, r) => { if (err) reject(err); else resolve(r); }
+      );
+      stream.end(req.file.buffer);
+    });
+
     const highlight = await prisma.roundHighlight.update({
       where: { id: req.params.id },
-      data:  { videoUrl: req.file.path },
+      data:  { videoUrl: result.secure_url },
     });
     res.json(highlight);
   } catch (err) { next(err); }
