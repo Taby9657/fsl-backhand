@@ -1,6 +1,7 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const { requireAuth, requireSupervisor } = require('../middleware/auth');
+const { uploadHighlightVideo } = require('../utils/fileUpload');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -49,6 +50,18 @@ router.put('/:id', requireAuth, requireSupervisor, async (req, res, next) => {
     const highlight = await prisma.roundHighlight.update({
       where: { id: req.params.id },
       data,
+    });
+    res.json(highlight);
+  } catch (err) { next(err); }
+});
+
+// POST /highlights/:id/video – nahrání videa na Cloudinary
+router.post('/:id/video', requireAuth, requireSupervisor, uploadHighlightVideo.single('video'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Nebyl nahrán žádný soubor' });
+    const highlight = await prisma.roundHighlight.update({
+      where: { id: req.params.id },
+      data:  { videoUrl: req.file.path },
     });
     res.json(highlight);
   } catch (err) { next(err); }

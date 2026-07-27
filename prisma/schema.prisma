@@ -333,6 +333,7 @@ model RoundHighlight {
   title     String
   body      String
   imageUrl  String?
+  videoUrl  String?
   pinned    Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

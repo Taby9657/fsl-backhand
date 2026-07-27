@@ -20,8 +20,21 @@ function makeUploader(folder, allowedFormats = ['jpg', 'jpeg', 'png', 'webp']) {
   return multer({ storage, limits: { fileSize: 5 * 1024 * 1024 } }); // 5 MB
 }
 
+function makeVideoUploader(folder) {
+  const storage = new CloudinaryStorage({
+    cloudinary,
+    params: {
+      folder:        `fsl/${folder}`,
+      resource_type: 'video',
+      allowed_formats: ['mp4', 'mov', 'avi', 'webm'],
+    },
+  });
+  return multer({ storage, limits: { fileSize: 200 * 1024 * 1024 } }); // 200 MB
+}
+
 module.exports = {
-  uploadPhoto:  makeUploader('photos'),
-  uploadLogo:   makeUploader('logos'),
-  uploadAction: makeUploader('action-videos', ['mp4', 'mov', 'avi']),
+  uploadPhoto:       makeUploader('photos'),
+  uploadLogo:        makeUploader('logos'),
+  uploadAction:      makeVideoUploader('action-videos'),
+  uploadHighlightVideo: makeVideoUploader('highlights'),
 };
