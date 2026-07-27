@@ -221,28 +221,52 @@ router.get('/table', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// GET /stats/referees – průměrné hodnocení rozhodčích
+// GET /stats/referees – průměrné hodnocení rozhodčích (ze PostmatchData)
 router.get('/referees', async (req, res, next) => {
   try {
-    const ratings = await prisma.refRating.groupBy({
-      by: ['refereeId'],
-      _avg: { rating: true },
-      _count: { rating: true },
+    const { season } = req.query;
+
+    // Hodnocení jsou uložena v PostmatchData.refRating, nikoli v RefRating modelu
+    const postmatches = await prisma.postmatchData.findMany({
+      where: {
+        submitted:  true,
+        refRating:  { not: null },
+        match: {
+          refereeId: { not: null },
+          ...(season && { season }),
+        },
+      },
+      select: {
+        refRating: true,
+        match: { select: { refereeId: true } },
+      },
     });
 
-    const refIds = ratings.map(r => r.refereeId);
+    // Agregace podle rozhodčího
+    const ratingMap = {};
+    for (const pm of postmatches) {
+      const refId = pm.match.refereeId;
+      if (!refId) continue;
+      if (!ratingMap[refId]) ratingMap[refId] = { sum: 0, count: 0 };
+      ratingMap[refId].sum   += pm.refRating;
+      ratingMap[refId].count += 1;
+    }
+
+    const refIds = Object.keys(ratingMap);
+    if (refIds.length === 0) return res.json([]);
+
     const refs = await prisma.referee.findMany({
       where: { id: { in: refIds }, status: 'APPROVED' },
       select: { id: true, firstName: true, lastName: true, photoUrl: true, level: true },
     });
     const refLookup = Object.fromEntries(refs.map(r => [r.id, r]));
 
-    const result = ratings
-      .filter(r => refLookup[r.refereeId])
-      .map(r => ({
-        referee: refLookup[r.refereeId],
-        avg:     Math.round(r._avg.rating * 10) / 10,
-        count:   r._count.rating,
+    const result = refIds
+      .filter(id => refLookup[id])
+      .map(id => ({
+        referee: refLookup[id],
+        avg:     Math.round((ratingMap[id].sum / ratingMap[id].count) * 10) / 10,
+        count:   ratingMap[id].count,
       }))
       .sort((a, b) => b.avg - a.avg);
 

@@ -69,7 +69,7 @@ router.post('/:id/video', requireAuth, requireSupervisor, memUpload.single('vide
 
     const result = await new Promise((resolve, reject) => {
       const stream = cloudinary.uploader.upload_stream(
-        { folder: 'fsl/highlights', resource_type: 'video' },
+        { folder: 'fsl/highlights', resource_type: 'auto' },
         (err, r) => { if (err) reject(err); else resolve(r); }
       );
       stream.end(req.file.buffer);

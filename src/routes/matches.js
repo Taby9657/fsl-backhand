@@ -24,7 +24,7 @@ router.get('/', async (req, res, next) => {
         referee:  { select: { id: true, firstName: true, lastName: true, level: true } },
         _count:   { select: { events: true } },
       },
-      orderBy: { date: 'desc' },
+      orderBy: { date: status === 'UPCOMING' ? 'asc' : 'desc' },
       take:  parseInt(limit),
       skip:  parseInt(offset),
     });
