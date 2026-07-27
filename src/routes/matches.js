@@ -45,7 +45,7 @@ router.get('/:id', async (req, res, next) => {
           orderBy: [{ period: 'asc' }, { minute: 'asc' }],
         },
         lineups: {
-          include: { players: { include: { player: true } } },
+          include: { players: { include: { player: { include: { payment: true } } } } },
         },
         postmatches: { include: { opponentMvp: true } },
       },
@@ -241,9 +241,33 @@ router.delete('/:id/events/:eventId', requireAuth, async (req, res, next) => {
 // PUT /matches/:id/lineup/:teamId – odeslání soupisk
 router.put('/:id/lineup/:teamId', requireAuth, async (req, res, next) => {
   try {
-    const { players } = req.body; // [{ playerId, isGoalkeeper, isCaptain, jerseyOverride }]
+    const { players, force } = req.body; // force=true přeskočí kontrolu licencí
     const isManager = req.user.manager?.some(m => m.teamId === req.params.teamId);
     if (!isManager) return res.status(403).json({ error: 'Nejste vedoucí tohoto týmu' });
+
+    // ── Kontrola licencí ──
+    if (!force) {
+      const playerIds = players.map(p => p.playerId);
+      const payments = await prisma.playerPayment.findMany({
+        where: { playerId: { in: playerIds } },
+        select: { playerId: true, licStatus: true },
+      });
+      const unlicensedIds = playerIds.filter(id => {
+        const pay = payments.find(p => p.playerId === id);
+        return !pay || !['PAID', 'EXEMPT'].includes(pay.licStatus);
+      });
+      if (unlicensedIds.length > 0) {
+        const details = await prisma.player.findMany({
+          where: { id: { in: unlicensedIds } },
+          select: { id: true, firstName: true, lastName: true, jersey: true },
+        });
+        return res.status(422).json({
+          error: 'Soupiska obsahuje hráče bez platné licence',
+          code: 'UNLICENSED_PLAYERS',
+          unlicensed: details,
+        });
+      }
+    }
 
     const lineup = await prisma.lineupSubmission.upsert({
       where: { matchId_teamId: { matchId: req.params.id, teamId: req.params.teamId } },
