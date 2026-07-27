@@ -23,11 +23,11 @@ function makeUploader(folder, allowedFormats = ['jpg', 'jpeg', 'png', 'webp']) {
 function makeVideoUploader(folder) {
   const storage = new CloudinaryStorage({
     cloudinary,
-    params: {
-      folder:        `fsl/${folder}`,
-      resource_type: 'video',
-      allowed_formats: ['mp4', 'mov', 'avi', 'webm'],
-    },
+    params: async (req, file) => ({
+      folder:          `fsl/${folder}`,
+      resource_type:   'video',
+      allowed_formats: ['mp4', 'mov', 'avi', 'webm', 'quicktime'],
+    }),
   });
   return multer({ storage, limits: { fileSize: 200 * 1024 * 1024 } }); // 200 MB
 }
