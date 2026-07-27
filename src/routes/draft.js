@@ -306,11 +306,11 @@ router.get('/:playerId', requireAuth, async (req, res, next) => {
       where: { profileId: profile.id, status: 'PENDING' },
     });
 
-    // Nabídka mého týmu (manager pohled)
+    // Nabídka mého týmu (manager pohled) – jen PENDING, jinak banner zmátne po rejected nabídce
     let myTeamOffer = null;
     if (isManager && req.user.manager?.[0]?.teamId) {
-      myTeamOffer = await prisma.draftOffer.findUnique({
-        where: { profileId_teamId: { profileId: profile.id, teamId: req.user.manager[0].teamId } },
+      myTeamOffer = await prisma.draftOffer.findFirst({
+        where: { profileId: profile.id, teamId: req.user.manager[0].teamId, status: 'PENDING' },
       });
     }
 
@@ -340,11 +340,17 @@ router.post('/:playerId/offer', requireAuth, async (req, res, next) => {
       return res.status(404).json({ error: 'Draft profil nenalezen' });
     }
 
-    // Kontrola duplicity
-    const alreadyOffered = await prisma.draftOffer.findUnique({
-      where: { profileId_teamId: { profileId: profile.id, teamId: myTeamId } },
+    // Kontrola duplicity – blokuje jen PENDING nabídku; REJECTED/EXPIRED umožní znovu nabídnout
+    const existingOffer = await prisma.draftOffer.findFirst({
+      where: { profileId: profile.id, teamId: myTeamId },
     });
-    if (alreadyOffered) return res.status(409).json({ error: 'Váš tým již poslal nabídku tomuto hráči' });
+    if (existingOffer?.status === 'PENDING') {
+      return res.status(409).json({ error: 'Váš tým již poslal nabídku tomuto hráči' });
+    }
+    // Smazat starou REJECTED/EXPIRED row – jinak by unique constraint blokoval CREATE
+    if (existingOffer) {
+      await prisma.draftOffer.delete({ where: { id: existingOffer.id } });
+    }
 
     const { message } = req.body;
     const now = new Date();
@@ -425,8 +431,14 @@ router.post('/:playerId/offer/:offerId/accept', requireAuth, async (req, res, ne
       return res.status(404).json({ error: 'Nabídka nenalezena nebo již zpracována' });
     }
 
-    // Akceptovat tuto nabídku
-    await prisma.draftOffer.update({ where: { id: offer.id }, data: { status: 'ACCEPTED' } });
+    // Atomický claim – blokuje double-tap / souběžné requesty
+    const claimed = await prisma.draftOffer.updateMany({
+      where: { id: offer.id, status: 'PENDING' },
+      data:  { status: 'ACCEPTED' },
+    });
+    if (claimed.count === 0) {
+      return res.status(409).json({ error: 'Nabídka již byla zpracována' });
+    }
     // Zbytek vyprší
     await prisma.draftOffer.updateMany({
       where: { profileId: profile.id, status: 'PENDING' },
