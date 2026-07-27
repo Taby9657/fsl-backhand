@@ -72,14 +72,14 @@ router.post('/player-license', requireAuth, async (req, res, next) => {
 router.post('/home-fee', requireAuth, async (req, res, next) => {
   try {
     const { matchId } = req.body;
-    const manager = req.user.manager?.[0];
-    if (!manager) return res.status(403).json({ error: 'Nejste vedoucí žádného týmu' });
-    if (!matchId)  return res.status(400).json({ error: 'Chybí matchId' });
+    const managerTeamIds = (req.user.manager ?? []).map(m => m.teamId);
+    if (managerTeamIds.length === 0) return res.status(403).json({ error: 'Nejste vedoucí žádného týmu' });
+    if (!matchId) return res.status(400).json({ error: 'Chybí matchId' });
 
     // Ověř zápas – musí být domácí a ještě nezaplacený
     const match = await prisma.match.findUnique({ where: { id: matchId } });
     if (!match) return res.status(404).json({ error: 'Zápas nenalezen' });
-    if (match.homeTeamId !== manager.teamId) return res.status(403).json({ error: 'Tento zápas není váš domácí' });
+    if (!managerTeamIds.includes(match.homeTeamId)) return res.status(403).json({ error: 'Tento zápas není váš domácí' });
     if (match.homeFeePaid) return res.status(409).json({ error: 'Poplatek za tento zápas je již uhrazen' });
 
     const dateStr = new Date(match.date).toLocaleDateString('cs-CZ');
@@ -96,7 +96,7 @@ router.post('/home-fee', requireAuth, async (req, res, next) => {
       mode: 'payment',
       success_url: `${process.env.CLIENT_URL}/payment-success?type=home-fee`,
       cancel_url:  `${process.env.CLIENT_URL}/payments`,
-      metadata: { teamId: manager.teamId, matchId, type: 'HOME_FEE' },
+      metadata: { teamId: match.homeTeamId, matchId, type: 'HOME_FEE' },
     });
 
     res.json({ url: session.url, sessionId: session.id });
