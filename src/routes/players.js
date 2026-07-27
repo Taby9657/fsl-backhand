@@ -22,6 +22,32 @@ router.get('/', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// GET /players/my/stats – osobní statistiky (MUSÍ být před /:id !)
+router.get('/my/stats', requireAuth, async (req, res, next) => {
+  try {
+    const player = await prisma.player.findUnique({
+      where: { userId: req.user.id },
+      include: {
+        goals:    { include: { match: { select: { id: true, date: true, homeTeam: { select: { abbr: true } }, awayTeam: { select: { abbr: true } } } } } },
+        assists:  { include: { match: { select: { id: true, date: true, homeTeam: { select: { abbr: true } }, awayTeam: { select: { abbr: true } } } } } },
+        penalties:{ include: { match: { select: { id: true, date: true, homeTeam: { select: { abbr: true } }, awayTeam: { select: { abbr: true } } } } } },
+        mvpVotes: true,
+      },
+    });
+    if (!player) return res.status(404).json({ error: 'Hráčský profil nenalezen' });
+
+    res.json({
+      goals:     player.goals.length,
+      assists:   player.assists.length,
+      points:    player.goals.length + player.assists.length,
+      penalties: player.penalties.length,
+      mvpVotes:  player.mvpVotes.length,
+      recentGoals:    player.goals.slice(-5).reverse(),
+      recentAssists:  player.assists.slice(-5).reverse(),
+    });
+  } catch (err) { next(err); }
+});
+
 // GET /players/:id – detail hráče
 router.get('/:id', async (req, res, next) => {
   try {
@@ -128,32 +154,6 @@ router.delete('/:id/team/:teamId', requireAuth, async (req, res, next) => {
       data: { teamId: null },
     });
     res.json({ ok: true });
-  } catch (err) { next(err); }
-});
-
-// GET /players/my-stats – osobní statistiky přihlášeného hráče
-router.get('/my/stats', requireAuth, async (req, res, next) => {
-  try {
-    const player = await prisma.player.findUnique({
-      where: { userId: req.user.id },
-      include: {
-        goals:    { include: { match: { select: { id: true, date: true, homeTeam: { select: { abbr: true } }, awayTeam: { select: { abbr: true } } } } } },
-        assists:  { include: { match: { select: { id: true, date: true, homeTeam: { select: { abbr: true } }, awayTeam: { select: { abbr: true } } } } } },
-        penalties:{ include: { match: { select: { id: true, date: true, homeTeam: { select: { abbr: true } }, awayTeam: { select: { abbr: true } } } } } },
-        mvpVotes: true,
-      },
-    });
-    if (!player) return res.status(404).json({ error: 'Hráčský profil nenalezen' });
-
-    res.json({
-      goals:     player.goals.length,
-      assists:   player.assists.length,
-      points:    player.goals.length + player.assists.length,
-      penalties: player.penalties.length,
-      mvpVotes:  player.mvpVotes.length,
-      recentGoals:    player.goals.slice(-5).reverse(),
-      recentAssists:  player.assists.slice(-5).reverse(),
-    });
   } catch (err) { next(err); }
 });
 

@@ -35,19 +35,19 @@ router.post('/google', async (req, res, next) => {
     // Najdi nebo vytvoř uživatele
     let user = await prisma.user.findFirst({
       where: { OR: [{ googleId }, { email }] },
-      include: { player: true, referee: true, manager: { include: { team: true } } },
+      include: { player: { include: { team: true, payment: true } }, referee: true, manager: { include: { team: true } } },
     });
 
     if (!user) {
       user = await prisma.user.create({
         data: { email, googleId },
-        include: { player: true, referee: true, manager: { include: { team: true } } },
+        include: { player: { include: { team: true, payment: true } }, referee: true, manager: { include: { team: true } } },
       });
     } else if (!user.googleId) {
       user = await prisma.user.update({
         where: { id: user.id },
         data: { googleId },
-        include: { player: true, referee: true, manager: { include: { team: true } } },
+        include: { player: { include: { team: true, payment: true } }, referee: true, manager: { include: { team: true } } },
       });
     }
 
@@ -74,20 +74,20 @@ router.post('/apple', async (req, res, next) => {
 
     let user = await prisma.user.findFirst({
       where: { OR: [{ appleId }, ...(email ? [{ email }] : [])] },
-      include: { player: true, referee: true, manager: { include: { team: true } } },
+      include: { player: { include: { team: true, payment: true } }, referee: true, manager: { include: { team: true } } },
     });
 
     if (!user) {
       if (!email) return res.status(400).json({ error: 'E-mail je povinný při první registraci přes Apple' });
       user = await prisma.user.create({
         data: { email, appleId },
-        include: { player: true, referee: true, manager: { include: { team: true } } },
+        include: { player: { include: { team: true, payment: true } }, referee: true, manager: { include: { team: true } } },
       });
     } else if (!user.appleId) {
       user = await prisma.user.update({
         where: { id: user.id },
         data: { appleId },
-        include: { player: true, referee: true, manager: { include: { team: true } } },
+        include: { player: { include: { team: true, payment: true } }, referee: true, manager: { include: { team: true } } },
       });
     }
 
