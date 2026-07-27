@@ -17,6 +17,7 @@ const statsRoutes        = require('./src/routes/stats');
 const supervisorRoutes   = require('./src/routes/supervisor');
 const notifRoutes        = require('./src/routes/notifications');
 const highlightRoutes    = require('./src/routes/highlights');
+const draftRoutes        = require('./src/routes/draft');
 const { requireAuth }    = require('./src/middleware/auth');
 const errorHandler       = require('./src/middleware/errorHandler');
 
@@ -73,6 +74,7 @@ app.use('/api/stats',       statsRoutes);
 app.use('/api/supervisor',  supervisorRoutes);
 app.use('/api/notifications', notifRoutes);
 app.use('/api/highlights',   highlightRoutes);
+app.use('/api/draft',        draftRoutes);
 
 // POST /api/supervisor/requests – žádosti od vedoucích/hráčů (bez supervisor role)
 app.post('/api/supervisor/requests', requireAuth, async (req, res, next) => {

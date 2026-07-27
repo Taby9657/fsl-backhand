@@ -33,9 +33,10 @@ function makeVideoUploader(folder) {
 }
 
 module.exports = {
-  uploadPhoto:       makeUploader('photos'),
-  uploadLogo:        makeUploader('logos'),
-  uploadAction:      makeVideoUploader('action-videos'),
+  uploadPhoto:          makeUploader('photos'),
+  uploadLogo:           makeUploader('logos'),
+  uploadAction:         makeVideoUploader('action-videos'),
   uploadHighlightVideo: makeVideoUploader('highlights'),
-  cloudinary,  // sdílená nakonfigurovaná instance
+  uploadDraftVideo:     makeVideoUploader('draft-videos'),
+  cloudinary,
 };

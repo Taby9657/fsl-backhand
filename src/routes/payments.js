@@ -184,6 +184,25 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
 
 // ==================== SUPERVISOR – RUČNÍ ÚPRAVA ====================
 
+// PUT /payments/team/:teamId – ruční update stavu týmové platby (supervisor)
+router.put('/team/:teamId', requireSupervisor, async (req, res, next) => {
+  try {
+    const { status } = req.body;
+    const validStatuses = ['PENDING', 'PAID', 'OVERDUE', 'WAIVED'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ error: 'Neplatný stav platby' });
+    }
+    const payment = await prisma.teamPayment.update({
+      where: { teamId: req.params.teamId },
+      data: {
+        status,
+        ...(status === 'PAID' && { paidAt: new Date(), method: 'manual' }),
+      },
+    });
+    res.json(payment);
+  } catch (err) { next(err); }
+});
+
 // PUT /payments/player/:playerId – ruční update stavu platby (supervisor)
 router.put('/player/:playerId', requireSupervisor, async (req, res, next) => {
   try {

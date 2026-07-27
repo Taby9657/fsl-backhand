@@ -43,6 +43,7 @@ model Team {
   awayMatches Match[]   @relation("AwayTeam")
   inviteCodes InviteCode[]
   payments    TeamPayment?
+  draftOffers DraftOffer[]
 }
 
 model Manager {
@@ -95,6 +96,7 @@ model Player {
   lineupSlots  LineupPlayer[]
   mvpVotes     PostmatchData[] @relation("MvpPlayer")
   payment      PlayerPayment?
+  draftProfile DraftProfile?
 }
 
 // ==================== REFEREES ====================
@@ -340,6 +342,55 @@ model RoundHighlight {
   pinned    Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ==================== DRAFT ====================
+
+model DraftProfile {
+  id        String   @id @default(uuid())
+  playerId  String   @unique
+  bio       String?
+  pubSkill  String?
+  position  String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  player Player      @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  videos DraftVideo[]
+  offers DraftOffer[]
+}
+
+model DraftVideo {
+  id        String   @id @default(uuid())
+  profileId String
+  url       String
+  createdAt DateTime @default(now())
+
+  profile DraftProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+}
+
+model DraftOffer {
+  id        String           @id @default(uuid())
+  profileId String
+  teamId    String
+  message   String?
+  status    DraftOfferStatus @default(PENDING)
+  isFirst   Boolean          @default(false)
+  expiresAt DateTime
+  createdAt DateTime         @default(now())
+
+  profile DraftProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  team    Team         @relation(fields: [teamId], references: [id])
+
+  @@unique([profileId, teamId])
+}
+
+enum DraftOfferStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  EXPIRED
 }
 
 // ==================== SUPERVISOR REQUESTS ====================
