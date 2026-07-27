@@ -14,7 +14,7 @@ const H24 = 24 * 60 * 60 * 1000;
 async function processExpiredWindows() {
   const now = new Date();
   const expired = await prisma.draftOffer.findMany({
-    where: { status: 'PENDING', isFirst: true, expiresAt: { lt: now } },
+    where: { status: 'PENDING', isFirst: true, expiresAt: { lt: now }, profile: { isActive: true } },
     include: { profile: { include: { player: { select: { id: true, userId: true, firstName: true, lastName: true } } } }, team: { select: { name: true } } },
   });
 
@@ -22,8 +22,12 @@ async function processExpiredWindows() {
     const profileId = offer.profileId;
     const playerId  = offer.profile.playerId;
 
-    // Auto-accept první nabídku
-    await prisma.draftOffer.update({ where: { id: offer.id }, data: { status: 'ACCEPTED' } });
+    // Atomický claim – zabraňuje dvojímu zpracování při souběžných requestech
+    const claimed = await prisma.draftOffer.updateMany({
+      where: { id: offer.id, status: 'PENDING' },
+      data:  { status: 'ACCEPTED' },
+    });
+    if (claimed.count === 0) continue;
     // Hráč vstupuje do týmu
     await prisma.player.update({ where: { id: playerId }, data: { teamId: offer.teamId } });
     // Zbytek nabídek vyprší
@@ -186,8 +190,16 @@ router.delete('/profile', requireAuth, async (req, res, next) => {
     const player = await prisma.player.findUnique({ where: { userId: req.user.id } });
     if (!player) return res.status(404).json({ error: 'Hráčský profil nenalezen' });
 
+    const profile = await prisma.draftProfile.findUnique({ where: { playerId: player.id } });
+    if (!profile) return res.status(404).json({ error: 'Draft profil nenalezen' });
+
+    // Zrušit všechny pending nabídky – jinak by mohly expirovat a hráče auto-draftovat
+    await prisma.draftOffer.updateMany({
+      where: { profileId: profile.id, status: 'PENDING' },
+      data:  { status: 'EXPIRED' },
+    });
     await prisma.draftProfile.update({
-      where: { playerId: player.id },
+      where: { id: profile.id },
       data:  { isActive: false },
     });
     res.json({ ok: true });
