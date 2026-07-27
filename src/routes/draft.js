@@ -169,15 +169,21 @@ router.put('/profile', requireAuth, async (req, res, next) => {
     if (!player) return res.status(404).json({ error: 'Hráčský profil nenalezen' });
 
     const { bio, pubSkill, position } = req.body;
-    const profile = await prisma.draftProfile.update({
-      where: { playerId: player.id },
-      data:  {
-        ...(bio      !== undefined && { bio }),
-        ...(pubSkill !== undefined && { pubSkill }),
-        ...(position !== undefined && { position }),
-      },
-      include: { videos: true },
-    });
+    let profile;
+    try {
+      profile = await prisma.draftProfile.update({
+        where: { playerId: player.id },
+        data:  {
+          ...(bio      !== undefined && { bio }),
+          ...(pubSkill !== undefined && { pubSkill }),
+          ...(position !== undefined && { position }),
+        },
+        include: { videos: true },
+      });
+    } catch (e) {
+      if (e.code === 'P2025') return res.status(404).json({ error: 'Draft profil nenalezen' });
+      throw e;
+    }
     res.json(profile);
   } catch (err) { next(err); }
 });
