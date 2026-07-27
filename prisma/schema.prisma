@@ -325,6 +325,19 @@ model Notification {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
+// ==================== HIGHLIGHTS ====================
+
+model RoundHighlight {
+  id        String   @id @default(uuid())
+  round     Int?
+  title     String
+  body      String
+  imageUrl  String?
+  pinned    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 // ==================== SUPERVISOR REQUESTS ====================
 
 model SupervisorRequest {
