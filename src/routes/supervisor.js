@@ -429,6 +429,45 @@ router.get('/payments', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ==================== SEZÓNA ====================
+
+// POST /supervisor/new-season – uzavře starou sezónu, spustí novou
+router.post('/new-season', async (req, res, next) => {
+  try {
+    const { newSeason, cancelPending = false } = req.body;
+
+    // Validace formátu sezóny (např. "2026/27")
+    if (!newSeason || !/^\d{4}\/\d{2}$/.test(newSeason)) {
+      return res.status(400).json({ error: 'Neplatný formát sezóny – použij tvar "2026/27"' });
+    }
+
+    // Zjisti aktuální sezónu (nejnovější z DB)
+    const latestMatch = await prisma.match.findFirst({ orderBy: { createdAt: 'desc' }, select: { season: true } });
+    const oldSeason = latestMatch?.season ?? null;
+
+    if (oldSeason === newSeason) {
+      return res.status(409).json({ error: 'Tato sezóna je již aktivní' });
+    }
+
+    let cancelledCount = 0;
+    if (cancelPending && oldSeason) {
+      // Zruš všechny UPCOMING zápasy ze staré sezóny
+      const result = await prisma.match.updateMany({
+        where: { season: oldSeason, status: 'UPCOMING' },
+        data:  { status: 'CANCELLED' },
+      });
+      cancelledCount = result.count;
+    }
+
+    res.json({
+      oldSeason,
+      newSeason,
+      cancelledMatches: cancelledCount,
+      message: `Sezóna přepnuta na ${newSeason}. Zrušeno ${cancelledCount} nadcházejících zápasů.`,
+    });
+  } catch (err) { next(err); }
+});
+
 // ==================== NOTIFIKACE ====================
 
 router.post('/notify', async (req, res, next) => {
