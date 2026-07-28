@@ -87,8 +87,9 @@ app.use('/api/highlights',   highlightRoutes);
 app.use('/api/draft',        draftRoutes);
 app.use('/api/search',       searchRoutes);
 
-// POST /api/supervisor/requests – žádosti od vedoucích/hráčů (bez supervisor role)
-app.post('/api/supervisor/requests', requireAuth, async (req, res, next) => {
+// POST /api/requests – žádosti od běžných uživatelů (vedoucí, hráči) supervisorovi
+// POZOR: musí být mimo /api/supervisor/* který vyžaduje supervisor roli
+app.post('/api/requests', requireAuth, async (req, res, next) => {
   try {
     const { type, teamId, matchId, body } = req.body;
     if (!type || !body) return res.status(400).json({ error: 'Chybí typ nebo popis žádosti' });

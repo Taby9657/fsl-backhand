@@ -328,9 +328,10 @@ router.get('/export', requireSupervisor, async (req, res, next) => {
       });
       const ratingMap = {};
       for (const pm of postmatches) {
-        const refId = pm.match.refereeId!;
+        const refId = pm.match.refereeId;
+        if (!refId) continue;
         if (!ratingMap[refId]) ratingMap[refId] = { sum: 0, count: 0 };
-        ratingMap[refId].sum   += pm.refRating!;
+        ratingMap[refId].sum   += pm.refRating;
         ratingMap[refId].count += 1;
       }
       const refIds = Object.keys(ratingMap);

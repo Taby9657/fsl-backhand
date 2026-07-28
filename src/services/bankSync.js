@@ -256,7 +256,8 @@ function inferPlayerPaymentType(vs) {
 
 async function sendNotification(userId, title, body, screen) {
   try {
-    await prisma.notification.create({ data: { userId, title, body, screen } });
+    const { createNotification } = require('../routes/notifications');
+    await createNotification(userId, title, body, screen);
   } catch (_) {}
 }
 
