@@ -7,6 +7,34 @@ const { sendPush } = require('../services/push');
 const router = express.Router();
 const prisma = new PrismaClient();
 
+// GET /matches/bracket?division=X&season=Y – play-off pavouk
+router.get('/bracket', async (req, res, next) => {
+  try {
+    const { division, season } = req.query;
+    const matches = await prisma.match.findMany({
+      where: {
+        round: { not: null },
+        ...(division && { division }),
+        ...(season   && { season }),
+      },
+      include: {
+        homeTeam: { select: { id: true, name: true, abbr: true, color: true } },
+        awayTeam: { select: { id: true, name: true, abbr: true, color: true } },
+      },
+      orderBy: [{ round: 'asc' }, { date: 'asc' }],
+    });
+
+    // Seskup kola
+    const rounds = {};
+    for (const m of matches) {
+      if (m.round == null) continue;
+      if (!rounds[m.round]) rounds[m.round] = [];
+      rounds[m.round].push(m);
+    }
+    res.json(rounds);
+  } catch (err) { next(err); }
+});
+
 // GET /matches – seznam zápasů
 router.get('/', async (req, res, next) => {
   try {

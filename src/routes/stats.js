@@ -299,4 +299,96 @@ router.get('/referees', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// GET /stats/export?type=players|referees&division=X&season=Y
+// Vrátí CSV soubor – pouze pro supervisory
+router.get('/export', async (req, res, next) => {
+  try {
+    const { type = 'players', division, season } = req.query;
+    const matchWhere = {
+      ...(division && { division }),
+      ...(season   && { season }),
+    };
+
+    let csv = '';
+
+    if (type === 'referees') {
+      // Export statistik rozhodčích
+      const ratings = await prisma.refereeRating.groupBy({
+        by: ['refereeId'],
+        _sum:   { rating: true },
+        _count: { rating: true },
+        orderBy: { _count: { rating: 'desc' } },
+      });
+      const refIds = ratings.map(r => r.refereeId);
+      const refs = await prisma.referee.findMany({
+        where: { id: { in: refIds }, status: 'APPROVED' },
+        select: { id: true, firstName: true, lastName: true, level: true },
+      });
+      const refLookup = Object.fromEntries(refs.map(r => [r.id, r]));
+
+      csv = 'Jméno,Příjmení,Úroveň,Průměrné hodnocení,Počet hodnocení\n';
+      csv += ratings
+        .filter(r => refLookup[r.refereeId])
+        .map(r => {
+          const ref = refLookup[r.refereeId];
+          const avg = Math.round((r._sum.rating / r._count.rating) * 10) / 10;
+          return `${ref.firstName},${ref.lastName},${ref.level ?? ''},${avg},${r._count.rating}`;
+        })
+        .join('\n');
+    } else {
+      // Export statistik hráčů (výchozí)
+      const goals = await prisma.matchEvent.groupBy({
+        by: ['scorerId'],
+        where: { type: 'GOAL', scorerId: { not: null }, ...(Object.keys(matchWhere).length && { match: matchWhere }) },
+        _count: { scorerId: true },
+      });
+      const assists = await prisma.matchEvent.groupBy({
+        by: ['assistId'],
+        where: { type: 'GOAL', assistId: { not: null }, ...(Object.keys(matchWhere).length && { match: matchWhere }) },
+        _count: { assistId: true },
+      });
+      const mvpVotes = await prisma.matchMVP.groupBy({
+        by: ['playerId'],
+        _count: { playerId: true },
+      });
+
+      // Unify all playerIds
+      const goalMap   = Object.fromEntries(goals.map(g   => [g.scorerId,  g._count.scorerId]));
+      const assistMap = Object.fromEntries(assists.map(a => [a.assistId,  a._count.assistId]));
+      const mvpMap    = Object.fromEntries(mvpVotes.map(m => [m.playerId, m._count.playerId]));
+      const allIds    = [...new Set([...Object.keys(goalMap), ...Object.keys(assistMap), ...Object.keys(mvpMap)])];
+
+      const players = await prisma.player.findMany({
+        where: { id: { in: allIds } },
+        select: { id: true, firstName: true, lastName: true, jersey: true, position: true, team: { select: { name: true, division: true } } },
+      });
+      players.sort((a, b) => {
+        const g = (goalMap[b.id] ?? 0) - (goalMap[a.id] ?? 0);
+        const pts_b = (goalMap[b.id] ?? 0) + (assistMap[b.id] ?? 0);
+        const pts_a = (goalMap[a.id] ?? 0) + (assistMap[a.id] ?? 0);
+        return pts_b - pts_a;
+      });
+
+      csv = 'Jméno,Příjmení,Číslo,Pozice,Tým,Divize,Góly,Asistence,Body,MVP\n';
+      csv += players.map(p => [
+        p.firstName,
+        p.lastName,
+        p.jersey ?? '',
+        p.position ?? '',
+        p.team?.name ?? '',
+        p.team?.division ?? '',
+        goalMap[p.id]   ?? 0,
+        assistMap[p.id] ?? 0,
+        (goalMap[p.id] ?? 0) + (assistMap[p.id] ?? 0),
+        mvpMap[p.id]    ?? 0,
+      ].join(',')).join('\n');
+    }
+
+    const filename = `fsl-${type}-${season ?? 'all'}-${division ?? 'all'}.csv`;
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send('﻿' + csv); // BOM pro Excel
+  } catch (err) { next(err); }
+});
+
 module.exports = router;
