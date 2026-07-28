@@ -82,6 +82,12 @@ router.post('/', requireAuth, async (req, res, next) => {
     const existing = await prisma.player.findUnique({ where: { userId: req.user.id } });
     if (existing) return res.status(409).json({ error: 'Uživatel již má hráčský profil' });
 
+    // Zkontroluj unikátnost čísla dresu v týmu
+    const jerseyTaken = await prisma.player.findFirst({
+      where: { teamId, jersey: parseInt(jersey) },
+    });
+    if (jerseyTaken) return res.status(409).json({ error: `Číslo dresu ${jersey} je již obsazeno v tomto týmu` });
+
     const player = await prisma.player.create({
       data: {
         userId: req.user.id,
@@ -110,6 +116,15 @@ router.put('/:id', requireAuth, async (req, res, next) => {
     if (!isSelf && !isManager) return res.status(403).json({ error: 'Nemáte oprávnění' });
 
     const { firstName, lastName, jersey, position, birthdate, phone } = req.body;
+
+    // Zkontroluj unikátnost čísla dresu při změně
+    if (jersey && player.teamId) {
+      const jerseyTaken = await prisma.player.findFirst({
+        where: { teamId: player.teamId, jersey: parseInt(jersey), NOT: { id: req.params.id } },
+      });
+      if (jerseyTaken) return res.status(409).json({ error: `Číslo dresu ${jersey} je již obsazeno v tomto týmu` });
+    }
+
     const updated = await prisma.player.update({
       where: { id: req.params.id },
       data: {

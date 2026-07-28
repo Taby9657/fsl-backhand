@@ -1,7 +1,7 @@
 const express  = require('express');
 const multer   = require('multer');
 
-const { requireAuth, requireSupervisor } = require('../middleware/auth');
+const { requireSupervisor } = require('../middleware/auth');
 const { cloudinary } = require('../utils/fileUpload'); // sdílená nakonfigurovaná instance
 
 const router = express.Router();
@@ -25,7 +25,7 @@ router.get('/', async (req, res, next) => {
 });
 
 // POST /highlights – supervisor vytvoří highlight
-router.post('/', requireAuth, requireSupervisor, async (req, res, next) => {
+router.post('/', requireSupervisor, async (req, res, next) => {
   try {
     const { round, title, body, imageUrl, pinned } = req.body;
     if (!title || !body) return res.status(400).json({ error: 'Chybí title nebo body' });
@@ -44,7 +44,7 @@ router.post('/', requireAuth, requireSupervisor, async (req, res, next) => {
 });
 
 // PUT /highlights/:id – supervisor upraví highlight
-router.put('/:id', requireAuth, requireSupervisor, async (req, res, next) => {
+router.put('/:id', requireSupervisor, async (req, res, next) => {
   try {
     const { round, title, body, imageUrl, pinned } = req.body;
     const data = {};
@@ -63,7 +63,7 @@ router.put('/:id', requireAuth, requireSupervisor, async (req, res, next) => {
 });
 
 // POST /highlights/:id/video – přímý upload videa přes Cloudinary SDK
-router.post('/:id/video', requireAuth, requireSupervisor, memUpload.single('video'), async (req, res, next) => {
+router.post('/:id/video', requireSupervisor, memUpload.single('video'), async (req, res, next) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Nebyl nahrán žádný soubor' });
 
@@ -84,7 +84,7 @@ router.post('/:id/video', requireAuth, requireSupervisor, memUpload.single('vide
 });
 
 // DELETE /highlights/:id – supervisor smaže highlight
-router.delete('/:id', requireAuth, requireSupervisor, async (req, res, next) => {
+router.delete('/:id', requireSupervisor, async (req, res, next) => {
   try {
     await prisma.roundHighlight.delete({ where: { id: req.params.id } });
     res.json({ ok: true });
