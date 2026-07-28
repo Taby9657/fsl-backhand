@@ -47,7 +47,18 @@ router.get('/requests', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-router.post('/requests', async (req, res, next) => { next(); });
+// POST /supervisor/requests – přímé vytvoření žádosti supervisorem
+router.post('/requests', async (req, res, next) => {
+  try {
+    const { type, userId, teamId, matchId, body, note } = req.body;
+    if (!type || !body) return res.status(400).json({ error: 'Chybí type nebo body' });
+    const request = await prisma.supervisorRequest.create({
+      data: { type, userId: userId || null, teamId: teamId || null, matchId: matchId || null, body, note: note || null },
+      include: { user: { select: { id: true, email: true } } },
+    });
+    res.status(201).json(request);
+  } catch (err) { next(err); }
+});
 
 router.put('/requests/:id', async (req, res, next) => {
   try {

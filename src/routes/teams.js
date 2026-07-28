@@ -18,6 +18,18 @@ router.get('/', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// GET /teams/divisions – veřejný seznam divizí (MUSÍ být před /:id !)
+router.get('/divisions', async (req, res, next) => {
+  try {
+    const divisions = await prisma.team.groupBy({
+      by: ['division', 'conference'],
+      _count: { division: true },
+      orderBy: { division: 'asc' },
+    });
+    res.json(divisions);
+  } catch (err) { next(err); }
+});
+
 // GET /teams/:id – detail týmu
 router.get('/:id', async (req, res, next) => {
   try {
@@ -123,18 +135,6 @@ router.post('/join/:code', requireAuth, async (req, res, next) => {
     });
 
     res.json({ team: invite.team });
-  } catch (err) { next(err); }
-});
-
-// GET /teams/divisions – veřejný seznam divizí (potřebný na záložkách Zápasy, Tabulka, Statistiky)
-router.get('/divisions', async (req, res, next) => {
-  try {
-    const divisions = await prisma.team.groupBy({
-      by: ['division', 'conference'],
-      _count: { division: true },
-      orderBy: { division: 'asc' },
-    });
-    res.json(divisions);
   } catch (err) { next(err); }
 });
 

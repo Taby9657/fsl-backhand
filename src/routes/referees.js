@@ -2,6 +2,7 @@ const express = require('express');
 
 const { requireAuth, requireSupervisor } = require('../middleware/auth');
 const { uploadPhoto } = require('../utils/fileUpload');
+const { createNotification } = require('./notifications');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -144,15 +145,9 @@ router.put('/:id/approve', requireSupervisor, async (req, res, next) => {
       data: { status: 'APPROVED', ...(level && { level }) },
     });
 
-    // Notifikace rozhodčímu
-    await prisma.notification.create({
-      data: {
-        userId: ref.userId,
-        title:  'Registrace schválena',
-        body:   `Vaše registrace rozhodčího byla schválena. Úroveň: ${ref.level}`,
-        screen: 'ref-detail',
-      },
-    });
+    // Notifikace rozhodčímu (včetně push)
+    await createNotification(ref.userId, 'Registrace schválena',
+      `Vaše registrace rozhodčího byla schválena. Úroveň: ${ref.level}`, 'ref-detail');
 
     res.json(ref);
   } catch (err) { next(err); }
@@ -167,14 +162,9 @@ router.put('/:id/reject', requireSupervisor, async (req, res, next) => {
       data:  { status: 'REJECTED' },
     });
 
-    await prisma.notification.create({
-      data: {
-        userId: ref.userId,
-        title:  'Registrace zamítnuta',
-        body:   reason || 'Vaše registrace rozhodčího byla zamítnuta.',
-        screen: 'onboard-ref',
-      },
-    });
+    // Notifikace rozhodčímu (včetně push)
+    await createNotification(ref.userId, 'Registrace zamítnuta',
+      reason || 'Vaše registrace rozhodčího byla zamítnuta.', 'onboard-ref');
 
     res.json(ref);
   } catch (err) { next(err); }
