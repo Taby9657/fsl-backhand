@@ -4,7 +4,7 @@ const express    = require('express');
 const cors       = require('cors');
 const helmet     = require('helmet');
 const rateLimit  = require('express-rate-limit');
-const { PrismaClient } = require('@prisma/client');
+const prismaLib = require('./src/lib/prisma');
 
 const { bankSync }       = require('./src/services/bankSync');
 const authRoutes         = require('./src/routes/auth');
@@ -18,12 +18,13 @@ const supervisorRoutes   = require('./src/routes/supervisor');
 const notifRoutes        = require('./src/routes/notifications');
 const highlightRoutes    = require('./src/routes/highlights');
 const draftRoutes        = require('./src/routes/draft');
+const { processExpiredWindows } = require('./src/routes/draft');
 const searchRoutes       = require('./src/routes/search');
 const { requireAuth }    = require('./src/middleware/auth');
 const errorHandler       = require('./src/middleware/errorHandler');
 
 const app    = express();
-const prisma = new PrismaClient();
+const prisma = prismaLib;
 const PORT   = process.env.PORT || 3000;
 
 // ==================== BEZPEČNOST ====================
@@ -31,8 +32,13 @@ const PORT   = process.env.PORT || 3000;
 app.set('trust proxy', 1); // Potřebné pro Railway (proxy)
 
 app.use(helmet());
+// SEC-02: CORS — v produkci vyžaduje CLIENT_URL, v dev povolí vše
+const allowedOrigins = process.env.CLIENT_URL
+  ? process.env.CLIENT_URL.split(',').map(s => s.trim())
+  : null; // null = žádný webový klient (mobile app komunikuje přes HTTPS přímo)
+
 app.use(cors({
-  origin: process.env.CLIENT_URL || '*',
+  origin: allowedOrigins ?? (process.env.NODE_ENV !== 'production' ? '*' : false),
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
@@ -85,7 +91,8 @@ app.post('/api/supervisor/requests', requireAuth, async (req, res, next) => {
     if (!type || !body) return res.status(400).json({ error: 'Chybí typ nebo popis žádosti' });
 
     const request = await prisma.supervisorRequest.create({
-      data: { type, teamId: teamId || null, matchId: matchId || null, body },
+      data: { type, userId: req.user.id, teamId: teamId || null, matchId: matchId || null, body },
+      include: { user: { select: { id: true, email: true } } },
     });
     res.status(201).json(request);
   } catch (err) { next(err); }
@@ -121,6 +128,19 @@ process.on('SIGTERM', async () => {
   await prisma.$disconnect();
   process.exit(0);
 });
+
+// ==================== DRAFT EXPIRED WINDOWS CRON ====================
+// PERF-01: Spouští se každých 15 minut místo lazy volání při každém requestu
+const DRAFT_CRON_INTERVAL = 15 * 60 * 1000; // 15 minut
+async function runDraftExpiry() {
+  try {
+    await processExpiredWindows();
+  } catch (err) {
+    console.error('[Draft] Chyba při expiraci oken:', err.message);
+  }
+}
+runDraftExpiry(); // hned při startu
+setInterval(runDraftExpiry, DRAFT_CRON_INTERVAL);
 
 // ==================== AUTOMATICKÉ PÁROVÁNÍ PLATEB ====================
 // Spustí se každou noc ve 2:00 (pokud je FIO_API_TOKEN nastaven)

@@ -41,6 +41,7 @@ router.get('/requests', async (req, res, next) => {
     const requests = await prisma.supervisorRequest.findMany({
       where: { ...(status && { status }), ...(type && { type }) },
       orderBy: { createdAt: 'desc' },
+      include: { user: { select: { id: true, email: true } } },
     });
     res.json(requests);
   } catch (err) { next(err); }
@@ -459,11 +460,26 @@ router.post('/new-season', async (req, res, next) => {
       cancelledCount = result.count;
     }
 
+    // MISSING-02: Reset licencí hráčů a plateb týmů na PENDING pro novou sezónu
+    const [resetLic, resetTeam] = await Promise.all([
+      prisma.playerPayment.updateMany({
+        data: { licStatus: 'PENDING', licPaidAt: null, licMethod: null,
+                superStatus: 'PENDING', superPaidAt: null, season: newSeason },
+      }),
+      prisma.teamPayment.updateMany({
+        data: { status: 'PENDING', paidAt: null, method: null, season: newSeason },
+      }),
+    ]);
+    // Zrušit player.licensed pro všechny hráče
+    await prisma.player.updateMany({ data: { licensed: false } });
+
     res.json({
       oldSeason,
       newSeason,
       cancelledMatches: cancelledCount,
-      message: `Sezóna přepnuta na ${newSeason}. Zrušeno ${cancelledCount} nadcházejících zápasů.`,
+      resetLicenses: resetLic.count,
+      resetTeams: resetTeam.count,
+      message: `Sezóna přepnuta na ${newSeason}. Zrušeno ${cancelledCount} zápasů, resetováno ${resetLic.count} licencí.`,
     });
   } catch (err) { next(err); }
 });

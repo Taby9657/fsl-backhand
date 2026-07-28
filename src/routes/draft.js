@@ -10,7 +10,7 @@ const prisma = require('../lib/prisma');
 const H72 = 72 * 60 * 60 * 1000;
 const H24 = 24 * 60 * 60 * 1000;
 
-// ── Auto-expire helper – volá se lazy při každém GET /draft ──
+// ── Auto-expire helper – PERF-01: voláno z cron jobu v server.js, NE při každém requestu ──
 async function processExpiredWindows() {
   const now = new Date();
   const expired = await prisma.draftOffer.findMany({
@@ -64,8 +64,6 @@ async function processExpiredWindows() {
 // ────────────────────────────────────────────────────────────
 router.get('/', requireAuth, async (req, res, next) => {
   try {
-    await processExpiredWindows();
-
     const isManager = (req.user.manager ?? []).length > 0;
 
     const profiles = await prisma.draftProfile.findMany({
@@ -269,8 +267,6 @@ router.delete('/video/:videoId', requireAuth, async (req, res, next) => {
 // ────────────────────────────────────────────────────────────
 router.get('/:playerId', requireAuth, async (req, res, next) => {
   try {
-    await processExpiredWindows();
-
     const isManager     = (req.user.manager ?? []).length > 0;
     const myPlayer      = await prisma.player.findUnique({ where: { userId: req.user.id } });
     const isOwnProfile  = myPlayer?.id === req.params.playerId;
@@ -526,3 +522,4 @@ router.post('/:playerId/offer/:offerId/reject', requireAuth, async (req, res, ne
 });
 
 module.exports = router;
+module.exports.processExpiredWindows = processExpiredWindows;

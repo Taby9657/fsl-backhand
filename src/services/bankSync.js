@@ -42,39 +42,45 @@ function generateVS(type, sequenceNumber) {
 
 /**
  * Přidělí VS hráči (pokud ještě nemá) a vrátí ho.
+ * BUG-10: retry při kolizi unikátního VS (race condition)
  */
 async function ensurePlayerVS(playerId, type = 'PLAYER_LICENSE') {
-  const payment = await prisma.playerPayment.findUnique({ where: { playerId } });
-  if (!payment) throw new Error('PlayerPayment nenalezen');
-  if (payment.variableSymbol) return payment.variableSymbol;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const payment = await prisma.playerPayment.findUnique({ where: { playerId } });
+    if (!payment) throw new Error('PlayerPayment nenalezen');
+    if (payment.variableSymbol) return payment.variableSymbol;
 
-  // Sekvence = pořadí záznamu (PlayerPayment.id je UUID → použijeme rowNumber)
-  const count = await prisma.playerPayment.count();
-  const vs    = generateVS(type, count + 1);
-
-  await prisma.playerPayment.update({
-    where: { playerId },
-    data:  { variableSymbol: vs },
-  });
-  return vs;
+    const count = await prisma.playerPayment.count();
+    const vs    = generateVS(type, count + 1);
+    try {
+      await prisma.playerPayment.update({ where: { playerId }, data: { variableSymbol: vs } });
+      return vs;
+    } catch (err) {
+      if (err.code !== 'P2002' || attempt >= 4) throw err;
+      // Jiný request přidělil VS ve stejný moment → zkusíme znovu
+    }
+  }
 }
 
 /**
  * Přidělí VS týmu a vrátí ho.
+ * BUG-10: retry při kolizi unikátního VS (race condition)
  */
 async function ensureTeamVS(teamId, type = 'TEAM_REG') {
-  const payment = await prisma.teamPayment.findUnique({ where: { teamId } });
-  if (!payment) throw new Error('TeamPayment nenalezen');
-  if (payment.variableSymbol) return payment.variableSymbol;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const payment = await prisma.teamPayment.findUnique({ where: { teamId } });
+    if (!payment) throw new Error('TeamPayment nenalezen');
+    if (payment.variableSymbol) return payment.variableSymbol;
 
-  const count = await prisma.teamPayment.count();
-  const vs    = generateVS(type, count + 1);
-
-  await prisma.teamPayment.update({
-    where: { teamId },
-    data:  { variableSymbol: vs },
-  });
-  return vs;
+    const count = await prisma.teamPayment.count();
+    const vs    = generateVS(type, count + 1);
+    try {
+      await prisma.teamPayment.update({ where: { teamId }, data: { variableSymbol: vs } });
+      return vs;
+    } catch (err) {
+      if (err.code !== 'P2002' || attempt >= 4) throw err;
+    }
+  }
 }
 
 // ==================== FIO API ====================

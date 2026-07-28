@@ -22,6 +22,7 @@ model User {
   referee   Referee?
   manager   Manager[]
   notifications Notification[]
+  supervisorRequests SupervisorRequest[]
 }
 
 // ==================== TEAMS ====================
@@ -398,6 +399,7 @@ enum DraftOfferStatus {
 model SupervisorRequest {
   id        String        @id @default(uuid())
   type      RequestType
+  userId    String?
   teamId    String?
   matchId   String?
   body      String
@@ -405,6 +407,8 @@ model SupervisorRequest {
   status    RequestStatus @default(PENDING)
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
 }
 
 enum RequestType {
