@@ -1,10 +1,10 @@
 const express = require('express');
-const { PrismaClient } = require('@prisma/client');
+
 const { requireAuth } = require('../middleware/auth');
 const { uploadPhoto } = require('../utils/fileUpload');
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // GET /players – seznam všech hráčů (veřejné)
 router.get('/', async (req, res, next) => {

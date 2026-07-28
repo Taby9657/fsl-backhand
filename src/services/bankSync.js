@@ -10,8 +10,8 @@
  *  4. Označí platbu jako PAID, vytvoří BankTransaction záznam
  */
 
-const { PrismaClient } = require('@prisma/client');
-const prisma = new PrismaClient();
+
+const prisma = require('../lib/prisma');
 
 const FIO_API_BASE = 'https://fioapi.fio.cz/v1/rest';
 const FIO_TOKEN    = process.env.FIO_API_TOKEN;

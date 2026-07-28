@@ -1,11 +1,11 @@
 const express = require('express');
-const { PrismaClient } = require('@prisma/client');
+
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { requireAuth, requireSupervisor } = require('../middleware/auth');
 const { bankSync, ensurePlayerVS, ensureTeamVS, getPaymentQR } = require('../services/bankSync');
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // ==================== PŘEHLED PLATEB ====================
 

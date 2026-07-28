@@ -1,12 +1,65 @@
 const express = require('express');
+const https   = require('https');
 const { OAuth2Client } = require('google-auth-library');
 const jwt = require('jsonwebtoken');
-const { PrismaClient } = require('@prisma/client');
+
 const { issueToken, requireAuth } = require('../middleware/auth');
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 const googleClient = new OAuth2Client();
+
+// ── Apple JWKS cache ──────────────────────────────────────────────────────
+let _appleKeys   = null;
+let _appleKeysTtl = 0;
+
+async function getApplePublicKeys() {
+  const now = Date.now();
+  if (_appleKeys && now < _appleKeysTtl) return _appleKeys;
+  const keys = await new Promise((resolve, reject) => {
+    https.get('https://appleid.apple.com/auth/keys', res => {
+      let data = '';
+      res.on('data', c => { data += c; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(data).keys); } catch (e) { reject(e); }
+      });
+    }).on('error', reject);
+  });
+  _appleKeys    = keys;
+  _appleKeysTtl = now + 60 * 60 * 1000; // cache 1 hodinu
+  return keys;
+}
+
+function jwkToPem(jwk) {
+  // Jednoduchá konverze RSA JWK → PEM hlavička pro jsonwebtoken
+  // jsonwebtoken@9 přijímá JWK objekt přímo ve verify({ algorithms, ... })
+  return { ...jwk, kty: 'RSA' };
+}
+
+async function verifyAppleToken(identityToken) {
+  const header = JSON.parse(Buffer.from(identityToken.split('.')[0], 'base64url').toString());
+  const keys   = await getApplePublicKeys();
+  const jwk    = keys.find(k => k.kid === header.kid);
+  if (!jwk) throw new Error('Apple public key nenalezen (kid mismatch)');
+
+  return new Promise((resolve, reject) => {
+    // jsonwebtoken v9+ umí ověřit s JWK objektem
+    const pemKey = require('crypto').createPublicKey({ key: jwk, format: 'jwk' }).export({ type: 'spki', format: 'pem' });
+    jwt.verify(
+      identityToken,
+      pemKey,
+      {
+        algorithms: ['RS256'],
+        issuer:    'https://appleid.apple.com',
+        audience:  process.env.APPLE_CLIENT_ID || process.env.EXPO_PROJECT_ID,
+      },
+      (err, decoded) => {
+        if (err) reject(err);
+        else resolve(decoded);
+      }
+    );
+  });
+}
 
 // ==================== GOOGLE OAUTH ====================
 // Frontend pošle idToken z Google Sign-In SDK
@@ -65,8 +118,13 @@ router.post('/apple', async (req, res, next) => {
     const { identityToken, firstName, lastName, email: appleEmail } = req.body;
     if (!identityToken) return res.status(400).json({ error: 'Chybí identityToken' });
 
-    // Dekóduj bez ověření pro získání sub (Apple neposílá email opakovaně)
-    const decoded = jwt.decode(identityToken);
+    // Ověř podpis Apple Identity Tokenu přes JWKS endpoint
+    let decoded;
+    try {
+      decoded = await verifyAppleToken(identityToken);
+    } catch (verifyErr) {
+      return res.status(401).json({ error: 'Neplatný Apple token', detail: verifyErr.message });
+    }
     if (!decoded) return res.status(400).json({ error: 'Neplatný Apple token' });
 
     const appleId = decoded.sub;

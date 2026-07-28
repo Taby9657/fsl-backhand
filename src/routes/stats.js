@@ -1,8 +1,9 @@
 const express = require('express');
-const { PrismaClient } = require('@prisma/client');
+
+const { requireSupervisor } = require('../middleware/auth');
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // GET /stats/seasons – seznam dostupných ročníků
 router.get('/seasons', async (req, res, next) => {
@@ -301,7 +302,7 @@ router.get('/referees', async (req, res, next) => {
 
 // GET /stats/export?type=players|referees&division=X&season=Y
 // Vrátí CSV soubor – pouze pro supervisory
-router.get('/export', async (req, res, next) => {
+router.get('/export', requireSupervisor, async (req, res, next) => {
   try {
     const { type = 'players', division, season } = req.query;
     const matchWhere = {
@@ -309,11 +310,19 @@ router.get('/export', async (req, res, next) => {
       ...(season   && { season }),
     };
 
+    // CSV helper — escapuj hodnoty pro Excel (ochrana proti CSV injection)
+    const csvCell = (v) => {
+      const s = String(v ?? '');
+      // Escapuj buňky začínající speciálními znaky
+      const safe = /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
+      return safe.includes(',') || safe.includes('"') ? `"${safe.replace(/"/g, '""')}"` : safe;
+    };
+
     let csv = '';
 
     if (type === 'referees') {
-      // Export statistik rozhodčích
-      const ratings = await prisma.refereeRating.groupBy({
+      // Export statistik rozhodčích — model je RefRating
+      const ratings = await prisma.refRating.groupBy({
         by: ['refereeId'],
         _sum:   { rating: true },
         _count: { rating: true },
@@ -332,7 +341,7 @@ router.get('/export', async (req, res, next) => {
         .map(r => {
           const ref = refLookup[r.refereeId];
           const avg = Math.round((r._sum.rating / r._count.rating) * 10) / 10;
-          return `${ref.firstName},${ref.lastName},${ref.level ?? ''},${avg},${r._count.rating}`;
+          return [ref.firstName, ref.lastName, ref.level ?? '', avg, r._count.rating].map(csvCell).join(',');
         })
         .join('\n');
     } else {
@@ -347,15 +356,17 @@ router.get('/export', async (req, res, next) => {
         where: { type: 'GOAL', assistId: { not: null }, ...(Object.keys(matchWhere).length && { match: matchWhere }) },
         _count: { assistId: true },
       });
-      const mvpVotes = await prisma.matchMVP.groupBy({
-        by: ['playerId'],
-        _count: { playerId: true },
+      // MVP hlasy jsou v PostmatchData.opponentMvpId
+      const mvpVotes = await prisma.postmatchData.groupBy({
+        by: ['opponentMvpId'],
+        where: { opponentMvpId: { not: null }, submitted: true },
+        _count: { opponentMvpId: true },
       });
 
       // Unify all playerIds
-      const goalMap   = Object.fromEntries(goals.map(g   => [g.scorerId,  g._count.scorerId]));
-      const assistMap = Object.fromEntries(assists.map(a => [a.assistId,  a._count.assistId]));
-      const mvpMap    = Object.fromEntries(mvpVotes.map(m => [m.playerId, m._count.playerId]));
+      const goalMap   = Object.fromEntries(goals.map(g   => [g.scorerId,        g._count.scorerId]));
+      const assistMap = Object.fromEntries(assists.map(a => [a.assistId,        a._count.assistId]));
+      const mvpMap    = Object.fromEntries(mvpVotes.map(m => [m.opponentMvpId, m._count.opponentMvpId]));
       const allIds    = [...new Set([...Object.keys(goalMap), ...Object.keys(assistMap), ...Object.keys(mvpMap)])];
 
       const players = await prisma.player.findMany({
@@ -381,7 +392,7 @@ router.get('/export', async (req, res, next) => {
         assistMap[p.id] ?? 0,
         (goalMap[p.id] ?? 0) + (assistMap[p.id] ?? 0),
         mvpMap[p.id]    ?? 0,
-      ].join(',')).join('\n');
+      ].map(csvCell).join(',')).join('\n');
     }
 
     const filename = `fsl-${type}-${season ?? 'all'}-${division ?? 'all'}.csv`;

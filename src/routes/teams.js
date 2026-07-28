@@ -1,11 +1,11 @@
 const express = require('express');
-const { PrismaClient } = require('@prisma/client');
+
 const { requireAuth, requireManager } = require('../middleware/auth');
 const { uploadLogo } = require('../utils/fileUpload');
 const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // GET /teams – seznam všech týmů
 router.get('/', async (req, res, next) => {

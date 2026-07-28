@@ -1,11 +1,11 @@
 const express = require('express');
-const { PrismaClient } = require('@prisma/client');
+
 const { requireAuth, requireSupervisor } = require('../middleware/auth');
 const { createNotifications } = require('./notifications');
 const { sendPush } = require('../services/push');
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // GET /matches/bracket?division=X&season=Y – play-off pavouk
 router.get('/bracket', async (req, res, next) => {
@@ -220,6 +220,11 @@ router.post('/:id/events', requireAuth, async (req, res, next) => {
     const match = await prisma.match.findUnique({ where: { id: req.params.id } });
     if (!match) return res.status(404).json({ error: 'Zápas nenalezen' });
 
+    // BUG-08: Lze přidávat události pouze do LIVE zápasů
+    if (match.status !== 'LIVE') {
+      return res.status(400).json({ error: 'Události lze přidávat pouze do probíhajícího (LIVE) zápasu' });
+    }
+
     const isManager    = req.user.manager?.some(m => m.teamId === match.homeTeamId || m.teamId === match.awayTeamId);
     const isSupervisor = req.user?.player?.isSupervisor ||
       process.env.SUPERVISOR_USER_IDS?.split(',').includes(req.user.id);
@@ -227,11 +232,17 @@ router.post('/:id/events', requireAuth, async (req, res, next) => {
     const isReferee    = referee && match.refereeId === referee.id;
     if (!isManager && !isSupervisor && !isReferee) return res.status(403).json({ error: 'Nemáte oprávnění' });
 
+    // BUG-11: Validace minuty
+    const minuteParsed = parseInt(minute);
+    if (isNaN(minuteParsed) || minuteParsed < 0 || minuteParsed > 200) {
+      return res.status(400).json({ error: 'Neplatná minuta zápasu' });
+    }
+
     const event = await prisma.matchEvent.create({
       data: {
         matchId: req.params.id,
         type,
-        minute:      parseInt(minute),
+        minute:      minuteParsed,
         period:      parseInt(period) || 1,
         teamId:      teamId    || null,
         scorerId:    scorerId  || null,
@@ -273,15 +284,18 @@ router.delete('/:id/events/:eventId', requireAuth, async (req, res, next) => {
 
     await prisma.matchEvent.delete({ where: { id: req.params.eventId } });
 
-    // Reverzní update skóre
+    // Reverzní update skóre — BUG-07: chráníme před záporným skóre
     if (event.type === 'GOAL' || event.type === 'SHOOTOUT_GOAL') {
       const isHome = event.teamId === match.homeTeamId;
-      await prisma.match.update({
-        where: { id: req.params.id },
-        data: isHome
-          ? { homeScore: { decrement: 1 } }
-          : { awayScore: { decrement: 1 } },
-      });
+      const currentScore = isHome ? match.homeScore : match.awayScore;
+      if (currentScore > 0) {
+        await prisma.match.update({
+          where: { id: req.params.id },
+          data: isHome
+            ? { homeScore: { decrement: 1 } }
+            : { awayScore: { decrement: 1 } },
+        });
+      }
     }
 
     res.json({ ok: true });
@@ -306,7 +320,7 @@ router.put('/:id/lineup/:teamId', requireAuth, async (req, res, next) => {
       });
       const unlicensedIds = playerIds.filter(id => {
         const pay = payments.find(p => p.playerId === id);
-        return !pay || !['PAID', 'EXEMPT'].includes(pay.licStatus);
+        return !pay || !['PAID', 'WAIVED'].includes(pay.licStatus);
       });
       if (unlicensedIds.length > 0) {
         const details = await prisma.player.findMany({

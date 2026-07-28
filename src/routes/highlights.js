@@ -1,11 +1,11 @@
 const express  = require('express');
 const multer   = require('multer');
-const { PrismaClient } = require('@prisma/client');
+
 const { requireAuth, requireSupervisor } = require('../middleware/auth');
 const { cloudinary } = require('../utils/fileUpload'); // sdílená nakonfigurovaná instance
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // Memory storage – přijme soubor do bufferu, pak SDK upload stream do Cloudinary
 const memUpload = multer({

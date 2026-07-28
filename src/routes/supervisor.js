@@ -1,10 +1,10 @@
 const express = require('express');
-const { PrismaClient } = require('@prisma/client');
+
 const { requireSupervisor } = require('../middleware/auth');
 const { createNotification, createNotifications } = require('./notifications');
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 // Všechny endpointy v tomto souboru vyžadují supervisor roli
 router.use(requireSupervisor);

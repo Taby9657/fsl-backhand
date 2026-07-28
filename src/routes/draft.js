@@ -1,11 +1,11 @@
 const express = require('express');
-const { PrismaClient } = require('@prisma/client');
+
 const { requireAuth } = require('../middleware/auth');
 const { uploadDraftVideo, cloudinary } = require('../utils/fileUpload');
 const { createNotification, createNotifications } = require('./notifications');
 
 const router = express.Router();
-const prisma = new PrismaClient();
+const prisma = require('../lib/prisma');
 
 const H72 = 72 * 60 * 60 * 1000;
 const H24 = 24 * 60 * 60 * 1000;
