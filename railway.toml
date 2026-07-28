@@ -3,6 +3,6 @@ builder = "nixpacks"
 buildCommand = "npm install --legacy-peer-deps && npx prisma generate"
 
 [deploy]
-startCommand = "npx prisma db push --accept-data-loss && npm start"
+startCommand = "npx prisma migrate deploy && npm start"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3

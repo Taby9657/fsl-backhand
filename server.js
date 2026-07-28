@@ -1,5 +1,8 @@
 require('dotenv').config();
 
+const { initSentry, Sentry } = require('./src/lib/sentry');
+initSentry(); // musí být první, před express
+
 const express    = require('express');
 const cors       = require('cors');
 const helmet     = require('helmet');
@@ -104,6 +107,8 @@ app.use((req, res) => res.status(404).json({ error: 'Endpoint nenalezen' }));
 
 // ==================== ERROR HANDLER ====================
 
+// Sentry zachytí 5xx před naším handlerem
+if (process.env.SENTRY_DSN) app.use(Sentry.expressErrorHandler());
 app.use(errorHandler);
 
 // ==================== START ====================

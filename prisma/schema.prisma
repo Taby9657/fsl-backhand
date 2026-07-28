@@ -166,6 +166,14 @@ model Match {
   lineups      LineupSubmission[]
   postmatches  PostmatchData[]
   refRatings   RefRating[]
+
+  @@index([season])
+  @@index([status])
+  @@index([season, status])
+  @@index([homeTeamId])
+  @@index([awayTeamId])
+  @@index([refereeId])
+  @@index([date])
 }
 
 enum MatchStatus {
@@ -192,6 +200,9 @@ model MatchEvent {
   scorer  Player? @relation("GoalScorer", fields: [scorerId], references: [id])
   assist  Player? @relation("GoalAssist", fields: [assistId], references: [id])
   penalty Player? @relation("PenaltyPlayer", fields: [penaltyId], references: [id])
+
+  @@index([matchId])
+  @@index([scorerId])
 }
 
 enum MatchEventType {
@@ -329,6 +340,9 @@ model Notification {
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, read])
 }
 
 // ==================== HIGHLIGHTS ====================
@@ -385,6 +399,8 @@ model DraftOffer {
   team    Team         @relation(fields: [teamId], references: [id])
 
   @@unique([profileId, teamId])
+  @@index([status])
+  @@index([expiresAt])
 }
 
 enum DraftOfferStatus {
