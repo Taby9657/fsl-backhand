@@ -441,15 +441,15 @@ router.post('/:playerId/offer/:offerId/accept', requireAuth, async (req, res, ne
     if (claimed.count === 0) {
       return res.status(409).json({ error: 'Nabídka již byla zpracována' });
     }
-    // Zbytek vyprší
-    await prisma.draftOffer.updateMany({
-      where: { profileId: profile.id, status: 'PENDING' },
-      data:  { status: 'EXPIRED' },
-    });
-    // Hráč do týmu
-    await prisma.player.update({ where: { id: player.id }, data: { teamId: offer.teamId } });
-    // Deaktivovat profil
-    await prisma.draftProfile.update({ where: { id: profile.id }, data: { isActive: false } });
+    // Atomicky: zbytek vyprší + hráč do týmu + deaktivace profilu
+    await prisma.$transaction([
+      prisma.draftOffer.updateMany({
+        where: { profileId: profile.id, status: 'PENDING' },
+        data:  { status: 'EXPIRED' },
+      }),
+      prisma.player.update({ where: { id: player.id }, data: { teamId: offer.teamId } }),
+      prisma.draftProfile.update({ where: { id: profile.id }, data: { isActive: false } }),
+    ]);
 
     // Notifikace akceptovaného týmu
     const managers = await prisma.manager.findMany({

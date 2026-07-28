@@ -321,14 +321,19 @@ router.get('/export', requireSupervisor, async (req, res, next) => {
     let csv = '';
 
     if (type === 'referees') {
-      // Export statistik rozhodčích — model je RefRating
-      const ratings = await prisma.refRating.groupBy({
-        by: ['refereeId'],
-        _sum:   { rating: true },
-        _count: { rating: true },
-        orderBy: { _count: { rating: 'desc' } },
+      // Export statistik rozhodčích — stejný zdroj jako GET /stats/referees (PostmatchData.refRating)
+      const postmatches = await prisma.postmatchData.findMany({
+        where: { refRating: { not: null }, match: { refereeId: { not: null } } },
+        select: { refRating: true, match: { select: { refereeId: true } } },
       });
-      const refIds = ratings.map(r => r.refereeId);
+      const ratingMap = {};
+      for (const pm of postmatches) {
+        const refId = pm.match.refereeId!;
+        if (!ratingMap[refId]) ratingMap[refId] = { sum: 0, count: 0 };
+        ratingMap[refId].sum   += pm.refRating!;
+        ratingMap[refId].count += 1;
+      }
+      const refIds = Object.keys(ratingMap);
       const refs = await prisma.referee.findMany({
         where: { id: { in: refIds }, status: 'APPROVED' },
         select: { id: true, firstName: true, lastName: true, level: true },
@@ -336,12 +341,13 @@ router.get('/export', requireSupervisor, async (req, res, next) => {
       const refLookup = Object.fromEntries(refs.map(r => [r.id, r]));
 
       csv = 'Jméno,Příjmení,Úroveň,Průměrné hodnocení,Počet hodnocení\n';
-      csv += ratings
-        .filter(r => refLookup[r.refereeId])
-        .map(r => {
-          const ref = refLookup[r.refereeId];
-          const avg = Math.round((r._sum.rating / r._count.rating) * 10) / 10;
-          return [ref.firstName, ref.lastName, ref.level ?? '', avg, r._count.rating].map(csvCell).join(',');
+      csv += refIds
+        .filter(id => refLookup[id])
+        .sort((a, b) => ratingMap[b].count - ratingMap[a].count)
+        .map(id => {
+          const ref = refLookup[id];
+          const avg = Math.round((ratingMap[id].sum / ratingMap[id].count) * 10) / 10;
+          return [ref.firstName, ref.lastName, ref.level ?? '', avg, ratingMap[id].count].map(csvCell).join(',');
         })
         .join('\n');
     } else {

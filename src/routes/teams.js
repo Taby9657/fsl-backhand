@@ -126,4 +126,16 @@ router.post('/join/:code', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// GET /teams/divisions – veřejný seznam divizí (potřebný na záložkách Zápasy, Tabulka, Statistiky)
+router.get('/divisions', async (req, res, next) => {
+  try {
+    const divisions = await prisma.team.groupBy({
+      by: ['division', 'conference'],
+      _count: { division: true },
+      orderBy: { division: 'asc' },
+    });
+    res.json(divisions);
+  } catch (err) { next(err); }
+});
+
 module.exports = router;

@@ -50,10 +50,14 @@ async function createNotification(userId, title, body, screen = null) {
   const notif = await prisma.notification.create({
     data: { userId, title, body, screen },
   });
-  // Pošli Expo push pokud má uživatel token
-  const user = await prisma.user.findUnique({ where: { id: userId }, select: { pushToken: true } });
-  if (user?.pushToken) {
-    await sendPush(user.pushToken, title, body, { screen });
+  // Pošli Expo push pokud má uživatel token (non-fatal — chyba push nesmí shodit zápis notifikace)
+  try {
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { pushToken: true } });
+    if (user?.pushToken) {
+      await sendPush(user.pushToken, title, body, { screen });
+    }
+  } catch (pushErr) {
+    console.error('Push notification failed (non-fatal):', pushErr.message);
   }
   return notif;
 }
@@ -62,16 +66,20 @@ async function createNotifications(items) {
   // items: [{ userId, title, body, screen? }]
   if (!items?.length) return;
   await prisma.notification.createMany({ data: items });
-  // Hromadný push
-  const userIds = [...new Set(items.map(i => i.userId))];
-  const users = await prisma.user.findMany({
-    where: { id: { in: userIds }, pushToken: { not: null } },
-    select: { id: true, pushToken: true },
-  });
-  const tokenMap = Object.fromEntries(users.map(u => [u.id, u.pushToken]));
-  for (const item of items) {
-    const token = tokenMap[item.userId];
-    if (token) await sendPush(token, item.title, item.body, { screen: item.screen });
+  // Hromadný push (non-fatal)
+  try {
+    const userIds = [...new Set(items.map(i => i.userId))];
+    const users = await prisma.user.findMany({
+      where: { id: { in: userIds }, pushToken: { not: null } },
+      select: { id: true, pushToken: true },
+    });
+    const tokenMap = Object.fromEntries(users.map(u => [u.id, u.pushToken]));
+    for (const item of items) {
+      const token = tokenMap[item.userId];
+      if (token) await sendPush(token, item.title, item.body, { screen: item.screen });
+    }
+  } catch (pushErr) {
+    console.error('Bulk push failed (non-fatal):', pushErr.message);
   }
 }
 
