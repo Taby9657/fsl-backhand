@@ -150,6 +150,7 @@ router.post('/:id/start', requireAuth, async (req, res, next) => {
       include: { homeTeam: true, awayTeam: true },
     });
     if (!match) return res.status(404).json({ error: 'Zápas nenalezen' });
+    if (match.status !== 'UPCOMING') return res.status(400).json({ error: 'Zápas musí být ve stavu UPCOMING' });
     const referee = await prisma.referee.findUnique({ where: { userId: req.user.id } });
     const isReferee = referee && match.refereeId === referee.id;
     const isSup = req.user?.player?.isSupervisor || process.env.SUPERVISOR_USER_IDS?.split(',').includes(req.user.id);
@@ -184,6 +185,7 @@ router.post('/:id/end', requireAuth, async (req, res, next) => {
   try {
     const match = await prisma.match.findUnique({ where: { id: req.params.id } });
     if (!match) return res.status(404).json({ error: 'Zápas nenalezen' });
+    if (match.status !== 'LIVE') return res.status(400).json({ error: 'Zápas musí být ve stavu LIVE' });
     const referee = await prisma.referee.findUnique({ where: { userId: req.user.id } });
     const isReferee = referee && match.refereeId === referee.id;
     const isSup = req.user?.player?.isSupervisor || process.env.SUPERVISOR_USER_IDS?.split(',').includes(req.user.id);
@@ -232,7 +234,16 @@ router.post('/:id/events', requireAuth, async (req, res, next) => {
     const isReferee    = referee && match.refereeId === referee.id;
     if (!isManager && !isSupervisor && !isReferee) return res.status(403).json({ error: 'Nemáte oprávnění' });
 
-    // BUG-11: Validace minuty
+    // Validace event type
+    const VALID_TYPES = ['GOAL', 'PENALTY', 'SHOOTOUT_GOAL', 'SHOOTOUT_MISS', 'PERIOD_END', 'MATCH_END'];
+    if (!VALID_TYPES.includes(type)) {
+      return res.status(400).json({ error: `Neplatný typ události. Povolené: ${VALID_TYPES.join(', ')}` });
+    }
+    // teamId povinné pro gól
+    if ((type === 'GOAL' || type === 'SHOOTOUT_GOAL') && !teamId) {
+      return res.status(400).json({ error: 'teamId je povinné pro gól' });
+    }
+    // Validace minuty
     const minuteParsed = parseInt(minute);
     if (isNaN(minuteParsed) || minuteParsed < 0 || minuteParsed > 200) {
       return res.status(400).json({ error: 'Neplatná minuta zápasu' });
@@ -275,6 +286,8 @@ router.delete('/:id/events/:eventId', requireAuth, async (req, res, next) => {
     if (!event || event.matchId !== req.params.id) return res.status(404).json({ error: 'Událost nenalezena' });
 
     const match = await prisma.match.findUnique({ where: { id: req.params.id } });
+    if (!match) return res.status(404).json({ error: 'Zápas nenalezen' });
+    if (match.status !== 'LIVE') return res.status(400).json({ error: 'Události lze mazat pouze v probíhajícím zápasu' });
     const isManager    = req.user.manager?.some(m => m.teamId === match.homeTeamId || m.teamId === match.awayTeamId);
     const isSupervisor = req.user?.player?.isSupervisor ||
       process.env.SUPERVISOR_USER_IDS?.split(',').includes(req.user.id);
