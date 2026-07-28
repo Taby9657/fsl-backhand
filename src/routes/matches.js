@@ -2,6 +2,7 @@ const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const { requireAuth, requireSupervisor } = require('../middleware/auth');
 const { createNotifications } = require('./notifications');
+const { sendPush } = require('../services/push');
 
 const router = express.Router();
 const prisma = new PrismaClient();
@@ -116,7 +117,10 @@ router.put('/:id', requireSupervisor, async (req, res, next) => {
 // POST /matches/:id/start – rozhodčí zahájí zápas (UPCOMING → LIVE)
 router.post('/:id/start', requireAuth, async (req, res, next) => {
   try {
-    const match = await prisma.match.findUnique({ where: { id: req.params.id } });
+    const match = await prisma.match.findUnique({
+      where: { id: req.params.id },
+      include: { homeTeam: true, awayTeam: true },
+    });
     if (!match) return res.status(404).json({ error: 'Zápas nenalezen' });
     const referee = await prisma.referee.findUnique({ where: { userId: req.user.id } });
     const isReferee = referee && match.refereeId === referee.id;
@@ -127,6 +131,22 @@ router.post('/:id/start', requireAuth, async (req, res, next) => {
       where: { id: req.params.id },
       data:  { status: 'LIVE' },
     });
+
+    // Push notifikace hráčům obou týmů
+    try {
+      const players = await prisma.player.findMany({
+        where:  { teamId: { in: [match.homeTeamId, match.awayTeamId] } },
+        select: { user: { select: { pushToken: true } } },
+      });
+      const tokens = players.map(p => p.user?.pushToken).filter(Boolean);
+      await sendPush(
+        tokens,
+        '⚡ Zápas právě začal!',
+        `${match.homeTeam.abbr} vs ${match.awayTeam.abbr} · sleduj živé skóre`,
+        { screen: `match/${match.id}` }
+      );
+    } catch { /* push je nepovinný */ }
+
     res.json(updated);
   } catch (err) { next(err); }
 });

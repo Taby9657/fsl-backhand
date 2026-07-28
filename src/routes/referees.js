@@ -180,6 +180,38 @@ router.put('/:id/reject', requireSupervisor, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// POST /referees/:id/rate – hodnocení rozhodčího po zápase (manažer jednoho z týmů)
+router.post('/:id/rate', requireAuth, async (req, res, next) => {
+  try {
+    const { matchId, rating } = req.body;
+    if (!matchId || !rating || Number(rating) < 1 || Number(rating) > 5) {
+      return res.status(400).json({ error: 'Neplatné hodnocení – zadej číslo 1–5 a matchId' });
+    }
+
+    const match = await prisma.match.findUnique({ where: { id: matchId } });
+    if (!match) return res.status(404).json({ error: 'Zápas nenalezen' });
+    if (match.status !== 'DONE') return res.status(400).json({ error: 'Zápas ještě neskončil' });
+    if (match.refereeId !== req.params.id) return res.status(400).json({ error: 'Rozhodčí nebyl přiřazen k tomuto zápasu' });
+
+    // Ověř, že uživatel je manažer jednoho z týmů
+    const manager = await prisma.manager.findFirst({
+      where: {
+        userId: req.user.id,
+        teamId: { in: [match.homeTeamId, match.awayTeamId] },
+      },
+    });
+    if (!manager) return res.status(403).json({ error: 'Nemáte oprávnění hodnotit rozhodčího' });
+
+    const result = await prisma.refRating.upsert({
+      where:  { matchId_teamId: { matchId, teamId: manager.teamId } },
+      create: { matchId, refereeId: req.params.id, teamId: manager.teamId, rating: Number(rating) },
+      update: { rating: Number(rating) },
+    });
+
+    res.json(result);
+  } catch (err) { next(err); }
+});
+
 // GET /referees/:id/future-matches – nadcházející nasazení (pro kartu rozhodčího)
 router.get('/:id/future-matches', async (req, res, next) => {
   try {
