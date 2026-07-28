@@ -179,22 +179,42 @@ router.get('/mvp', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// GET /stats/table – tabulka (výhry/remízy/prohry/skóre)
+// GET /stats/table – tabulka (výhry/remízy/prohry/skóre + forma posledních 5)
 router.get('/table', async (req, res, next) => {
   try {
     const { division = 'Divize A', season } = req.query;
 
+    // Načti seřazené podle data (pro výpočet formy)
     const matches = await prisma.match.findMany({
       where: { division, status: 'DONE', ...(season && { season }) },
-      select: { homeTeamId: true, awayTeamId: true, homeScore: true, awayScore: true },
+      select: { homeTeamId: true, awayTeamId: true, homeScore: true, awayScore: true, date: true },
+      orderBy: { date: 'desc' }, // nejnovější první → pro formu
     });
 
     const tableMap = {};
+    const formMap  = {};
+
     function getEntry(teamId) {
       if (!tableMap[teamId]) tableMap[teamId] = { teamId, p: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, pts: 0 };
       return tableMap[teamId];
     }
+    function addForm(teamId, result) {
+      if (!formMap[teamId]) formMap[teamId] = [];
+      if (formMap[teamId].length < 5) formMap[teamId].push(result);
+    }
 
+    // Forma z nejnovějších zápasů (matches jsou desc)
+    matches.forEach(m => {
+      if (m.homeScore > m.awayScore) {
+        addForm(m.homeTeamId, 'W'); addForm(m.awayTeamId, 'L');
+      } else if (m.homeScore < m.awayScore) {
+        addForm(m.homeTeamId, 'L'); addForm(m.awayTeamId, 'W');
+      } else {
+        addForm(m.homeTeamId, 'D'); addForm(m.awayTeamId, 'D');
+      }
+    });
+
+    // Statistiky z všech zápasů
     matches.forEach(m => {
       const h = getEntry(m.homeTeamId);
       const a = getEntry(m.awayTeamId);
@@ -214,7 +234,12 @@ router.get('/table', async (req, res, next) => {
     const teamLookup = Object.fromEntries(teams.map(t => [t.id, t]));
 
     const table = Object.values(tableMap)
-      .map(r => ({ ...r, team: teamLookup[r.teamId], gd: r.gf - r.ga }))
+      .map(r => ({
+        ...r,
+        team: teamLookup[r.teamId],
+        gd: r.gf - r.ga,
+        form: (formMap[r.teamId] ?? []).reverse(), // nejstarší první pro zobrazení
+      }))
       .sort((a, b) => b.pts - a.pts || b.gd - a.gd || b.gf - a.gf);
 
     res.json(table);
