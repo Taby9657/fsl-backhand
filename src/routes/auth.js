@@ -51,7 +51,7 @@ async function verifyAppleToken(identityToken) {
       {
         algorithms: ['RS256'],
         issuer:    'https://appleid.apple.com',
-        audience:  process.env.APPLE_CLIENT_ID || process.env.EXPO_PROJECT_ID,
+        audience:  process.env.APPLE_CLIENT_ID || 'cz.fsl.app',
       },
       (err, decoded) => {
         if (err) reject(err);
