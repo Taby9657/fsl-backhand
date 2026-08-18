@@ -36,6 +36,10 @@ model Team {
   venue      String?
   division   String   @default("Divize A")
   conference String?
+  regStatus   String   @default("APPROVED") // PENDING | APPROVED | REJECTED | APPEALING
+  regNote     String?  // supervisor: důvod zamítnutí / poznámka ke schválení
+  regAppeal   String?  // vedoucí: odvolání / zpětná reakce
+  regAppealAt DateTime?
   createdAt DateTime @default(now())
 
   managers    Manager[]

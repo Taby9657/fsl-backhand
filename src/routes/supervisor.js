@@ -20,6 +20,8 @@ router.get('/dashboard', async (req, res, next) => {
       totalTeams,
       totalPlayers,
       unpaidLicenses,
+      pendingTeams,
+      appealingTeams,
     ] = await Promise.all([
       prisma.referee.count({ where: { status: 'PENDING' } }),
       prisma.supervisorRequest.count({ where: { status: 'PENDING' } }),
@@ -27,9 +29,11 @@ router.get('/dashboard', async (req, res, next) => {
       prisma.team.count(),
       prisma.player.count(),
       prisma.playerPayment.count({ where: { licStatus: { not: 'PAID' } } }),
+      prisma.team.count({ where: { regStatus: 'PENDING' } }),
+      prisma.team.count({ where: { regStatus: 'APPEALING' } }),
     ]);
 
-    res.json({ pendingReferees, pendingRequests, upcomingMatches, totalTeams, totalPlayers, unpaidLicenses });
+    res.json({ pendingReferees, pendingRequests, upcomingMatches, totalTeams, totalPlayers, unpaidLicenses, pendingTeams, appealingTeams });
   } catch (err) { next(err); }
 });
 
@@ -154,18 +158,73 @@ router.delete('/matches/:id', async (req, res, next) => {
 
 // ==================== SPRÁVA TÝMŮ ====================
 
-// GET /supervisor/teams – všechny týmy s počtem hráčů
+// GET /supervisor/teams – všechny týmy s počtem hráčů + filtry
 router.get('/teams', async (req, res, next) => {
   try {
-    const { division } = req.query;
+    const { division, regStatus, payStatus } = req.query;
+    const where = {};
+    if (division)  where.division  = division;
+    if (regStatus) where.regStatus = regStatus;
+    if (payStatus) where.payments  = { status: payStatus };
     const teams = await prisma.team.findMany({
-      where: division ? { division } : undefined,
+      where,
       include: {
-        _count: { select: { players: true } },
+        _count:   { select: { players: true } },
+        payments: { select: { status: true, season: true, paidAt: true } },
       },
-      orderBy: [{ division: 'asc' }, { name: 'asc' }],
+      orderBy: [{ regStatus: 'asc' }, { division: 'asc' }, { name: 'asc' }],
     });
     res.json(teams);
+  } catch (err) { next(err); }
+});
+
+// PUT /supervisor/teams/:id/approve – schválení registrace
+router.put('/teams/:id/approve', async (req, res, next) => {
+  try {
+    const { note } = req.body; // volitelná poznámka
+    const team = await prisma.team.update({
+      where: { id: req.params.id },
+      data:  { regStatus: 'APPROVED', regNote: note || null, regAppeal: null, regAppealAt: null },
+    });
+    // Notifikuj vedoucí týmu
+    const managers = await prisma.manager.findMany({
+      where:   { teamId: team.id },
+      include: { user: { select: { id: true } } },
+    });
+    for (const m of managers) {
+      await createNotification(
+        m.user.id,
+        'Registrace schválena ✅',
+        `Tým ${team.name} byl schválen do ligy.${note ? ` Poznámka: ${note}` : ''}`,
+        'admin',
+      );
+    }
+    res.json(team);
+  } catch (err) { next(err); }
+});
+
+// PUT /supervisor/teams/:id/reject – zamítnutí registrace (povinný důvod)
+router.put('/teams/:id/reject', async (req, res, next) => {
+  try {
+    const { reason } = req.body;
+    if (!reason?.trim()) return res.status(400).json({ error: 'Důvod zamítnutí je povinný' });
+    const team = await prisma.team.update({
+      where: { id: req.params.id },
+      data:  { regStatus: 'REJECTED', regNote: reason.trim() },
+    });
+    const managers = await prisma.manager.findMany({
+      where:   { teamId: team.id },
+      include: { user: { select: { id: true } } },
+    });
+    for (const m of managers) {
+      await createNotification(
+        m.user.id,
+        'Registrace zamítnuta ❌',
+        `Tým ${team.name} byl zamítnut. Důvod: ${reason.trim()}`,
+        'admin',
+      );
+    }
+    res.json(team);
   } catch (err) { next(err); }
 });
 

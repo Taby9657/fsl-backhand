@@ -1,6 +1,7 @@
 const express = require('express');
 
 const { requireAuth, requireManager } = require('../middleware/auth');
+const { createNotification } = require('./notifications');
 const { uploadLogo } = require('../utils/fileUpload');
 const { v4: uuidv4 } = require('uuid');
 
@@ -54,11 +55,12 @@ router.post('/', requireAuth, async (req, res, next) => {
     const team = await prisma.team.create({
       data: {
         name,
-        abbr: abbr.toUpperCase().slice(0, 3),
-        color: color || '#C9A140',
-        division: division || 'Divize A',
-        managers: { create: { userId: req.user.id } },
-        payments: { create: {} },
+        abbr:      abbr.toUpperCase().slice(0, 3),
+        color:     color || '#C9A140',
+        division:  division || 'Divize A',
+        regStatus: 'PENDING', // nový tým čeká na schválení supervisorem
+        managers:  { create: { userId: req.user.id } },
+        payments:  { create: {} },
       },
       include: { managers: true },
     });
@@ -67,7 +69,53 @@ router.post('/', requireAuth, async (req, res, next) => {
     const code = `FSL-${team.abbr}-${uuidv4().slice(0, 4).toUpperCase()}`;
     await prisma.inviteCode.create({ data: { code, teamId: team.id } });
 
+    // Notifikuj vedoucího o přijetí žádosti
+    await createNotification(
+      req.user.id,
+      'Registrace přijata 📋',
+      `Tým ${team.name} byl přihlášen do ligy. Čeká na schválení supervisorem.`,
+      'admin',
+    );
+
     res.status(201).json({ team, inviteCode: code });
+  } catch (err) { next(err); }
+});
+
+// PUT /teams/:id/appeal – odvolání vedoucího po zamítnutí
+router.put('/:id/appeal', requireAuth, async (req, res, next) => {
+  try {
+    const isManager = req.user.manager?.some(m => m.teamId === req.params.id);
+    if (!isManager) return res.status(403).json({ error: 'Nejste vedoucí tohoto týmu' });
+
+    const { appeal } = req.body;
+    if (!appeal?.trim()) return res.status(400).json({ error: 'Text odvolání je povinný' });
+
+    const team = await prisma.team.findUnique({ where: { id: req.params.id } });
+    if (!team) return res.status(404).json({ error: 'Tým nenalezen' });
+    if (team.regStatus !== 'REJECTED') {
+      return res.status(400).json({ error: 'Odvolání lze podat pouze u zamítnuté registrace' });
+    }
+
+    const updated = await prisma.team.update({
+      where: { id: req.params.id },
+      data:  { regStatus: 'APPEALING', regAppeal: appeal.trim(), regAppealAt: new Date() },
+    });
+
+    // Notifikuj supervisory (hráče s isSupervisor=true)
+    const supervisors = await prisma.player.findMany({
+      where:   { isSupervisor: true },
+      include: { user: { select: { id: true } } },
+    });
+    for (const sv of supervisors) {
+      await createNotification(
+        sv.user.id,
+        'Odvolání registrace ⚠️',
+        `Tým ${team.name} se odvolal proti zamítnutí.`,
+        'supervisor/teams',
+      );
+    }
+
+    res.json(updated);
   } catch (err) { next(err); }
 });
 
