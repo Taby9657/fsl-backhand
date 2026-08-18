@@ -102,7 +102,7 @@ router.post('/', requireSupervisor, async (req, res, next) => {
         venue:       venue || null,
         competition: competition || 'FSL Liga',
         division:    division   || 'Divize A',
-        season:      season     || '2025/26',
+        season:      season     || null,
         round:       round      ? parseInt(round) : null,
       },
       include: { homeTeam: true, awayTeam: true, referee: true },

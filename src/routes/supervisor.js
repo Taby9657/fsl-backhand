@@ -93,12 +93,13 @@ router.get('/referees', async (req, res, next) => {
 
 router.get('/matches', async (req, res, next) => {
   try {
-    const { status, division, round } = req.query;
+    const { status, division, round, season } = req.query;
     const matches = await prisma.match.findMany({
       where: {
         ...(status   && { status }),
         ...(division && { division }),
         ...(round    && { round: parseInt(round) }),
+        ...(season   && { season }),
       },
       include: {
         homeTeam: { select: { id: true, name: true, abbr: true, color: true } },
