@@ -156,6 +156,30 @@ router.post('/:id/start', requireAuth, async (req, res, next) => {
     const isSup = req.user?.player?.isSupervisor || process.env.SUPERVISOR_USER_IDS?.split(',').includes(req.user.id);
     if (!isReferee && !isSup) return res.status(403).json({ error: 'Nemáte oprávnění' });
 
+    // Kontrola soupisek – obě musí mít min. 9 hráčů (8 hráčů v poli + 1 brankář)
+    const MIN_PLAYERS = 9;
+    const lineups = await prisma.lineupSubmission.findMany({
+      where:   { matchId: req.params.id },
+      include: { players: { select: { isGoalkeeper: true } } },
+    });
+    const homeLineup = lineups.find(l => l.teamId === match.homeTeamId);
+    const awayLineup = lineups.find(l => l.teamId === match.awayTeamId);
+    const homeCnt    = homeLineup?.players?.length ?? 0;
+    const awayCnt    = awayLineup?.players?.length ?? 0;
+    const homeHasGK  = homeLineup?.players?.some(p => p.isGoalkeeper) ?? false;
+    const awayHasGK  = awayLineup?.players?.some(p => p.isGoalkeeper) ?? false;
+    const errors = [];
+    if (homeCnt < MIN_PLAYERS) errors.push(`${match.homeTeam.abbr}: min. ${MIN_PLAYERS} hráčů (má ${homeCnt})`);
+    if (awayCnt < MIN_PLAYERS) errors.push(`${match.awayTeam.abbr}: min. ${MIN_PLAYERS} hráčů (má ${awayCnt})`);
+    if (!homeHasGK) errors.push(`${match.homeTeam.abbr}: chybí brankář`);
+    if (!awayHasGK) errors.push(`${match.awayTeam.abbr}: chybí brankář`);
+    if (errors.length > 0) {
+      return res.status(400).json({
+        error: `Nelze zahájit zápas – ${errors.join('; ')}.`,
+        code:  'LINEUP_INCOMPLETE',
+      });
+    }
+
     const updated = await prisma.match.update({
       where: { id: req.params.id },
       data:  { status: 'LIVE' },
