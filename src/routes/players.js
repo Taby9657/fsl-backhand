@@ -128,12 +128,12 @@ router.put('/:id', requireAuth, async (req, res, next) => {
     const updated = await prisma.player.update({
       where: { id: req.params.id },
       data: {
-        ...(firstName  && { firstName }),
-        ...(lastName   && { lastName }),
-        ...(jersey     && { jersey: parseInt(jersey) }),
-        ...(position   && { position }),
-        ...(birthdate  && { birthdate: new Date(birthdate) }),
-        ...(phone      && { phone }),
+        ...(firstName !== undefined && firstName && { firstName }),
+        ...(lastName  !== undefined && lastName  && { lastName }),
+        ...(jersey    !== undefined && jersey    && { jersey: parseInt(jersey) }),
+        ...(position  !== undefined && { position:  position  || null }),
+        ...(birthdate !== undefined && birthdate  && { birthdate: new Date(birthdate) }),
+        ...(phone     !== undefined && { phone:     phone     || null }),
       },
     });
     res.json(updated);

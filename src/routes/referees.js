@@ -117,12 +117,12 @@ router.put('/:id', requireAuth, async (req, res, next) => {
     const updated = await prisma.referee.update({
       where: { id: req.params.id },
       data: {
-        ...(phone       && { phone }),
-        ...(address     && { address }),
-        ...(city        && { city }),
-        ...(zip         && { zip }),
-        ...(bankAccount && { bankAccount }),
-        ...(bankCode    && { bankCode }),
+        ...(phone       !== undefined && { phone:       phone       || null }),
+        ...(address     !== undefined && { address:     address     || null }),
+        ...(city        !== undefined && { city:        city        || null }),
+        ...(zip         !== undefined && { zip:         zip         || null }),
+        ...(bankAccount !== undefined && { bankAccount: bankAccount || null }),
+        ...(bankCode    !== undefined && { bankCode:    bankCode    || null }),
       },
     });
     res.json(updated);

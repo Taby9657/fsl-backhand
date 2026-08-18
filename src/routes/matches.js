@@ -348,6 +348,13 @@ router.put('/:id/lineup/:teamId', requireAuth, async (req, res, next) => {
     const isManager = req.user.manager?.some(m => m.teamId === req.params.teamId);
     if (!isManager) return res.status(403).json({ error: 'Nejste vedoucí tohoto týmu' });
 
+    // ── Kontrola stavu zápasu ──
+    const matchCheck = await prisma.match.findUnique({ where: { id: req.params.id }, select: { status: true } });
+    if (!matchCheck) return res.status(404).json({ error: 'Zápas nenalezen' });
+    if (['LIVE', 'DONE'].includes(matchCheck.status)) {
+      return res.status(400).json({ error: 'Zápas již probíhá nebo skončil – soupisku nelze měnit' });
+    }
+
     // ── Kontrola licencí ──
     if (!force) {
       const playerIds = players.map(p => p.playerId);
@@ -444,6 +451,12 @@ router.post('/:id/postmatch/:teamId/submit', requireAuth, async (req, res, next)
   try {
     const isManager = req.user.manager?.some(m => m.teamId === req.params.teamId);
     if (!isManager) return res.status(403).json({ error: 'Nejste vedoucí tohoto týmu' });
+
+    const matchForSubmit = await prisma.match.findUnique({ where: { id: req.params.id }, select: { status: true } });
+    if (!matchForSubmit) return res.status(404).json({ error: 'Zápas nenalezen' });
+    if (matchForSubmit.status !== 'DONE') {
+      return res.status(400).json({ error: 'Postmatch formulář lze uzamknout pouze po skončení zápasu' });
+    }
 
     const postmatch = await prisma.postmatchData.update({
       where: { matchId_teamId: { matchId: req.params.id, teamId: req.params.teamId } },

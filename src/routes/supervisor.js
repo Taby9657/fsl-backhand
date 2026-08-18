@@ -346,6 +346,7 @@ router.post('/fixtures/generate', async (req, res, next) => {
       division, conference, teamIds,
       competition      = 'FSL Liga',
       startDate,
+      season           = null,
       roundIntervalDays = 7,
       defaultTime      = '18:00',
       defaultVenue     = null,
@@ -401,6 +402,7 @@ router.post('/fixtures/generate', async (req, res, next) => {
         date:        d,
         venue:       defaultVenue,
         status:      'UPCOMING',
+        season:      season || null,
       };
     });
 

@@ -12,7 +12,7 @@ router.get('/seasons', async (req, res, next) => {
       by: ['season'],
       orderBy: { season: 'desc' },
     });
-    res.json(rows.map(r => r.season));
+    res.json(rows.map(r => r.season).filter(Boolean));
   } catch (err) { next(err); }
 });
 
@@ -183,7 +183,18 @@ router.get('/mvp', async (req, res, next) => {
 // GET /stats/table – tabulka (výhry/remízy/prohry/skóre + forma posledních 5)
 router.get('/table', async (req, res, next) => {
   try {
-    const { division = 'Divize A', season } = req.query;
+    let { division, season } = req.query;
+
+    // Pokud division není zadáno, vezmi první dostupnou
+    if (!division) {
+      const first = await prisma.match.findFirst({
+        where: { status: 'DONE', ...(season && { season }) },
+        select: { division: true },
+        orderBy: { date: 'desc' },
+      });
+      if (!first) return res.json([]);
+      division = first.division;
+    }
 
     // Načti seřazené podle data (pro výpočet formy)
     const matches = await prisma.match.findMany({
@@ -239,7 +250,7 @@ router.get('/table', async (req, res, next) => {
         ...r,
         team: teamLookup[r.teamId],
         gd: r.gf - r.ga,
-        form: (formMap[r.teamId] ?? []).reverse(), // nejstarší první pro zobrazení
+        form: [...(formMap[r.teamId] ?? [])].reverse(), // nejstarší první pro zobrazení
       }))
       .sort((a, b) => b.pts - a.pts || b.gd - a.gd || b.gf - a.gf);
 
@@ -247,28 +258,31 @@ router.get('/table', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// GET /stats/referees – průměrné hodnocení rozhodčích (ze PostmatchData)
+// GET /stats/referees – průměrné hodnocení rozhodčích (PostmatchData + RefRating)
 router.get('/referees', async (req, res, next) => {
   try {
     const { season } = req.query;
 
-    // Hodnocení jsou uložena v PostmatchData.refRating, nikoli v RefRating modelu
-    const postmatches = await prisma.postmatchData.findMany({
-      where: {
-        submitted:  true,
-        refRating:  { not: null },
-        match: {
-          refereeId: { not: null },
-          ...(season && { season }),
+    // Zdroj 1: PostmatchData.refRating — hodnocení od vedoucích týmů (po zápase)
+    const [postmatches, fanRatings] = await Promise.all([
+      prisma.postmatchData.findMany({
+        where: {
+          submitted: true,
+          refRating: { not: null },
+          match: { refereeId: { not: null }, ...(season && { season }) },
         },
-      },
-      select: {
-        refRating: true,
-        match: { select: { refereeId: true } },
-      },
-    });
+        select: { refRating: true, match: { select: { refereeId: true } } },
+      }),
+      // Zdroj 2: RefRating — hodnocení od hráčů/fanoušků přímo v app
+      prisma.refRating.findMany({
+        where: {
+          ...(season && { match: { season } }),
+        },
+        select: { refereeId: true, rating: true },
+      }),
+    ]);
 
-    // Agregace podle rozhodčího
+    // Agregace obou zdrojů do jednoho průměru
     const ratingMap = {};
     for (const pm of postmatches) {
       const refId = pm.match.refereeId;
@@ -276,6 +290,12 @@ router.get('/referees', async (req, res, next) => {
       if (!ratingMap[refId]) ratingMap[refId] = { sum: 0, count: 0 };
       ratingMap[refId].sum   += pm.refRating;
       ratingMap[refId].count += 1;
+    }
+    for (const fr of fanRatings) {
+      if (!fr.refereeId) continue;
+      if (!ratingMap[fr.refereeId]) ratingMap[fr.refereeId] = { sum: 0, count: 0 };
+      ratingMap[fr.refereeId].sum   += fr.rating;
+      ratingMap[fr.refereeId].count += 1;
     }
 
     const refIds = Object.keys(ratingMap);
@@ -323,7 +343,7 @@ router.get('/export', requireSupervisor, async (req, res, next) => {
     if (type === 'referees') {
       // Export statistik rozhodčích — stejný zdroj jako GET /stats/referees (PostmatchData.refRating)
       const postmatches = await prisma.postmatchData.findMany({
-        where: { refRating: { not: null }, match: { refereeId: { not: null } } },
+        where: { refRating: { not: null }, match: { refereeId: { not: null }, ...(season && { season }) } },
         select: { refRating: true, match: { select: { refereeId: true } } },
       });
       const ratingMap = {};
@@ -366,7 +386,11 @@ router.get('/export', requireSupervisor, async (req, res, next) => {
       // MVP hlasy jsou v PostmatchData.opponentMvpId
       const mvpVotes = await prisma.postmatchData.groupBy({
         by: ['opponentMvpId'],
-        where: { opponentMvpId: { not: null }, submitted: true },
+        where: {
+          opponentMvpId: { not: null },
+          submitted: true,
+          ...(Object.keys(matchWhere).length && { match: matchWhere }),
+        },
         _count: { opponentMvpId: true },
       });
 
