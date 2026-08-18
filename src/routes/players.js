@@ -78,15 +78,21 @@ router.post('/', requireAuth, async (req, res, next) => {
       return res.status(400).json({ error: 'Chybí povinné údaje (jméno, příjmení, číslo dresu, tým)' });
     }
 
+    // BUG-09 OPRAVA: Validace čísla dresu (zabraňuje NaN z parseInt)
+    const jerseyNum = parseInt(jersey, 10);
+    if (isNaN(jerseyNum) || jerseyNum < 0 || jerseyNum > 99) {
+      return res.status(400).json({ error: 'Číslo dresu musí být číslo v rozsahu 0–99' });
+    }
+
     // Zkontroluj, zda už uživatel nemá hráče
     const existing = await prisma.player.findUnique({ where: { userId: req.user.id } });
     if (existing) return res.status(409).json({ error: 'Uživatel již má hráčský profil' });
 
     // Zkontroluj unikátnost čísla dresu v týmu
     const jerseyTaken = await prisma.player.findFirst({
-      where: { teamId, jersey: parseInt(jersey) },
+      where: { teamId, jersey: jerseyNum },
     });
-    if (jerseyTaken) return res.status(409).json({ error: `Číslo dresu ${jersey} je již obsazeno v tomto týmu` });
+    if (jerseyTaken) return res.status(409).json({ error: `Číslo dresu ${jerseyNum} je již obsazeno v tomto týmu` });
 
     const player = await prisma.player.create({
       data: {
@@ -94,7 +100,7 @@ router.post('/', requireAuth, async (req, res, next) => {
         teamId,
         firstName,
         lastName,
-        jersey: parseInt(jersey),
+        jersey: jerseyNum,
         position: position || 'Útočník',
         birthdate: birthdate ? new Date(birthdate) : null,
         phone,
@@ -117,12 +123,20 @@ router.put('/:id', requireAuth, async (req, res, next) => {
 
     const { firstName, lastName, jersey, position, birthdate, phone } = req.body;
 
+    // BUG-09 OPRAVA: Validace čísla dresu při editaci
+    if (jersey !== undefined && jersey !== null && jersey !== '') {
+      const jerseyEditNum = parseInt(jersey, 10);
+      if (isNaN(jerseyEditNum) || jerseyEditNum < 0 || jerseyEditNum > 99) {
+        return res.status(400).json({ error: 'Číslo dresu musí být číslo v rozsahu 0–99' });
+      }
+    }
+
     // Zkontroluj unikátnost čísla dresu při změně
     if (jersey && player.teamId) {
       const jerseyTaken = await prisma.player.findFirst({
-        where: { teamId: player.teamId, jersey: parseInt(jersey), NOT: { id: req.params.id } },
+        where: { teamId: player.teamId, jersey: parseInt(jersey, 10), NOT: { id: req.params.id } },
       });
-      if (jerseyTaken) return res.status(409).json({ error: `Číslo dresu ${jersey} je již obsazeno v tomto týmu` });
+      if (jerseyTaken) return res.status(409).json({ error: `Číslo dresu ${parseInt(jersey, 10)} je již obsazeno v tomto týmu` });
     }
 
     const updated = await prisma.player.update({
@@ -130,7 +144,7 @@ router.put('/:id', requireAuth, async (req, res, next) => {
       data: {
         ...(firstName !== undefined && firstName && { firstName }),
         ...(lastName  !== undefined && lastName  && { lastName }),
-        ...(jersey    !== undefined && jersey    && { jersey: parseInt(jersey) }),
+        ...(jersey    !== undefined && jersey    && { jersey: parseInt(jersey, 10) }),
         ...(position  !== undefined && { position:  position  || null }),
         ...(birthdate !== undefined && birthdate  && { birthdate: new Date(birthdate) }),
         ...(phone     !== undefined && { phone:     phone     || null }),

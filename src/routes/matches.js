@@ -153,7 +153,7 @@ router.post('/:id/start', requireAuth, async (req, res, next) => {
     if (match.status !== 'UPCOMING') return res.status(400).json({ error: 'Zápas musí být ve stavu UPCOMING' });
     const referee = await prisma.referee.findUnique({ where: { userId: req.user.id } });
     const isReferee = referee && match.refereeId === referee.id;
-    const isSup = req.user?.player?.isSupervisor || process.env.SUPERVISOR_USER_IDS?.split(',').includes(req.user.id);
+    const isSup = req.user?.player?.isSupervisor || process.env.SUPERVISOR_USER_IDS?.split(',').map(s => s.trim()).includes(req.user.id);
     if (!isReferee && !isSup) return res.status(403).json({ error: 'Nemáte oprávnění' });
 
     // Kontrola soupisek – obě musí mít min. 9 hráčů (8 hráčů v poli + 1 brankář)
@@ -212,7 +212,7 @@ router.post('/:id/end', requireAuth, async (req, res, next) => {
     if (match.status !== 'LIVE') return res.status(400).json({ error: 'Zápas musí být ve stavu LIVE' });
     const referee = await prisma.referee.findUnique({ where: { userId: req.user.id } });
     const isReferee = referee && match.refereeId === referee.id;
-    const isSup = req.user?.player?.isSupervisor || process.env.SUPERVISOR_USER_IDS?.split(',').includes(req.user.id);
+    const isSup = req.user?.player?.isSupervisor || process.env.SUPERVISOR_USER_IDS?.split(',').map(s => s.trim()).includes(req.user.id);
     if (!isReferee && !isSup) return res.status(403).json({ error: 'Nemáte oprávnění' });
 
     const updated = await prisma.match.update({
@@ -253,10 +253,15 @@ router.post('/:id/events', requireAuth, async (req, res, next) => {
 
     const isManager    = req.user.manager?.some(m => m.teamId === match.homeTeamId || m.teamId === match.awayTeamId);
     const isSupervisor = req.user?.player?.isSupervisor ||
-      process.env.SUPERVISOR_USER_IDS?.split(',').includes(req.user.id);
+      process.env.SUPERVISOR_USER_IDS?.split(',').map(s => s.trim()).includes(req.user.id);
     const referee      = await prisma.referee.findUnique({ where: { userId: req.user.id } });
     const isReferee    = referee && match.refereeId === referee.id;
     if (!isManager && !isSupervisor && !isReferee) return res.status(403).json({ error: 'Nemáte oprávnění' });
+
+    // BUG-03 OPRAVA: Ověř že teamId patří do tohoto zápasu
+    if (teamId && teamId !== match.homeTeamId && teamId !== match.awayTeamId) {
+      return res.status(400).json({ error: 'Zadaný tým nepatří do tohoto zápasu' });
+    }
 
     // Validace event type
     const VALID_TYPES = ['GOAL', 'PENALTY', 'SHOOTOUT_GOAL', 'SHOOTOUT_MISS', 'PERIOD_END', 'MATCH_END'];
@@ -314,7 +319,7 @@ router.delete('/:id/events/:eventId', requireAuth, async (req, res, next) => {
     if (match.status !== 'LIVE') return res.status(400).json({ error: 'Události lze mazat pouze v probíhajícím zápasu' });
     const isManager    = req.user.manager?.some(m => m.teamId === match.homeTeamId || m.teamId === match.awayTeamId);
     const isSupervisor = req.user?.player?.isSupervisor ||
-      process.env.SUPERVISOR_USER_IDS?.split(',').includes(req.user.id);
+      process.env.SUPERVISOR_USER_IDS?.split(',').map(s => s.trim()).includes(req.user.id);
     const referee2     = await prisma.referee.findUnique({ where: { userId: req.user.id } });
     const isReferee2   = referee2 && match.refereeId === referee2.id;
     if (!isManager && !isSupervisor && !isReferee2) return res.status(403).json({ error: 'Nemáte oprávnění' });
@@ -348,11 +353,24 @@ router.put('/:id/lineup/:teamId', requireAuth, async (req, res, next) => {
     const isManager = req.user.manager?.some(m => m.teamId === req.params.teamId);
     if (!isManager) return res.status(403).json({ error: 'Nejste vedoucí tohoto týmu' });
 
+    // BUG-02 OPRAVA: Validace pole players před dalším zpracováním
+    if (!Array.isArray(players) || players.length === 0) {
+      return res.status(400).json({ error: 'Pole players musí být neprázdné pole hráčů' });
+    }
+
     // ── Kontrola stavu zápasu ──
-    const matchCheck = await prisma.match.findUnique({ where: { id: req.params.id }, select: { status: true } });
+    const matchCheck = await prisma.match.findUnique({
+      where: { id: req.params.id },
+      select: { status: true, homeTeamId: true, awayTeamId: true },
+    });
     if (!matchCheck) return res.status(404).json({ error: 'Zápas nenalezen' });
     if (['LIVE', 'DONE'].includes(matchCheck.status)) {
       return res.status(400).json({ error: 'Zápas již probíhá nebo skončil – soupisku nelze měnit' });
+    }
+
+    // BUG-13 OPRAVA: Ověř že teamId patří do tohoto zápasu
+    if (req.params.teamId !== matchCheck.homeTeamId && req.params.teamId !== matchCheck.awayTeamId) {
+      return res.status(400).json({ error: 'Zadaný tým nepatří do tohoto zápasu' });
     }
 
     // ── Kontrola licencí ──
@@ -420,6 +438,16 @@ router.put('/:id/postmatch/:teamId', requireAuth, async (req, res, next) => {
   try {
     const isManager = req.user.manager?.some(m => m.teamId === req.params.teamId);
     if (!isManager) return res.status(403).json({ error: 'Nejste vedoucí tohoto týmu' });
+
+    // BUG-14 OPRAVA: Ověř že teamId patří do tohoto zápasu
+    const matchForTeamCheck = await prisma.match.findUnique({
+      where: { id: req.params.id },
+      select: { homeTeamId: true, awayTeamId: true },
+    });
+    if (!matchForTeamCheck) return res.status(404).json({ error: 'Zápas nenalezen' });
+    if (req.params.teamId !== matchForTeamCheck.homeTeamId && req.params.teamId !== matchForTeamCheck.awayTeamId) {
+      return res.status(400).json({ error: 'Zadaný tým nepatří do tohoto zápasu' });
+    }
 
     const { refRating, refNote, opponentMvpId, actionVideoUrl, actionDesc } = req.body;
     const postmatch = await prisma.postmatchData.upsert({

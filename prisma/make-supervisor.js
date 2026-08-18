@@ -6,21 +6,36 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
 async function main() {
-  // Najdi nejnovějšího uživatele (Apple login ho právě vytvořil)
-  const users = await prisma.user.findMany({
+  // Preferuj uživatele s Apple ID (skutečný přihlášený uživatel)
+  const appleUsers = await prisma.user.findMany({
+    where: { player: null, appleId: { not: null } },
+    orderBy: { createdAt: 'desc' },
+    take: 5,
+    select: { id: true, email: true, createdAt: true, appleId: true },
+  });
+
+  const allUsers = await prisma.user.findMany({
     where: { player: null },
     orderBy: { createdAt: 'desc' },
     take: 5,
     select: { id: true, email: true, createdAt: true, appleId: true },
   });
 
+  const users = appleUsers.length ? appleUsers : allUsers;
+
   if (!users.length) {
     console.log('Žádný uživatel bez hráčského profilu nenalezen.');
+    console.log('→ Přihlas se nejdřív do apky pomocí Apple ID, pak spusť znovu.');
     return;
   }
 
-  console.log('Nalezení uživatelé bez hráčského profilu:');
-  users.forEach((u, i) => console.log(`  [${i}] ${u.email ?? '(no email)'} | Apple: ${u.appleId ?? 'none'} | ${u.createdAt.toISOString()}`));
+  if (!appleUsers.length) {
+    console.log('⚠️  Žádný uživatel s Apple ID nenalezen – přihlásil ses do apky?');
+    console.log('   Pokud ne, přihlas se nejdřív a pak spusť znovu.\n');
+  }
+
+  console.log(appleUsers.length ? '✅ Uživatelé s Apple ID:' : '⚠️  Uživatelé BEZ Apple ID (možná špatní):');
+  users.forEach((u, i) => console.log(`  [${i}] ${u.email ?? '(no email)'} | Apple: ${u.appleId ? u.appleId.slice(0, 12) + '...' : 'CHYBÍ'} | ${u.createdAt.toISOString()}`));
 
   const target = users[0];
   console.log(`\nNastavuji supervisora pro: ${target.email ?? target.id}`);

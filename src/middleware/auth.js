@@ -37,7 +37,7 @@ async function requireAuth(req, res, next) {
 async function requireSupervisor(req, res, next) {
   await requireAuth(req, res, async () => {
     const isSupervisor = req.user?.player?.isSupervisor ||
-      process.env.SUPERVISOR_USER_IDS?.split(',').includes(req.user.id);
+      process.env.SUPERVISOR_USER_IDS?.split(',').map(s => s.trim()).includes(req.user.id);
     if (!isSupervisor) {
       return res.status(403).json({ error: 'Přístup pouze pro supervisory' });
     }

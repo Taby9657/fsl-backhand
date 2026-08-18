@@ -216,10 +216,13 @@ router.get('/table', async (req, res, next) => {
     }
 
     // Forma z nejnovějších zápasů (matches jsou desc)
+    // BUG-10 OPRAVA: použij ?? 0 pro případ null skóre (zápas bez zadaného výsledku)
     matches.forEach(m => {
-      if (m.homeScore > m.awayScore) {
+      const hs = m.homeScore ?? 0;
+      const as_ = m.awayScore ?? 0;
+      if (hs > as_) {
         addForm(m.homeTeamId, 'W'); addForm(m.awayTeamId, 'L');
-      } else if (m.homeScore < m.awayScore) {
+      } else if (hs < as_) {
         addForm(m.homeTeamId, 'L'); addForm(m.awayTeamId, 'W');
       } else {
         addForm(m.homeTeamId, 'D'); addForm(m.awayTeamId, 'D');
@@ -227,14 +230,17 @@ router.get('/table', async (req, res, next) => {
     });
 
     // Statistiky z všech zápasů
+    // BUG-10 OPRAVA: použij ?? 0 pro případ null skóre
     matches.forEach(m => {
       const h = getEntry(m.homeTeamId);
       const a = getEntry(m.awayTeamId);
+      const hs = m.homeScore ?? 0;
+      const as_ = m.awayScore ?? 0;
       h.p++; a.p++;
-      h.gf += m.homeScore; h.ga += m.awayScore;
-      a.gf += m.awayScore; a.ga += m.homeScore;
-      if (m.homeScore > m.awayScore) { h.w++; h.pts += 3; a.l++; }
-      else if (m.homeScore < m.awayScore) { a.w++; a.pts += 3; h.l++; }
+      h.gf += hs; h.ga += as_;
+      a.gf += as_; a.ga += hs;
+      if (hs > as_) { h.w++; h.pts += 3; a.l++; }
+      else if (hs < as_) { a.w++; a.pts += 3; h.l++; }
       else { h.d++; h.pts += 1; a.d++; a.pts += 1; }
     });
 

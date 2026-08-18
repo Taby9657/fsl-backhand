@@ -29,6 +29,11 @@ const FIO_TOKEN    = process.env.FIO_API_TOKEN;
  *   Tým  – domácí zápas: 4 + 7místné číslo (prefix 4)
  */
 function generateVS(type, sequenceNumber) {
+  // BUG-07 OPRAVA: Zamezení přetečení pořadového čísla VS
+  // Fio API akceptuje VS max 10 číslic (0–9 999 999 999), prefix zabírá 1 číslo
+  if (sequenceNumber > 9_999_999) {
+    throw new Error(`VS overflow: pořadové číslo ${sequenceNumber} přesahuje maximální hodnotu 9 999 999`);
+  }
   const prefixes = {
     PLAYER_LICENSE: 1,
     SUPER_LICENSE:  2,
@@ -198,10 +203,15 @@ async function matchTransaction(tx) {
       if (tx.amount < playerPayment.licFee) {
         return { matched: false, reason: `nedostatečná částka (přišlo ${tx.amount}, požadováno ${playerPayment.licFee})` };
       }
-      await prisma.playerPayment.update({
-        where: { variableSymbol: vs },
+      // Atomický update se WHERE podmínkou: zabrání race condition při souběžném zpracování
+      const updatedCount = await prisma.playerPayment.updateMany({
+        where: { variableSymbol: vs, licStatus: { not: 'PAID' } },
         data:  { licStatus: 'PAID', licPaidAt: tx.date, licMethod: 'bank' },
       });
+      if (updatedCount.count === 0) {
+        // Jiný souběžný process platbu zpracoval dříve
+        return { matched: false, reason: 'platba právě zpracována jiným procesem (race condition)' };
+      }
       await prisma.player.update({
         where: { id: playerPayment.playerId },
         data:  { licensed: true },
@@ -214,10 +224,14 @@ async function matchTransaction(tx) {
       if (tx.amount < playerPayment.superFee) {
         return { matched: false, reason: `nedostatečná částka pro superlicenci` };
       }
-      await prisma.playerPayment.update({
-        where: { variableSymbol: vs },
+      // Atomický update se WHERE podmínkou: zabrání race condition při souběžném zpracování
+      const updatedSuperCount = await prisma.playerPayment.updateMany({
+        where: { variableSymbol: vs, superStatus: { not: 'PAID' } },
         data:  { superStatus: 'PAID', superPaidAt: tx.date, superLic: true },
       });
+      if (updatedSuperCount.count === 0) {
+        return { matched: false, reason: 'super licence právě zpracována jiným procesem (race condition)' };
+      }
       await sendNotification(playerPayment.player.userId, 'Platba přijata', `Super licence ${tx.amount} Kč zaplacena.`, 'payments');
       return { matched: true, type: 'SUPER_LICENSE', playerId: playerPayment.playerId, amount: tx.amount };
     }
@@ -238,10 +252,14 @@ async function matchTransaction(tx) {
     if (tx.amount < teamPayment.amount) {
       return { matched: false, reason: `nedostatečná částka (přišlo ${tx.amount}, požadováno ${teamPayment.amount})` };
     }
-    await prisma.teamPayment.update({
-      where: { variableSymbol: vs },
+    // Atomický update se WHERE podmínkou: zabrání race condition při souběžném zpracování
+    const updatedTeamCount = await prisma.teamPayment.updateMany({
+      where: { variableSymbol: vs, status: { not: 'PAID' } },
       data:  { status: 'PAID', paidAt: tx.date, method: 'bank' },
     });
+    if (updatedTeamCount.count === 0) {
+      return { matched: false, reason: 'týmová platba právě zpracována jiným procesem (race condition)' };
+    }
     return { matched: true, type: 'TEAM_REG', teamId: teamPayment.teamId, amount: tx.amount };
   }
 

@@ -435,16 +435,6 @@ router.post('/fixtures/generate', async (req, res, next) => {
 
     if (teams.length < 2) return res.status(400).json({ error: 'Potřeba alespoň 2 týmy' });
 
-    if (deleteExisting) {
-      if (Array.isArray(teamIds) && teamIds.length >= 2) {
-        await prisma.match.deleteMany({
-          where: { status: 'UPCOMING', OR: [{ homeTeamId: { in: teamIds } }, { awayTeamId: { in: teamIds } }] },
-        });
-      } else {
-        await prisma.match.deleteMany({ where: { division: matchDivision, status: 'UPCOMING' } });
-      }
-    }
-
     const fixtures = generateRoundRobin(teams.map(t => t.id), doubleRoundRobin);
     const [hour, minute] = defaultTime.split(':').map(Number);
     const base = new Date(startDate);
@@ -466,7 +456,20 @@ router.post('/fixtures/generate', async (req, res, next) => {
       };
     });
 
-    await prisma.match.createMany({ data: matchData });
+    // BUG-06 OPRAVA: Zabal mazání starých a vytváření nových zápasů do DB transakce
+    // Zabraňuje nekonzistentnímu stavu při selhání (např. smazáno, ale nevytvořeno)
+    await prisma.$transaction(async (tx) => {
+      if (deleteExisting) {
+        if (Array.isArray(teamIds) && teamIds.length >= 2) {
+          await tx.match.deleteMany({
+            where: { status: 'UPCOMING', OR: [{ homeTeamId: { in: teamIds } }, { awayTeamId: { in: teamIds } }] },
+          });
+        } else {
+          await tx.match.deleteMany({ where: { division: matchDivision, status: 'UPCOMING' } });
+        }
+      }
+      await tx.match.createMany({ data: matchData });
+    });
 
     res.json({
       created:  matchData.length,
@@ -533,18 +536,29 @@ router.post('/new-season', async (req, res, next) => {
       cancelledCount = result.count;
     }
 
-    // MISSING-02: Reset licencí hráčů a plateb týmů na PENDING pro novou sezónu
+    // MISSING-02 + BUG-15 OPRAVA: Reset licencí hráčů a plateb týmů na PENDING pro novou sezónu
+    // Přeskočí záznamy se stavem WAIVED — tyto jsou odpuštěny supervisorem a nesmí být resetovány
     const [resetLic, resetTeam] = await Promise.all([
       prisma.playerPayment.updateMany({
+        where: { licStatus: { not: 'WAIVED' } }, // BUG-15: zachovej WAIVED platby
         data: { licStatus: 'PENDING', licPaidAt: null, licMethod: null,
                 superStatus: 'PENDING', superPaidAt: null, season: newSeason },
       }),
       prisma.teamPayment.updateMany({
+        where: { status: { not: 'WAIVED' } }, // BUG-15: zachovej WAIVED platby
         data: { status: 'PENDING', paidAt: null, method: null, season: newSeason },
       }),
     ]);
-    // Zrušit player.licensed pro všechny hráče
-    await prisma.player.updateMany({ data: { licensed: false } });
+    // Zrušit player.licensed pouze pro hráče bez WAIVED licence
+    const waived = await prisma.playerPayment.findMany({
+      where: { licStatus: 'WAIVED' },
+      select: { playerId: true },
+    });
+    const waivedIds = waived.map(p => p.playerId);
+    await prisma.player.updateMany({
+      where: waivedIds.length > 0 ? { id: { notIn: waivedIds } } : {},
+      data: { licensed: false },
+    });
 
     res.json({
       oldSeason,

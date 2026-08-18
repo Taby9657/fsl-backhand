@@ -47,7 +47,7 @@ router.get('/:id', requireAuth, async (req, res, next) => {
     // Citlivé HR/bank údaje jen pro samotného rozhodčího nebo supervisora
     const isSelf       = ref.userId === req.user.id;
     const isSupervisor = req.user?.player?.isSupervisor ||
-      process.env.SUPERVISOR_USER_IDS?.split(',').includes(req.user.id);
+      process.env.SUPERVISOR_USER_IDS?.split(',').map(s => s.trim()).includes(req.user.id);
     if (!isSelf && !isSupervisor) {
       const { birthNo, address, city, zip, bankAccount, bankCode, ...safe } = ref;
       return res.json(safe);

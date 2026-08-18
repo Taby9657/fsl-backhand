@@ -153,7 +153,28 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
     const session  = event.data.object;
     const metadata = session.metadata;
 
+    // Idempotence: zkontroluj, zda tato Stripe session již byla zpracována
     try {
+      let alreadyProcessed = false;
+
+      if (metadata.type === 'PLAYER_LICENSE' || metadata.type === 'SUPER_LICENSE') {
+        const existing = await prisma.playerPayment.findFirst({
+          where: { stripeId: session.id },
+        });
+        if (existing) alreadyProcessed = true;
+      } else if (metadata.type === 'HOME_FEE' && metadata.matchId) {
+        const existingMatch = await prisma.match.findFirst({
+          where: { homeFeeStripeId: session.id },
+        });
+        if (existingMatch) alreadyProcessed = true;
+      }
+
+      if (alreadyProcessed) {
+        // Event již byl zpracován — idempotentní odpověď 200
+        return res.json({ received: true, idempotent: true });
+      }
+
+      // Zpracuj platební událost
       if (metadata.type === 'PLAYER_LICENSE') {
         await prisma.playerPayment.update({
           where: { playerId: metadata.playerId },
@@ -175,7 +196,9 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         });
       }
     } catch (dbErr) {
-      console.error('DB update after webhook failed:', dbErr);
+      // BUG-01 OPRAVA: vrať 500 při selhání DB, aby Stripe mohl webhook opakovat
+      console.error('DB update po webhook selhal:', dbErr);
+      return res.status(500).json({ error: 'Interní chyba při zpracování platby' });
     }
   }
 
