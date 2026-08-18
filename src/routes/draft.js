@@ -136,6 +136,10 @@ router.post('/profile', requireAuth, async (req, res, next) => {
 
     const { bio, pubSkill, position } = req.body;
 
+    // Zjisti zda profil existuje před upsert (re-join vs. nový vstup)
+    const existingProfile = await prisma.draftProfile.findUnique({ where: { playerId: player.id } });
+    const isReJoin = !!existingProfile;
+
     const profile = await prisma.draftProfile.upsert({
       where:  { playerId: player.id },
       create: { playerId: player.id, bio: bio || null, pubSkill: pubSkill || null, position: position || null, isActive: true },
@@ -143,15 +147,17 @@ router.post('/profile', requireAuth, async (req, res, next) => {
       include: { videos: true },
     });
 
-    // Notifikace všem vedoucím o novém hráči v draftu
-    const managers = await prisma.manager.findMany({ select: { userId: true } });
-    if (managers.length) {
-      await createNotifications(managers.map(m => ({
-        userId: m.userId,
-        title:  'Nový hráč v draftu',
-        body:   `${player.firstName} ${player.lastName} se přidal(a) do draft poolu`,
-        screen: 'draft',
-      })));
+    // Notifikace pouze při PRVNÍM vstupu do draft poolu – ne při re-joinu
+    if (!isReJoin) {
+      const managers = await prisma.manager.findMany({ select: { userId: true } });
+      if (managers.length) {
+        await createNotifications(managers.map(m => ({
+          userId: m.userId,
+          title:  'Nový hráč v draftu',
+          body:   `${player.firstName} ${player.lastName} se přidal(a) do draft poolu`,
+          screen: 'draft',
+        })));
+      }
     }
 
     res.status(201).json(profile);
