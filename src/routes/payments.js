@@ -2,7 +2,7 @@ const express = require('express');
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { requireAuth, requireSupervisor } = require('../middleware/auth');
-const { bankSync, ensurePlayerVS, ensureTeamVS, getPaymentQR } = require('../services/bankSync');
+const { bankSync, ensurePlayerVS, ensureTeamVS, ensureMatchHomeFeeVS, getPaymentQR } = require('../services/bankSync');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -248,7 +248,7 @@ router.put('/player/:playerId', requireSupervisor, async (req, res, next) => {
 
 // GET /payments/qr/:type/:id – QR kód pro platbu převodem (SPAYD)
 // type: player-license | super-license | team-reg | home-fee
-// id:   playerId nebo teamId
+// id:   playerId (licence), teamId (registrace) nebo matchId (domácí zápas)
 router.get('/qr/:type/:id', requireAuth, async (req, res, next) => {
   try {
     const data = await getPaymentQR(req.params.type, req.params.id);
@@ -265,11 +265,18 @@ router.get('/vs/player/:playerId', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// GET /payments/vs/team/:teamId – vrátí (nebo vygeneruje) VS týmu
+// GET /payments/vs/team/:teamId – vrátí (nebo vygeneruje) VS registrace týmu
 router.get('/vs/team/:teamId', requireAuth, async (req, res, next) => {
   try {
-    const { type = 'TEAM_REG' } = req.query;
-    const vs = await ensureTeamVS(req.params.teamId, type);
+    const vs = await ensureTeamVS(req.params.teamId);
+    res.json({ variableSymbol: vs });
+  } catch (err) { next(err); }
+});
+
+// GET /payments/vs/match/:matchId – VS poplatku za konkrétní domácí zápas
+router.get('/vs/match/:matchId', requireAuth, async (req, res, next) => {
+  try {
+    const vs = await ensureMatchHomeFeeVS(req.params.matchId);
     res.json({ variableSymbol: vs });
   } catch (err) { next(err); }
 });

@@ -163,3 +163,46 @@ docker run -d \
 | GET | `/api/supervisor/dashboard` | Supervisor přehled |
 | GET | `/api/supervisor/referees` | Čekající rozhodčí |
 | GET | `/health` | Health check |
+
+---
+
+## Variabilní symboly plateb
+
+Každý typ platby má vlastní variabilní symbol s odlišným prefixem:
+
+| Platba | VS | Sloupec |
+|--------|-----|---------|
+| Hráčská licence | `1` + 7 číslic | `PlayerPayment.variableSymbol` |
+| Superlicence | `2` + 7 číslic | `PlayerPayment.superVariableSymbol` |
+| Registrace týmu | `3` + 7 číslic | `TeamPayment.variableSymbol` |
+| Poplatek za domácí zápas | `4` + 7 číslic | `Match.homeFeeVS` |
+
+Superlicence i domácí zápas měly dřív VS sdílený s licencí, resp. s registrací týmu, takže
+je párovací logika nedokázala odlišit. Migrace `20260824000001_split_payment_vs` přidává
+oba sloupce a přesouvá historické symboly s prefixem `2` k superlicenci.
+
+VS se přiděluje líně — až když si někdo vyžádá QR kód nebo údaje k převodu
+(`ensurePlayerVS`, `ensureTeamVS`, `ensureMatchHomeFeeVS`).
+
+### Test párování
+
+```bash
+npm run test:payments
+```
+
+Běží proti in-memory náhradě Prismy, takže nepotřebuje databázi. Ověřuje, že se každý typ
+platby zaúčtuje na správné místo, že nízká částka neprojde, že se duplicitní platba
+nezpracuje dvakrát a že neznámý VS skončí jako nespárovaný.
+
+### QR platba
+
+`GET /payments/qr/:type/:id` vrací `{ spayd, vs, amount, iban, message }`.
+
+| type | `:id` |
+|------|-------|
+| `player-license` | playerId |
+| `super-license` | playerId |
+| `team-reg` | teamId |
+| `home-fee` | **matchId** |
+
+Vyžaduje nastavené `BANK_IBAN` a `BANK_BIC`.
