@@ -188,6 +188,21 @@ router.post('/logout', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ==================== DELETE ACCOUNT ====================
+router.delete('/account', requireAuth, async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+
+    // Smaž uživatele.
+    // Player.userId a Referee.userId mají onDelete: SetNull → hráčská/rozhodčí data
+    // (statistiky, zápasy) zůstanou zachována jako historická data.
+    // Manager a Notification mají onDelete: Cascade → smažou se spolu s účtem.
+    await prisma.user.delete({ where: { id: userId } });
+
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
 // Odstraní citlivé interní fieldy
 function sanitizeUser(user) {
   const { googleId, appleId, ...safe } = user;

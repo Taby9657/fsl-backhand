@@ -4,7 +4,7 @@
   "description": "Floorball Stars League – backend API",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "prisma migrate deploy && node server.js",
     "dev": "nodemon server.js",
     "db:migrate": "prisma migrate deploy",
     "db:generate": "prisma generate",

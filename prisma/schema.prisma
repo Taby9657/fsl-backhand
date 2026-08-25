@@ -78,7 +78,7 @@ model InviteCode {
 
 model Player {
   id          String   @id @default(uuid())
-  userId      String   @unique
+  userId      String?  @unique
   teamId      String?
   firstName   String
   lastName    String
@@ -92,7 +92,7 @@ model Player {
   createdAt     DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  user   User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
   team   Team? @relation(fields: [teamId], references: [id])
 
   goals        MatchEvent[] @relation("GoalScorer")
@@ -108,7 +108,7 @@ model Player {
 
 model Referee {
   id          String         @id @default(uuid())
-  userId      String         @unique
+  userId      String?        @unique
   firstName   String
   lastName    String
   phone       String?
@@ -124,7 +124,7 @@ model Referee {
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
 
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
   matches Match[]
   ratings RefRating[]
 }
