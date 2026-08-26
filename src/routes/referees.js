@@ -1,6 +1,6 @@
 const express = require('express');
 
-const { requireAuth, requireSupervisor } = require('../middleware/auth');
+const { requireAuth, requireSupervisor, isSupervisorUser } = require('../middleware/auth');
 const { uploadPhoto } = require('../utils/fileUpload');
 const { createNotification } = require('./notifications');
 
@@ -46,8 +46,7 @@ router.get('/:id', requireAuth, async (req, res, next) => {
 
     // Citlivé HR/bank údaje jen pro samotného rozhodčího nebo supervisora
     const isSelf       = ref.userId === req.user.id;
-    const isSupervisor = req.user?.player?.isSupervisor ||
-      process.env.SUPERVISOR_USER_IDS?.split(',').map(s => s.trim()).includes(req.user.id);
+    const isSupervisor = isSupervisorUser(req.user);
     if (!isSelf && !isSupervisor) {
       const { birthNo, address, city, zip, bankAccount, bankCode, ...safe } = ref;
       return res.json(safe);

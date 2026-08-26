@@ -33,12 +33,26 @@ async function requireAuth(req, res, next) {
   }
 }
 
-// Pouze supervisor (v prototypu: uživatel s referee.level === 'A' nebo speciální flag)
+/**
+ * Jediné místo, kde se rozhoduje, kdo je supervisor.
+ *
+ * Supervisorem je hráč s příznakem `isSupervisor`, nebo uživatel vypsaný
+ * v env proměnné SUPERVISOR_USER_IDS (ID oddělená čárkou). Druhá varianta
+ * je nutná pro organizátora ligy, který vlastní hráčský profil nemá.
+ */
+function isSupervisorUser(user) {
+  if (!user) return false;
+  if (user.player?.isSupervisor === true) return true;
+  const ids = (process.env.SUPERVISOR_USER_IDS ?? '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+  return ids.includes(user.id);
+}
+
 async function requireSupervisor(req, res, next) {
   await requireAuth(req, res, async () => {
-    const isSupervisor = req.user?.player?.isSupervisor ||
-      process.env.SUPERVISOR_USER_IDS?.split(',').map(s => s.trim()).includes(req.user.id);
-    if (!isSupervisor) {
+    if (!isSupervisorUser(req.user)) {
       return res.status(403).json({ error: 'Přístup pouze pro supervisory' });
     }
     next();
@@ -61,4 +75,4 @@ function issueToken(userId) {
   });
 }
 
-module.exports = { requireAuth, requireSupervisor, requireManager, issueToken };
+module.exports = { requireAuth, requireSupervisor, requireManager, issueToken, isSupervisorUser };

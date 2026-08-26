@@ -3,7 +3,7 @@ const https   = require('https');
 const { OAuth2Client } = require('google-auth-library');
 const jwt = require('jsonwebtoken');
 
-const { issueToken, requireAuth } = require('../middleware/auth');
+const { issueToken, requireAuth, isSupervisorUser } = require('../middleware/auth');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -206,7 +206,8 @@ router.delete('/account', requireAuth, async (req, res, next) => {
 // Odstraní citlivé interní fieldy
 function sanitizeUser(user) {
   const { googleId, appleId, ...safe } = user;
-  return safe;
+  // Klient nemá jak zjistit obsah SUPERVISOR_USER_IDS — musíme mu roli poslat.
+  return { ...safe, isSupervisor: isSupervisorUser(user) };
 }
 
 module.exports = router;
