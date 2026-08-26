@@ -54,7 +54,7 @@ router.post('/player-license', requireAuth, async (req, res, next) => {
         price_data: {
           currency: 'czk',
           product_data: { name: 'FSL hráčská licence 2025/26' },
-          unit_amount: (player.payment?.licFee || 300) * 100, // haléře
+          unit_amount: (player.payment?.licFee || 250) * 100, // haléře
         },
         quantity: 1,
       }],
@@ -121,7 +121,7 @@ router.post('/super-license', requireAuth, async (req, res, next) => {
         price_data: {
           currency: 'czk',
           product_data: { name: 'FSL super licence hráče 2025/26' },
-          unit_amount: (player.payment?.superFee || 300) * 100,
+          unit_amount: (player.payment?.superFee || 250) * 100,
         },
         quantity: 1,
       }],

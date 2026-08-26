@@ -15,6 +15,9 @@ model User {
   googleId     String?  @unique
   appleId      String?  @unique
   pushToken    String?
+  // Organizátor ligy. Nezávislé na hráčském profilu — supervisor ho mít nemusí.
+  // Spravuje se z aplikace, ne přes env proměnnou a redeploy.
+  isSupervisor Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -285,7 +288,7 @@ model TeamPayment {
   id             String        @id @default(uuid())
   teamId         String        @unique
   season         String        @default("2025/26")
-  amount         Int           @default(10000)
+  amount         Int           @default(8000)
   status         PaymentStatus @default(PENDING)
   paidAt         DateTime?
   method         String?
@@ -299,12 +302,12 @@ model PlayerPayment {
   id             String        @id @default(uuid())
   playerId       String        @unique
   season         String        @default("2025/26")
-  licFee         Int           @default(300)
+  licFee         Int           @default(250)
   licStatus      PaymentStatus @default(PENDING)
   licPaidAt      DateTime?
   licMethod      String?
   superLic       Boolean       @default(false)
-  superFee       Int           @default(300)
+  superFee       Int           @default(250)
   superStatus    PaymentStatus @default(PENDING)
   superPaidAt    DateTime?
   stripeId       String?

@@ -36,12 +36,14 @@ async function requireAuth(req, res, next) {
 /**
  * Jediné místo, kde se rozhoduje, kdo je supervisor.
  *
- * Supervisorem je hráč s příznakem `isSupervisor`, nebo uživatel vypsaný
- * v env proměnné SUPERVISOR_USER_IDS (ID oddělená čárkou). Druhá varianta
- * je nutná pro organizátora ligy, který vlastní hráčský profil nemá.
+ * Zdroje v pořadí důležitosti:
+ *   1. User.isSupervisor — hlavní zdroj pravdy, spravuje se z aplikace
+ *   2. Player.isSupervisor — historický příznak, držíme kvůli zpětné kompatibilitě
+ *   3. env SUPERVISOR_USER_IDS — záchranná brzda, kdyby se v DB odebrali všichni
  */
 function isSupervisorUser(user) {
   if (!user) return false;
+  if (user.isSupervisor === true) return true;
   if (user.player?.isSupervisor === true) return true;
   const ids = (process.env.SUPERVISOR_USER_IDS ?? '')
     .split(',')

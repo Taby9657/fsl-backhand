@@ -182,7 +182,7 @@ async function main() {
       const team = await prisma.team.create({
         data: { name: td.name, abbr: td.abbr, color: td.color, venue: td.venue,
           division: div.name, conference: div.conf,
-          payments: { create: { season: SEASON, amount: 10000, status: 'PAID',
+          payments: { create: { season: SEASON, amount: 8000, status: 'PAID',
             paidAt: new Date('2025-09-01'), method: 'bank' } } },
       });
 

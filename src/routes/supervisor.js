@@ -571,6 +571,78 @@ router.post('/new-season', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ==================== SPRÁVA SUPERVISORŮ ====================
+
+// GET /supervisor/users?q= – seznam uživatelů pro přidělení role
+router.get('/users', async (req, res, next) => {
+  try {
+    const q = (req.query.q ?? '').trim();
+    const users = await prisma.user.findMany({
+      where: q ? {
+        OR: [
+          { email:  { contains: q, mode: 'insensitive' } },
+          { player: { firstName: { contains: q, mode: 'insensitive' } } },
+          { player: { lastName:  { contains: q, mode: 'insensitive' } } },
+        ],
+      } : undefined,
+      select: {
+        id: true, email: true, isSupervisor: true, createdAt: true,
+        player:  { select: { firstName: true, lastName: true, isSupervisor: true } },
+        referee: { select: { firstName: true, lastName: true } },
+      },
+      orderBy: [{ isSupervisor: 'desc' }, { createdAt: 'asc' }],
+      take: 100,
+    });
+    res.json(users);
+  } catch (err) { next(err); }
+});
+
+// PUT /supervisor/users/:id/supervisor – přidělení nebo odebrání role
+router.put('/users/:id/supervisor', async (req, res, next) => {
+  try {
+    const { isSupervisor } = req.body;
+    if (typeof isSupervisor !== 'boolean') {
+      return res.status(400).json({ error: 'isSupervisor musí být true nebo false' });
+    }
+
+    const target = await prisma.user.findUnique({
+      where:  { id: req.params.id },
+      select: { id: true, email: true, isSupervisor: true },
+    });
+    if (!target) return res.status(404).json({ error: 'Uživatel nenalezen' });
+
+    // Nikdo si nesmí odebrat vlastní roli — zavřel by si dveře zevnitř.
+    if (!isSupervisor && target.id === req.user.id) {
+      return res.status(400).json({ error: 'Vlastní roli supervisora si odebrat nemůžeš. Požádej o to jiného supervisora.' });
+    }
+
+    // A liga nesmí zůstat bez jediného supervisora.
+    if (!isSupervisor) {
+      const zbyva = await prisma.user.count({ where: { isSupervisor: true, id: { not: target.id } } });
+      if (zbyva === 0) {
+        return res.status(400).json({ error: 'Tohle je poslední supervisor, roli mu odebrat nelze.' });
+      }
+    }
+
+    const user = await prisma.user.update({
+      where:  { id: target.id },
+      data:   { isSupervisor },
+      select: { id: true, email: true, isSupervisor: true },
+    });
+
+    await createNotification(
+      user.id,
+      isSupervisor ? 'Máš roli supervisora' : 'Role supervisora odebrána',
+      isSupervisor
+        ? 'Byla ti přidělena role supervisora FSL. Ve Správě najdeš organizaci ligy.'
+        : 'Tvoje role supervisora FSL byla odebrána.',
+      'admin',
+    );
+
+    res.json(user);
+  } catch (err) { next(err); }
+});
+
 // ==================== NOTIFIKACE ====================
 
 router.post('/notify', async (req, res, next) => {
