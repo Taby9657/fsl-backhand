@@ -1,6 +1,8 @@
 [build]
 builder = "nixpacks"
-buildCommand = "npm install --legacy-peer-deps && npx prisma generate"
+# check:schema běží první — chytí syntaktickou chybu ve schématu dřív,
+# než se na ni zbytečně čeká v `prisma generate`
+buildCommand = "npm install --legacy-peer-deps && npm run check:schema && npx prisma generate"
 
 [deploy]
 startCommand = "npx prisma migrate deploy && npm start"

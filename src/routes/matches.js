@@ -11,12 +11,16 @@ const licence = require('../services/licence');
 // GET /matches/bracket?division=X&season=Y – play-off pavouk
 router.get('/bracket', async (req, res, next) => {
   try {
-    const { division, season } = req.query;
+    const { division, season, leagueId, conferenceId, divisionId } = req.query;
     const matches = await prisma.match.findMany({
       where: {
         phase: 'PLAYOFF',
         round: { not: null },
-        ...(division && { division }),
+        // Nová struktura má přednost; textová divize zůstává pro staré zápasy
+        ...(divisionId   ? { divisionId }   : {}),
+        ...(conferenceId ? { conferenceId } : {}),
+        ...(leagueId     ? { leagueId }     : {}),
+        ...(division && !leagueId && !conferenceId && !divisionId ? { division } : {}),
         ...(season   && { season }),
       },
       include: {

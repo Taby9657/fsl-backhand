@@ -5,6 +5,8 @@ const { uploadPhoto } = require('../utils/fileUpload');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const licence = require('../services/licence');
+const seasonSvc = require('../services/seasonTransition');
 
 // GET /players – seznam všech hráčů (veřejné)
 router.get('/', async (req, res, next) => {
@@ -128,6 +130,12 @@ router.post('/', requireAuth, async (req, res, next) => {
         payment: { create: {} },
       },
     });
+    // Kmenový tým se rovnou promítne do soupisky sezóny — z ní se skládá sestava
+    if (cilovyTeamId) {
+      const sezona = await seasonSvc.currentSeason();
+      await licence.pridatDoSoupisky(player.id, cilovyTeamId, sezona, { isHome: true });
+    }
+
     // Kód se počítá jako použitý až tady — když hráč skutečně vznikl
     if (invite) {
       await prisma.inviteCode.update({
@@ -191,6 +199,9 @@ router.post('/:id/leave-team', requireAuth, async (req, res, next) => {
     if (player.userId !== req.user.id) return res.status(403).json({ error: 'Nemáte oprávnění' });
     if (!player.teamId) return res.status(400).json({ error: 'Hráč není v žádném týmu' });
 
+    const sezona = await seasonSvc.currentSeason();
+    await licence.odebratZeSoupisky(req.params.id, player.teamId, sezona);
+
     const updated = await prisma.player.update({
       where: { id: req.params.id },
       data: { teamId: null },
@@ -209,6 +220,9 @@ router.delete('/:id/team/:teamId', requireAuth, async (req, res, next) => {
     const isSup = req.user?.player?.isSupervisor;
     if (!isManager && !isSup) return res.status(403).json({ error: 'Nemáte oprávnění' });
     if (player.teamId !== req.params.teamId) return res.status(400).json({ error: 'Hráč není v tomto týmu' });
+
+    const sezona = await seasonSvc.currentSeason();
+    await licence.odebratZeSoupisky(req.params.id, req.params.teamId, sezona);
 
     await prisma.player.update({
       where: { id: req.params.id },

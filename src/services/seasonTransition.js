@@ -83,6 +83,12 @@ async function canConfirm(transition, userId) {
 /**
  * Samotné přepnutí sezóny. Resetuje licence hráčů a platby týmů,
  * WAIVED záznamy nechává být (jsou odpuštěné supervisorem).
+ *
+ * Soupisky (`TeamRoster`) se schválně NEPŘENÁŠEJÍ. Jsou vázané na sezónu,
+ * takže nová sezóna začíná s prázdnými soupiskami a každý tým se skládá
+ * znovu — kmenové hráče doplní vedoucí jedním klepnutím
+ * (`POST /teams/:id/roster/home`), hostování se musí sjednat nanovo
+ * a s nově zaplacenou superlicencí. Staré řádky zůstávají jako historie.
  */
 async function applyNewSeason(newSeason) {
   const oldSeason = await currentSeason();

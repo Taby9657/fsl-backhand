@@ -22,6 +22,7 @@ function matchScope({ leagueId, conferenceId, divisionId, division, season }) {
 
 
 const prisma = require('../lib/prisma');
+const standings = require('../services/standings');
 
 // GET /stats/seasons – seznam dostupných ročníků
 router.get('/seasons', async (req, res, next) => {
@@ -215,73 +216,12 @@ router.get('/table', async (req, res, next) => {
       else                         division     = first.division;
     }
 
-    // Načti seřazené podle data (pro výpočet formy)
-    const matches = await prisma.match.findMany({
-      where: {
-        ...matchScope({ leagueId, conferenceId, divisionId, division, season }),
-        status: 'DONE',
-      },
-      select: { homeTeamId: true, awayTeamId: true, homeScore: true, awayScore: true, date: true },
-      orderBy: { date: 'desc' }, // nejnovější první → pro formu
-    });
-
-    const tableMap = {};
-    const formMap  = {};
-
-    function getEntry(teamId) {
-      if (!tableMap[teamId]) tableMap[teamId] = { teamId, p: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, pts: 0 };
-      return tableMap[teamId];
-    }
-    function addForm(teamId, result) {
-      if (!formMap[teamId]) formMap[teamId] = [];
-      if (formMap[teamId].length < 5) formMap[teamId].push(result);
-    }
-
-    // Forma z nejnovějších zápasů (matches jsou desc)
-    // BUG-10 OPRAVA: použij ?? 0 pro případ null skóre (zápas bez zadaného výsledku)
-    matches.forEach(m => {
-      const hs = m.homeScore ?? 0;
-      const as_ = m.awayScore ?? 0;
-      if (hs > as_) {
-        addForm(m.homeTeamId, 'W'); addForm(m.awayTeamId, 'L');
-      } else if (hs < as_) {
-        addForm(m.homeTeamId, 'L'); addForm(m.awayTeamId, 'W');
-      } else {
-        addForm(m.homeTeamId, 'D'); addForm(m.awayTeamId, 'D');
-      }
-    });
-
-    // Statistiky z všech zápasů
-    // BUG-10 OPRAVA: použij ?? 0 pro případ null skóre
-    matches.forEach(m => {
-      const h = getEntry(m.homeTeamId);
-      const a = getEntry(m.awayTeamId);
-      const hs = m.homeScore ?? 0;
-      const as_ = m.awayScore ?? 0;
-      h.p++; a.p++;
-      h.gf += hs; h.ga += as_;
-      a.gf += as_; a.ga += hs;
-      if (hs > as_) { h.w++; h.pts += 3; a.l++; }
-      else if (hs < as_) { a.w++; a.pts += 3; h.l++; }
-      else { h.d++; h.pts += 1; a.d++; a.pts += 1; }
-    });
-
-    const teamIds = Object.keys(tableMap);
-    const teams = await prisma.team.findMany({
-      where: { id: { in: teamIds } },
-      select: { id: true, name: true, abbr: true, color: true, logoUrl: true },
-    });
-    const teamLookup = Object.fromEntries(teams.map(t => [t.id, t]));
-
-    const table = Object.values(tableMap)
-      .map(r => ({
-        ...r,
-        team: teamLookup[r.teamId],
-        gd: r.gf - r.ga,
-        form: [...(formMap[r.teamId] ?? [])].reverse(), // nejstarší první pro zobrazení
-      }))
-      .sort((a, b) => b.pts - a.pts || b.gd - a.gd || b.gf - a.gf);
-
+    // Výpočet žije ve services/standings.js — používá ho i nasazení do playoff,
+    // aby si tabulka a pavouk nemohly odporovat.
+    const table = await standings.tabulka(
+      { division, season, leagueId, conferenceId, divisionId },
+      { phase: 'REGULAR' },
+    );
     res.json(table);
   } catch (err) { next(err); }
 });

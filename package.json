@@ -10,7 +10,8 @@
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
     "db:seed": "node prisma/seed.js",
-    "test:payments": "node scripts/test-payment-matching.js"
+    "test:payments": "node scripts/test-payment-matching.js",
+    "check:schema": "node scripts/check-schema.js"
   },
   "dependencies": {
     "@prisma/client": "^5.14.0",

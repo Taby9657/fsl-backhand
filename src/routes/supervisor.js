@@ -3,6 +3,7 @@ const express = require('express');
 const { requireSupervisor } = require('../middleware/auth');
 const { createNotification, createNotifications } = require('./notifications');
 const seasonSvc = require('../services/seasonTransition');
+const standings = require('../services/standings');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -98,13 +99,14 @@ router.get('/referees', async (req, res, next) => {
 
 router.get('/matches', async (req, res, next) => {
   try {
-    const { status, division, round, season } = req.query;
+    const { status, division, round, season, phase } = req.query;
     const matches = await prisma.match.findMany({
       where: {
         ...(status   && { status }),
         ...(division && { division }),
         ...(round    && { round: parseInt(round) }),
         ...(season   && { season }),
+        ...(phase && ['REGULAR', 'PLAYOFF'].includes(phase) && { phase }),
       },
       include: {
         homeTeam: { select: { id: true, name: true, abbr: true, color: true } },
@@ -376,6 +378,125 @@ function generateRoundRobin(teamIds, doubleRoundRobin = false) {
 
   return [...firstLeg, ...secondLeg];
 }
+
+// ==================== PLAYOFF ====================
+
+/**
+ * Sestavení jednoho kola playoff z tabulky.
+ *
+ * Nasazuje se 1–N, 2–(N-1) atd., lepší tým je domácí. Generuje se vždy jen
+ * jedno kolo — kdo postoupí z prvního, se dozvíme až po zápasech, takže
+ * další kolo si supervisor vygeneruje znovu z výsledků.
+ */
+async function pripravPlayoff({ leagueId, conferenceId, divisionId, division, season, teamCount = 4 }) {
+  const sezona = season ?? await seasonSvc.currentSeason();
+  const rozsah = { leagueId, conferenceId, divisionId, division, season: sezona };
+
+  const tabulka = await standings.tabulka(rozsah);
+  if (tabulka.length < 2) {
+    return { error: 'V tabulce nejsou aspoň dva týmy — nejdřív se musí odehrát základní část' };
+  }
+
+  // Sudý počet, nikdy víc, než kolik je týmů
+  let pocet = Math.min(parseInt(teamCount, 10) || 4, tabulka.length);
+  if (pocet % 2 === 1) pocet -= 1;
+  if (pocet < 2) return { error: 'Na playoff je potřeba aspoň dva týmy' };
+
+  const postupujici = tabulka.slice(0, pocet);
+  return { sezona, rozsah, tabulka, pary: standings.nasazeni(postupujici) };
+}
+
+// POST /supervisor/playoff/preview – kdo by se s kým utkal
+router.post('/playoff/preview', async (req, res, next) => {
+  try {
+    const vysledek = await pripravPlayoff(req.body);
+    if (vysledek.error) return res.status(400).json({ error: vysledek.error });
+
+    res.json({
+      season: vysledek.sezona,
+      teams:  vysledek.pary.length * 2,
+      pairs:  vysledek.pary.map(p => ({
+        seedHome: p.seedHome,
+        seedAway: p.seedAway,
+        homeTeam: p.home.team,
+        awayTeam: p.away.team,
+        homePts:  p.home.pts,
+        awayPts:  p.away.pts,
+      })),
+    });
+  } catch (err) { next(err); }
+});
+
+// POST /supervisor/playoff/generate – vytvoření zápasů kola
+router.post('/playoff/generate', async (req, res, next) => {
+  try {
+    const {
+      startDate, defaultTime = '18:00', defaultVenue = null,
+      round = 1, bestOf = 1, intervalDays = 7, deleteExisting = false,
+    } = req.body;
+
+    if (!startDate) return res.status(400).json({ error: 'Chybí datum prvního zápasu' });
+
+    const vysledek = await pripravPlayoff(req.body);
+    if (vysledek.error) return res.status(400).json({ error: vysledek.error });
+
+    const { sezona, rozsah, pary } = vysledek;
+    const [hodina, minuta] = String(defaultTime).split(':').map(Number);
+    const zaklad = new Date(startDate);
+    if (isNaN(zaklad.getTime())) return res.status(400).json({ error: 'Neplatné datum' });
+
+    const poctZapasu = Math.max(1, Math.min(parseInt(bestOf, 10) || 1, 7));
+    const koloCislo  = Math.max(1, parseInt(round, 10) || 1);
+
+    // Struktura se bere z rozsahu, aby zápasy padly do správné soutěže
+    const struktura = {
+      leagueId:     rozsah.leagueId     ?? null,
+      conferenceId: rozsah.conferenceId ?? null,
+      divisionId:   rozsah.divisionId   ?? null,
+    };
+
+    const data = [];
+    for (const par of pary) {
+      for (let i = 0; i < poctZapasu; i += 1) {
+        const d = new Date(zaklad);
+        d.setDate(d.getDate() + i * intervalDays);
+        d.setHours(hodina || 18, minuta || 0, 0, 0);
+
+        // V liché sérii se hřiště střídá, lepší nasazený začíná doma
+        const doma = i % 2 === 0;
+        data.push({
+          homeTeamId:  doma ? par.home.teamId : par.away.teamId,
+          awayTeamId:  doma ? par.away.teamId : par.home.teamId,
+          round:       koloCislo,
+          phase:       'PLAYOFF',
+          division:    rozsah.division ?? 'Playoff',
+          ...struktura,
+          competition: 'FSL Playoff',
+          date:        d,
+          venue:       defaultVenue,
+          status:      'UPCOMING',
+          season:      sezona,
+        });
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      if (deleteExisting) {
+        await tx.match.deleteMany({
+          where: {
+            season: sezona, phase: 'PLAYOFF', round: koloCislo, status: 'UPCOMING',
+            ...(struktura.divisionId   ? { divisionId: struktura.divisionId }     : {}),
+            ...(struktura.conferenceId ? { conferenceId: struktura.conferenceId } : {}),
+            ...(struktura.leagueId     ? { leagueId: struktura.leagueId }         : {}),
+          },
+        });
+      }
+      await tx.match.createMany({ data });
+    });
+
+    res.status(201).json({ created: data.length, round: koloCislo, pairs: pary.length, season: sezona });
+  } catch (err) { next(err); }
+});
 
 // POST /supervisor/fixtures/preview – náhled (bez uložení)
 // Podporuje: leagueId | conferenceId | divisionId (nová struktura)

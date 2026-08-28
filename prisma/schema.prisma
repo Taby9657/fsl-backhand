@@ -61,6 +61,7 @@ model Team {
   seasons     TeamSeason[]
   playoffPrimaryFor   PlayoffChoice[] @relation("PlayoffPrimary")
   playoffSecondaryFor PlayoffChoice[] @relation("PlayoffSecondary")
+  rosters             TeamRoster[]
 }
 
 model Manager {
@@ -115,6 +116,7 @@ model Player {
   payment      PlayerPayment?
   draftProfile DraftProfile?
   playoffChoices PlayoffChoice[]
+  rosters        TeamRoster[]
 }
 
 // ==================== REFEREES ====================
@@ -164,7 +166,7 @@ model Match {
   competition String     @default("FSL Liga")
   // Textová divize zůstává kvůli starým zápasům; nové se váží na strukturu
   division   String      @default("Divize A")
-  /** Základní část vs. playoff. Rozhoduje o tom, která pravidla superlicence platí. */
+  /// Základní část vs. playoff. Rozhoduje o tom, která pravidla superlicence platí.
   phase      MatchPhase  @default(REGULAR)
   leagueId     String?
   conferenceId String?
@@ -271,7 +273,7 @@ model LineupPlayer {
   isGoalkeeper Boolean @default(false)
   isCaptain    Boolean @default(false)
   jerseyOverride Int?
-  /** Doplněn až za běhu zápasu (pozdní příchod). Zůstává vidět v zápise. */
+  /// Doplněn až za běhu zápasu (pozdní příchod). Zůstává vidět v zápise.
   addedLate    Boolean   @default(false)
   addedAt      DateTime?
 
@@ -327,7 +329,7 @@ model League {
   id        String   @id @default(uuid())
   season    String
   name      String
-  /** 1 = nejvyšší úroveň. Používá se k řazení. */
+  /// 1 = nejvyšší úroveň. Používá se k řazení.
   level     Int      @default(1)
   createdAt DateTime @default(now())
 
@@ -507,14 +509,33 @@ model RoundHighlight {
 
 // ==================== DRAFT ====================
 
-/**
- * Volba týmů pro playoff u hráče se superlicencí.
- *
- * V základní části smí hrát až za 3 týmy. Do playoff si z těch, kde nasbíral
- * dost startů, vybere primární a volitelně sekundární tým. Za sekundární smí
- * nastoupit teprve ve chvíli, kdy primárnímu tým playoff skončí — nikdy tedy
- * nehraje dvě série naráz ani nerozhoduje vzájemný zápas svých týmů.
- */
+/// Soupiska týmu na sezónu — kdo za tým smí nastupovat.
+///
+/// Kmenový tým má `isHome = true` a hráč ho má nejvýš jeden. Další řádky jsou
+/// hostování, na která je potřeba superlicence. Dohromady nejvýš 3 týmy
+/// na sezónu. Vedoucí pak do sestavy vybírá právě a jen z téhle soupisky.
+model TeamRoster {
+  id        String   @id @default(uuid())
+  playerId  String
+  teamId    String
+  season    String
+  isHome    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  team   Team   @relation(fields: [teamId],   references: [id], onDelete: Cascade)
+
+  @@unique([playerId, teamId, season])
+  @@index([teamId, season])
+  @@index([playerId, season])
+}
+
+/// Volba týmů pro playoff u hráče se superlicencí.
+///
+/// V základní části smí hrát až za 3 týmy. Do playoff si z těch, kde nasbíral
+/// dost startů, vybere primární a volitelně sekundární tým. Za sekundární smí
+/// nastoupit teprve ve chvíli, kdy primárnímu tým playoff skončí — nikdy tedy
+/// nehraje dvě série naráz ani nerozhoduje vzájemný zápas svých týmů.
 model PlayoffChoice {
   id              String   @id @default(uuid())
   playerId        String

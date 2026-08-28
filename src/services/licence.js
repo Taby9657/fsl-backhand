@@ -4,7 +4,8 @@
  * Hráčská licence  — bez ní hráč nesmí nastoupit vůbec (hlídá se u soupisky).
  * Superlicence     — umožňuje nastupovat i za jiné týmy než kmenový:
  *
- *   Základní část: nejvýš 3 týmy dohromady (kmenový + 2 hostování).
+ *   Základní část: hráč je na soupiskách nejvýš 3 týmů (kmenový + 2 hostování).
+ *                  Vedoucí pak do sestavy vybírá jen z vlastní soupisky.
  *   Playoff:       jen za týmy, které si hráč po základní části zvolil jako
  *                  primární a sekundární. Nárok vzniká odehráním alespoň
  *                  MIN_STARTU_PRO_PLAYOFF zápasů za daný tým v základní části.
@@ -55,23 +56,64 @@ async function startyPodleTymu(playerId, season, phase = null) {
   return podleTymu;
 }
 
-/**
- * Týmy, za které hráč v sezóně figuruje — tedy kde je na jakékoli soupisce
- * (i na nadcházející zápas) plus jeho kmenový tým. Podle toho se počítá
- * strop tří týmů: nasazení do sestavy se počítá hned, ne až po odehrání.
- */
-async function tymyVSezone(playerId, season, kmenovyTymId = null) {
-  const slots = await prisma.lineupPlayer.findMany({
-    where: {
-      playerId,
-      lineup: { match: { season, status: { not: 'CANCELLED' } } },
-    },
-    select: { lineup: { select: { teamId: true } } },
+/** Týmy, na jejichž soupisce hráč v sezóně je. */
+async function tymyVSezone(playerId, season) {
+  const radky = await prisma.teamRoster.findMany({
+    where:  { playerId, season },
+    select: { teamId: true },
   });
+  return new Set(radky.map(r => r.teamId));
+}
 
-  const tymy = new Set(slots.map(s => s.lineup.teamId));
-  if (kmenovyTymId) tymy.add(kmenovyTymId);
-  return tymy;
+/** Je hráč na soupisce tohohle týmu? */
+async function jeNaSoupisce(playerId, teamId, season) {
+  const radek = await prisma.teamRoster.findUnique({
+    where: { playerId_teamId_season: { playerId, teamId, season } },
+  });
+  return radek ?? null;
+}
+
+/**
+ * Přidání hráče na soupisku týmu.
+ * Hostování (tedy jiný než kmenový tým) vyžaduje superlicenci
+ * a dohromady smí být hráč nejvýš na MAX_TYMU_V_ZAKLADNI soupiskách.
+ */
+async function pridatDoSoupisky(playerId, teamId, season, { isHome = false } = {}) {
+  const player = await prisma.player.findUnique({
+    where:  { id: playerId },
+    select: { id: true, teamId: true, payment: true, firstName: true, lastName: true },
+  });
+  if (!player) return { ok: false, code: 'NO_PLAYER', error: 'Hráč nenalezen' };
+
+  const uz = await jeNaSoupisce(playerId, teamId, season);
+  if (uz) return { ok: false, code: 'ALREADY_ON_ROSTER', error: 'Hráč už na soupisce je' };
+
+  const kmenovy = isHome || player.teamId === teamId;
+
+  if (!kmenovy && !maSuperlicenci(player.payment)) {
+    return {
+      ok: false, code: 'NO_SUPER',
+      error: 'Hostovat v dalším týmu smí jen hráč se superlicencí',
+    };
+  }
+
+  const pocet = await prisma.teamRoster.count({ where: { playerId, season } });
+  if (pocet >= MAX_TYMU_V_ZAKLADNI) {
+    return {
+      ok: false, code: 'TEAM_LIMIT',
+      error: `Hráč už je na soupiskách ${MAX_TYMU_V_ZAKLADNI} týmů, víc jich mít nemůže`,
+    };
+  }
+
+  const radek = await prisma.teamRoster.create({
+    data: { playerId, teamId, season, isHome: kmenovy },
+  });
+  return { ok: true, radek };
+}
+
+/** Odebrání ze soupisky. Kmenový tým se odebírá jen přes odchod z týmu. */
+async function odebratZeSoupisky(playerId, teamId, season) {
+  await prisma.teamRoster.deleteMany({ where: { playerId, teamId, season } });
 }
 
 /**
@@ -125,55 +167,68 @@ async function overNastup(playerId, teamId, match) {
     return { ok: false, code: 'NO_LICENCE', error: 'Hráč nemá platnou licenci' };
   }
 
-  // Kmenový tým je zdarma — na ten stačí základní licence
-  if (player.teamId && player.teamId === teamId) return { ok: true };
+  const season = match.season;
 
-  if (!maSuperlicenci(player.payment)) {
+  // Do sestavy jen z vlastní soupisky — hostování se řeší dřív, ne u zápasu
+  const radek = await jeNaSoupisce(playerId, teamId, season);
+  if (!radek) {
+    return {
+      ok: false, code: 'NOT_ON_ROSTER',
+      error: 'Hráč není na soupisce tohoto týmu',
+    };
+  }
+
+  // Kmenový hráč nemá v základní části žádné další podmínky
+  if (radek.isHome) {
+    if (match.phase !== 'PLAYOFF') return { ok: true };
+  } else if (!maSuperlicenci(player.payment)) {
+    // Pojistka pro případ, že licence vypršela až po zapsání na soupisku
     return {
       ok: false, code: 'NO_SUPER',
       error: 'Za cizí tým smí nastoupit jen hráč se superlicencí',
     };
   }
 
-  const season = match.season;
+  if (match.phase !== 'PLAYOFF') return { ok: true };
 
-  if (match.phase === 'PLAYOFF') {
-    const volba = await prisma.playoffChoice.findUnique({
-      where: { playerId_season: { playerId, season } },
-    });
-    if (!volba) {
-      return {
-        ok: false, code: 'NO_PLAYOFF_CHOICE',
-        error: 'Hráč si pro playoff nezvolil týmy',
-      };
-    }
-    if (volba.primaryTeamId === teamId) return { ok: true };
+  // ── Playoff ──
+  // Kmenový tým je zároveň volbou jen tehdy, když si ho hráč zvolil.
+  const volba = await prisma.playoffChoice.findUnique({
+    where: { playerId_season: { playerId, season } },
+  });
 
-    if (volba.secondaryTeamId === teamId) {
-      const uvolneno = await playoffSkoncil(volba.primaryTeamId, season);
-      if (uvolneno) return { ok: true };
-      return {
-        ok: false, code: 'SECONDARY_LOCKED',
-        error: 'Sekundární tým se odemkne, až primárnímu týmu playoff skončí',
-      };
-    }
+  // Bez superlicence hraje hráč playoff prostě za svůj kmenový tým
+  if (!maSuperlicenci(player.payment)) {
+    return radek.isHome
+      ? { ok: true }
+      : { ok: false, code: 'NO_SUPER', error: 'Za cizí tým smí nastoupit jen hráč se superlicencí' };
+  }
 
+  // Hráč jen s jedním týmem na soupisce volbu potřebovat nemusí
+  const tymy = await tymyVSezone(playerId, season);
+  if (!volba) {
+    if (tymy.size === 1) return { ok: true };
     return {
-      ok: false, code: 'NOT_CHOSEN',
-      error: 'Tenhle tým si hráč pro playoff nezvolil',
+      ok: false, code: 'NO_PLAYOFF_CHOICE',
+      error: 'Hráč si pro playoff nezvolil týmy',
     };
   }
 
-  // Základní část — strop tří týmů
-  const tymy = await tymyVSezone(playerId, season, player.teamId);
-  if (!tymy.has(teamId) && tymy.size >= MAX_TYMU_V_ZAKLADNI) {
+  if (volba.primaryTeamId === teamId) return { ok: true };
+
+  if (volba.secondaryTeamId === teamId) {
+    const uvolneno = await playoffSkoncil(volba.primaryTeamId, season);
+    if (uvolneno) return { ok: true };
     return {
-      ok: false, code: 'TEAM_LIMIT',
-      error: `Hráč už v sezóně figuruje ve ${MAX_TYMU_V_ZAKLADNI} týmech`,
+      ok: false, code: 'SECONDARY_LOCKED',
+      error: 'Sekundární tým se odemkne, až primárnímu týmu playoff skončí',
     };
   }
 
-  return { ok: true };
+  return {
+    ok: false, code: 'NOT_CHOSEN',
+    error: 'Tenhle tým si hráč pro playoff nezvolil',
+  };
 }
 
 /** Přehled pro obrazovku licencí. */
@@ -188,7 +243,7 @@ async function prehledHrace(playerId, season) {
   if (!player) return null;
 
   const starty  = await startyPodleTymu(playerId, season, 'REGULAR');
-  const tymyIds = await tymyVSezone(playerId, season, player.teamId);
+  const tymyIds = await tymyVSezone(playerId, season);
 
   const tymy = await prisma.team.findMany({
     where:  { id: { in: [...tymyIds] } },
@@ -238,6 +293,9 @@ module.exports = {
   maZakladniLicenci,
   startyPodleTymu,
   tymyVSezone,
+  jeNaSoupisce,
+  pridatDoSoupisky,
+  odebratZeSoupisky,
   playoffSkoncil,
   narokyNaPlayoff,
   overNastup,

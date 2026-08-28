@@ -7,6 +7,8 @@ const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const licence = require('../services/licence');
+const seasonSvc = require('../services/seasonTransition');
 
 // GET /teams – seznam všech týmů
 router.get('/', async (req, res, next) => {
@@ -164,6 +166,164 @@ router.get('/:id/invite', requireAuth, async (req, res, next) => {
       invite = await prisma.inviteCode.create({ data: { code, teamId: req.params.id } });
     }
     res.json({ code: invite.code });
+  } catch (err) { next(err); }
+});
+
+// ==================== SOUPISKA NA SEZÓNU ====================
+
+/**
+ * GET /teams/:id/roster?season= – kdo za tým smí nastupovat.
+ *
+ * Kmenoví hráči i hostující dohromady. Tohle je jediný seznam, ze kterého
+ * vedoucí skládá sestavu — do zápasu se nikdo „zvenku" dopsat nedá.
+ */
+router.get('/:id/roster', async (req, res, next) => {
+  try {
+    const season = req.query.season || await seasonSvc.currentSeason();
+
+    const radky = await prisma.teamRoster.findMany({
+      where: { teamId: req.params.id, season },
+      include: {
+        player: {
+          include: {
+            payment: true,
+            team: { select: { id: true, name: true, abbr: true, color: true } },
+          },
+        },
+      },
+    });
+
+    const hraci = radky.map(r => ({
+      ...r.player,
+      isHome:   r.isHome,
+      addedAt:  r.createdAt,
+      licensed: licence.maZakladniLicenci(r.player.payment),
+      superLic: licence.maSuperlicenci(r.player.payment),
+    }));
+
+    hraci.sort((a, b) =>
+      Number(b.isHome) - Number(a.isHome) || (a.jersey ?? 999) - (b.jersey ?? 999));
+
+    // Kmenoví hráči, kteří na soupisce téhle sezóny ještě nejsou.
+    // Soupiska se s novou sezónou nepřenáší, takže tohle je seznam,
+    // který vedoucí na začátku sezóny doplní jedním klepnutím.
+    const naSoupisce = new Set(radky.map(r => r.playerId));
+    const chybejici = await prisma.player.findMany({
+      where:   { teamId: req.params.id, id: { notIn: [...naSoupisce] } },
+      include: { payment: true },
+      orderBy: { jersey: 'asc' },
+    });
+
+    res.json({
+      season,
+      players: hraci,
+      missingHome: chybejici.map(p => ({
+        ...p,
+        licensed: licence.maZakladniLicenci(p.payment),
+      })),
+    });
+  } catch (err) { next(err); }
+});
+
+/**
+ * POST /teams/:id/roster/home – doplnění kmenových hráčů na soupisku sezóny.
+ *
+ * Soupiska se s novou sezónou nepřenáší (schválně — každá sezóna se skládá
+ * znovu). Tohle je zkratka, aby vedoucí nemusel přidávat každého zvlášť.
+ * Hostující hráče doplnit nelze, ti se přidávají jednotlivě a se superlicencí.
+ */
+router.post('/:id/roster/home', requireAuth, async (req, res, next) => {
+  try {
+    const season = req.body.season || await seasonSvc.currentSeason();
+
+    const jeVedouci = req.user.manager?.some(m => m.teamId === req.params.id);
+    if (!jeVedouci) return res.status(403).json({ error: 'Nejsi vedoucí tohoto týmu' });
+
+    const radky = await prisma.teamRoster.findMany({
+      where:  { teamId: req.params.id, season },
+      select: { playerId: true },
+    });
+    const naSoupisce = new Set(radky.map(r => r.playerId));
+
+    const kmenovi = await prisma.player.findMany({
+      where:  { teamId: req.params.id, id: { notIn: [...naSoupisce] } },
+      select: { id: true },
+    });
+
+    // Jen vybraní, když je klient pošle; jinak všichni chybějící
+    const vyber = Array.isArray(req.body.playerIds) && req.body.playerIds.length > 0
+      ? kmenovi.filter(p => req.body.playerIds.includes(p.id))
+      : kmenovi;
+
+    let pridano = 0;
+    for (const p of vyber) {
+      const r = await licence.pridatDoSoupisky(p.id, req.params.id, season, { isHome: true });
+      if (r.ok) pridano += 1;
+    }
+
+    res.json({ ok: true, added: pridano, season });
+  } catch (err) { next(err); }
+});
+
+// POST /teams/:id/roster – vedoucí přidá hostujícího hráče
+router.post('/:id/roster', requireAuth, async (req, res, next) => {
+  try {
+    const { playerId } = req.body;
+    const season = req.body.season || await seasonSvc.currentSeason();
+
+    const jeVedouci = req.user.manager?.some(m => m.teamId === req.params.id);
+    if (!jeVedouci) return res.status(403).json({ error: 'Nejsi vedoucí tohoto týmu' });
+    if (!playerId)  return res.status(400).json({ error: 'Chybí playerId' });
+
+    const vysledek = await licence.pridatDoSoupisky(playerId, req.params.id, season);
+    if (!vysledek.ok) {
+      return res.status(vysledek.code === 'NO_PLAYER' ? 404 : 422)
+        .json({ error: vysledek.error, code: vysledek.code });
+    }
+
+    const player = await prisma.player.findUnique({
+      where:   { id: playerId },
+      include: { payment: true, team: { select: { id: true, name: true, abbr: true } } },
+    });
+
+    res.status(201).json({
+      ...player,
+      isHome:   vysledek.radek.isHome,
+      licensed: licence.maZakladniLicenci(player.payment),
+      superLic: licence.maSuperlicenci(player.payment),
+    });
+  } catch (err) { next(err); }
+});
+
+// DELETE /teams/:id/roster/:playerId – odebrání hostujícího hráče
+router.delete('/:id/roster/:playerId', requireAuth, async (req, res, next) => {
+  try {
+    const season = req.query.season || await seasonSvc.currentSeason();
+
+    const jeVedouci = req.user.manager?.some(m => m.teamId === req.params.id);
+    if (!jeVedouci) return res.status(403).json({ error: 'Nejsi vedoucí tohoto týmu' });
+
+    const radek = await licence.jeNaSoupisce(req.params.playerId, req.params.id, season);
+    if (!radek) return res.status(404).json({ error: 'Hráč na soupisce není' });
+    if (radek.isHome) {
+      return res.status(400).json({
+        error: 'Kmenového hráče takhle odebrat nejde — použij odebrání z týmu',
+        code:  'IS_HOME_PLAYER',
+      });
+    }
+
+    // Hostující hráč se odebírá jen tehdy, když za tým ještě nenastoupil.
+    // Jinak by zmizel podklad pro nárok na playoff a pro statistiky.
+    const starty = await licence.startyPodleTymu(req.params.playerId, season);
+    if ((starty.get(req.params.id) ?? 0) > 0) {
+      return res.status(409).json({
+        error: 'Hráč už za tým odehrál zápas, ze soupisky ho odebrat nelze',
+        code:  'HAS_STARTS',
+      });
+    }
+
+    await licence.odebratZeSoupisky(req.params.playerId, req.params.id, season);
+    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 
