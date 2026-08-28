@@ -452,6 +452,7 @@ async function getPaymentQR(type, id) {
 
 module.exports = {
   bankSync,
+  HOME_FEE_AMOUNT,
   ensurePlayerVS,
   ensureTeamVS,
   ensureMatchHomeFeeVS,

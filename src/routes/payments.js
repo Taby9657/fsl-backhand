@@ -2,10 +2,56 @@ const express = require('express');
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { requireAuth, requireSupervisor } = require('../middleware/auth');
-const { bankSync, ensurePlayerVS, ensureTeamVS, ensureMatchHomeFeeVS, getPaymentQR } = require('../services/bankSync');
+const { bankSync, ensurePlayerVS, ensureTeamVS, ensureMatchHomeFeeVS, getPaymentQR, HOME_FEE_AMOUNT } = require('../services/bankSync');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+
+// ==================== POMOCNÉ FUNKCE ====================
+
+// Veřejná adresa webu pro návrat ze Stripe.
+// CLIENT_URL může být seznam originů (CORS) – pro URL bereme první / PUBLIC_WEB_URL.
+function webUrl() {
+  const raw = process.env.PUBLIC_WEB_URL || process.env.CLIENT_URL || '';
+  return raw.split(',')[0].trim().replace(/\/$/, '');
+}
+
+// Ověří, že je Stripe vůbec nakonfigurovaný. Bez toho vrací Stripe
+// nesrozumitelné "Invalid API Key provided: sk_test_…".
+function assertStripe(res) {
+  const key = process.env.STRIPE_SECRET_KEY || '';
+  if (!/^sk_(test|live)_/.test(key) || key.length < 30) {
+    res.status(503).json({
+      error: 'Platba kartou teď není dostupná. Použij prosím platbu převodem s QR kódem.',
+      code:  'STRIPE_NOT_CONFIGURED',
+    });
+    return false;
+  }
+  return true;
+}
+
+// Jednotná Checkout session.
+// Záměrně BEZ payment_method_types – Stripe pak nabídne všechny metody zapnuté
+// v dashboardu, tedy kartu i Apple Pay / Google Pay / Link podle zařízení.
+async function createCheckout({ name, amountCzk, type, metadata, email }) {
+  const web = webUrl();
+  return stripe.checkout.sessions.create({
+    mode: 'payment',
+    line_items: [{
+      price_data: {
+        currency: 'czk',
+        product_data: { name },
+        unit_amount: Math.round(Number(amountCzk) * 100), // haléře
+      },
+      quantity: 1,
+    }],
+    locale: 'cs',
+    success_url: `${web}/payment-success?type=${type}`,
+    cancel_url:  `${web}/platby`,
+    ...(email ? { customer_email: email } : {}),
+    metadata,
+  });
+}
 
 // ==================== PŘEHLED PLATEB ====================
 
@@ -39,6 +85,7 @@ router.get('/me', requireAuth, async (req, res, next) => {
 // POST /payments/player-license – vytvoření platební relace (Stripe Checkout / Payment Intent)
 router.post('/player-license', requireAuth, async (req, res, next) => {
   try {
+    if (!assertStripe(res)) return;
     const player = await prisma.player.findUnique({
       where:   { userId: req.user.id },
       include: { payment: true },
@@ -48,20 +95,12 @@ router.post('/player-license', requireAuth, async (req, res, next) => {
       return res.status(409).json({ error: 'Licence je již zaplacena' });
     }
 
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card', 'link'],
-      line_items: [{
-        price_data: {
-          currency: 'czk',
-          product_data: { name: 'FSL hráčská licence 2025/26' },
-          unit_amount: (player.payment?.licFee || 250) * 100, // haléře
-        },
-        quantity: 1,
-      }],
-      mode: 'payment',
-      success_url: `${process.env.CLIENT_URL}/payment-success?type=license`,
-      cancel_url:  `${process.env.CLIENT_URL}/payments`,
-      metadata: { playerId: player.id, type: 'PLAYER_LICENSE' },
+    const session = await createCheckout({
+      name:      `FSL hráčská licence ${player.payment?.season || '2025/26'}`,
+      amountCzk: player.payment?.licFee || 250,
+      type:      'license',
+      email:     req.user.email,
+      metadata:  { playerId: player.id, type: 'PLAYER_LICENSE' },
     });
 
     res.json({ url: session.url, sessionId: session.id });
@@ -71,6 +110,7 @@ router.post('/player-license', requireAuth, async (req, res, next) => {
 // POST /payments/home-fee – poplatek za domácí zápas (2 200 Kč)
 router.post('/home-fee', requireAuth, async (req, res, next) => {
   try {
+    if (!assertStripe(res)) return;
     const { matchId } = req.body;
     const managerTeamIds = (req.user.manager ?? []).map(m => m.teamId);
     if (managerTeamIds.length === 0) return res.status(403).json({ error: 'Nejste vedoucí žádného týmu' });
@@ -83,20 +123,12 @@ router.post('/home-fee', requireAuth, async (req, res, next) => {
     if (match.homeFeePaid) return res.status(409).json({ error: 'Poplatek za tento zápas je již uhrazen' });
 
     const dateStr = new Date(match.date).toLocaleDateString('cs-CZ');
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card', 'link'],
-      line_items: [{
-        price_data: {
-          currency: 'czk',
-          product_data: { name: `FSL poplatek za domácí zápas (${dateStr})` },
-          unit_amount: 220000, // 2 200 Kč v haléřích
-        },
-        quantity: 1,
-      }],
-      mode: 'payment',
-      success_url: `${process.env.CLIENT_URL}/payment-success?type=home-fee`,
-      cancel_url:  `${process.env.CLIENT_URL}/payments`,
-      metadata: { teamId: match.homeTeamId, matchId, type: 'HOME_FEE' },
+    const session = await createCheckout({
+      name:      `FSL poplatek za domácí zápas (${dateStr})`,
+      amountCzk: HOME_FEE_AMOUNT,
+      type:      'home-fee',
+      email:     req.user.email,
+      metadata:  { teamId: match.homeTeamId, matchId, type: 'HOME_FEE' },
     });
 
     res.json({ url: session.url, sessionId: session.id });
@@ -106,6 +138,7 @@ router.post('/home-fee', requireAuth, async (req, res, next) => {
 // POST /payments/super-license – super licence hráče
 router.post('/super-license', requireAuth, async (req, res, next) => {
   try {
+    if (!assertStripe(res)) return;
     const player = await prisma.player.findUnique({
       where:   { userId: req.user.id },
       include: { payment: true },
@@ -115,20 +148,41 @@ router.post('/super-license', requireAuth, async (req, res, next) => {
       return res.status(409).json({ error: 'Super licence je již zaplacena' });
     }
 
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card', 'link'],
-      line_items: [{
-        price_data: {
-          currency: 'czk',
-          product_data: { name: 'FSL super licence hráče 2025/26' },
-          unit_amount: (player.payment?.superFee || 250) * 100,
-        },
-        quantity: 1,
-      }],
-      mode: 'payment',
-      success_url: `${process.env.CLIENT_URL}/payment-success?type=super-license`,
-      cancel_url:  `${process.env.CLIENT_URL}/payments`,
-      metadata: { playerId: player.id, type: 'SUPER_LICENSE' },
+    const session = await createCheckout({
+      name:      `FSL super licence hráče ${player.payment?.season || '2025/26'}`,
+      amountCzk: player.payment?.superFee || 250,
+      type:      'super-license',
+      email:     req.user.email,
+      metadata:  { playerId: player.id, type: 'SUPER_LICENSE' },
+    });
+
+    res.json({ url: session.url, sessionId: session.id });
+  } catch (err) { next(err); }
+});
+
+// POST /payments/team-registration – registrační poplatek týmu
+router.post('/team-registration', requireAuth, async (req, res, next) => {
+  try {
+    if (!assertStripe(res)) return;
+    const managerTeamIds = (req.user.manager ?? []).map(m => m.teamId);
+    const teamId = req.body?.teamId || managerTeamIds[0];
+    if (!teamId) return res.status(403).json({ error: 'Nejste vedoucí žádného týmu' });
+    if (!managerTeamIds.includes(teamId)) return res.status(403).json({ error: 'Tento tým nespravujete' });
+
+    const payment = await prisma.teamPayment.findUnique({
+      where:   { teamId },
+      include: { team: { select: { name: true } } },
+    });
+    if (!payment) return res.status(404).json({ error: 'Platba týmu nenalezena' });
+    if (payment.status === 'PAID')   return res.status(409).json({ error: 'Registrace týmu je již zaplacena' });
+    if (payment.status === 'WAIVED') return res.status(409).json({ error: 'Poplatek za registraci je odpuštěn' });
+
+    const session = await createCheckout({
+      name:      `FSL registrace týmu ${payment.team.name} ${payment.season}`,
+      amountCzk: payment.amount,
+      type:      'team-registration',
+      email:     req.user.email,
+      metadata:  { teamId, type: 'TEAM_REG' },
     });
 
     res.json({ url: session.url, sessionId: session.id });
@@ -167,6 +221,11 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           where: { homeFeeStripeId: session.id },
         });
         if (existingMatch) alreadyProcessed = true;
+      } else if (metadata.type === 'TEAM_REG' && metadata.teamId) {
+        const existingTeam = await prisma.teamPayment.findFirst({
+          where: { stripeId: session.id },
+        });
+        if (existingTeam) alreadyProcessed = true;
       }
 
       if (alreadyProcessed) {
@@ -193,6 +252,11 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         await prisma.match.update({
           where: { id: metadata.matchId },
           data:  { homeFeePaid: true, homeFeeStripeId: session.id },
+        });
+      } else if (metadata.type === 'TEAM_REG' && metadata.teamId) {
+        await prisma.teamPayment.update({
+          where: { teamId: metadata.teamId },
+          data:  { status: 'PAID', paidAt: new Date(), method: 'stripe', stripeId: session.id },
         });
       }
     } catch (dbErr) {
