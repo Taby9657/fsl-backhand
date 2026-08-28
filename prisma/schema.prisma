@@ -59,6 +59,8 @@ model Team {
   payments    TeamPayment?
   draftOffers DraftOffer[]
   seasons     TeamSeason[]
+  playoffPrimaryFor   PlayoffChoice[] @relation("PlayoffPrimary")
+  playoffSecondaryFor PlayoffChoice[] @relation("PlayoffSecondary")
 }
 
 model Manager {
@@ -112,6 +114,7 @@ model Player {
   mvpVotes     PostmatchData[] @relation("MvpPlayer")
   payment      PlayerPayment?
   draftProfile DraftProfile?
+  playoffChoices PlayoffChoice[]
 }
 
 // ==================== REFEREES ====================
@@ -161,6 +164,8 @@ model Match {
   competition String     @default("FSL Liga")
   // Textová divize zůstává kvůli starým zápasům; nové se váží na strukturu
   division   String      @default("Divize A")
+  /** Základní část vs. playoff. Rozhoduje o tom, která pravidla superlicence platí. */
+  phase      MatchPhase  @default(REGULAR)
   leagueId     String?
   conferenceId String?
   divisionId   String?
@@ -197,9 +202,15 @@ model Match {
   @@index([awayTeamId])
   @@index([refereeId])
   @@index([date])
+  @@index([season, phase])
   @@index([leagueId])
   @@index([conferenceId])
   @@index([divisionId])
+}
+
+enum MatchPhase {
+  REGULAR
+  PLAYOFF
 }
 
 enum MatchStatus {
@@ -492,6 +503,31 @@ model RoundHighlight {
 }
 
 // ==================== DRAFT ====================
+
+/**
+ * Volba týmů pro playoff u hráče se superlicencí.
+ *
+ * V základní části smí hrát až za 3 týmy. Do playoff si z těch, kde nasbíral
+ * dost startů, vybere primární a volitelně sekundární tým. Za sekundární smí
+ * nastoupit teprve ve chvíli, kdy primárnímu tým playoff skončí — nikdy tedy
+ * nehraje dvě série naráz ani nerozhoduje vzájemný zápas svých týmů.
+ */
+model PlayoffChoice {
+  id              String   @id @default(uuid())
+  playerId        String
+  season          String
+  primaryTeamId   String
+  secondaryTeamId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  player    Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  primary   Team   @relation("PlayoffPrimary",   fields: [primaryTeamId],   references: [id])
+  secondary Team?  @relation("PlayoffSecondary", fields: [secondaryTeamId], references: [id])
+
+  @@unique([playerId, season])
+  @@index([season])
+}
 
 model DraftProfile {
   id        String   @id @default(uuid())

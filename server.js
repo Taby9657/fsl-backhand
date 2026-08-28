@@ -21,6 +21,7 @@ const statsRoutes        = require('./src/routes/stats');
 const supervisorRoutes   = require('./src/routes/supervisor');
 const notifRoutes        = require('./src/routes/notifications');
 const highlightRoutes    = require('./src/routes/highlights');
+const licenceRoutes = require('./src/routes/licence');
 const draftRoutes        = require('./src/routes/draft');
 const { processExpiredWindows } = require('./src/routes/draft');
 const searchRoutes       = require('./src/routes/search');
@@ -86,6 +87,7 @@ app.use('/api/stats',       statsRoutes);
 app.use('/api/supervisor',  supervisorRoutes);
 app.use('/api/notifications', notifRoutes);
 app.use('/api/highlights',   highlightRoutes);
+app.use('/api/licence',      licenceRoutes);
 app.use('/api/draft',        draftRoutes);
 app.use('/api/search',       searchRoutes);
 

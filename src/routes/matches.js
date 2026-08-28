@@ -6,6 +6,7 @@ const { sendPush } = require('../services/push');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const licence = require('../services/licence');
 
 // GET /matches/bracket?division=X&season=Y – play-off pavouk
 router.get('/bracket', async (req, res, next) => {
@@ -13,6 +14,7 @@ router.get('/bracket', async (req, res, next) => {
     const { division, season } = req.query;
     const matches = await prisma.match.findMany({
       where: {
+        phase: 'PLAYOFF',
         round: { not: null },
         ...(division && { division }),
         ...(season   && { season }),
@@ -89,7 +91,7 @@ router.get('/:id', async (req, res, next) => {
 // POST /matches – vytvoření zápasu (pouze supervisor)
 router.post('/', requireSupervisor, async (req, res, next) => {
   try {
-    const { homeTeamId, awayTeamId, refereeId, date, venue, competition, division, season, round } = req.body;
+    const { homeTeamId, awayTeamId, refereeId, date, venue, competition, division, season, round, phase } = req.body;
     if (!homeTeamId || !awayTeamId || !date) {
       return res.status(400).json({ error: 'Chybí povinné údaje (domácí, hosté, datum)' });
     }
@@ -104,6 +106,7 @@ router.post('/', requireSupervisor, async (req, res, next) => {
         division:    division   || 'Divize A',
         season:      season     || null,
         round:       round      ? parseInt(round) : null,
+        phase:       phase === 'PLAYOFF' ? 'PLAYOFF' : 'REGULAR',
       },
       include: { homeTeam: true, awayTeam: true, referee: true },
     });
@@ -115,7 +118,7 @@ router.post('/', requireSupervisor, async (req, res, next) => {
 router.put('/:id', requireSupervisor, async (req, res, next) => {
   try {
     const { refereeId, date, venue, status, homeScore, awayScore,
-            homeTeamId, awayTeamId, round, division, competition, season } = req.body;
+            homeTeamId, awayTeamId, round, division, competition, season, phase } = req.body;
     const match = await prisma.match.update({
       where: { id: req.params.id },
       data: {
@@ -123,6 +126,7 @@ router.put('/:id', requireSupervisor, async (req, res, next) => {
         ...(date         && { date: new Date(date) }),
         ...(venue        !== undefined && { venue: venue || null }),
         ...(status       && { status }),
+        ...(phase        && ['REGULAR', 'PLAYOFF'].includes(phase) && { phase }),
         ...(homeScore    !== undefined && { homeScore: parseInt(homeScore) }),
         ...(awayScore    !== undefined && { awayScore: parseInt(awayScore) }),
         ...(homeTeamId   && { homeTeamId }),
@@ -359,7 +363,7 @@ router.put('/:id/lineup/:teamId', requireAuth, async (req, res, next) => {
     // ── Kontrola stavu zápasu ──
     const matchCheck = await prisma.match.findUnique({
       where: { id: req.params.id },
-      select: { status: true, homeTeamId: true, awayTeamId: true },
+      select: { status: true, homeTeamId: true, awayTeamId: true, season: true, phase: true },
     });
     if (!matchCheck) return res.status(404).json({ error: 'Zápas nenalezen' });
     if (['LIVE', 'DONE'].includes(matchCheck.status)) {
@@ -371,26 +375,42 @@ router.put('/:id/lineup/:teamId', requireAuth, async (req, res, next) => {
       return res.status(400).json({ error: 'Zadaný tým nepatří do tohoto zápasu' });
     }
 
-    // ── Kontrola licencí ──
-    if (!force) {
+    // ── Kontrola licencí a nároku na start ──
+    // `force` je úleva jen pro chybějící základní licenci (vedoucí ji odešle
+    // a poplatek se doplatí). Pravidla superlicence se obejít nedají — to jsou
+    // soutěžní pravidla, ne administrativa.
+    {
       const playerIds = players.map(p => p.playerId);
-      const payments = await prisma.playerPayment.findMany({
-        where: { playerId: { in: playerIds } },
-        select: { playerId: true, licStatus: true },
-      });
-      const unlicensedIds = playerIds.filter(id => {
-        const pay = payments.find(p => p.playerId === id);
-        return !pay || !['PAID', 'WAIVED'].includes(pay.licStatus);
-      });
-      if (unlicensedIds.length > 0) {
+      const problemy  = [];
+
+      for (const playerId of playerIds) {
+        const vysledek = await licence.overNastup(playerId, req.params.teamId, matchCheck);
+        if (!vysledek.ok) problemy.push({ playerId, ...vysledek });
+      }
+
+      const zbyva = force ? problemy.filter(p => p.code !== 'NO_LICENCE') : problemy;
+
+      if (zbyva.length > 0) {
         const details = await prisma.player.findMany({
-          where: { id: { in: unlicensedIds } },
+          where:  { id: { in: zbyva.map(p => p.playerId) } },
           select: { id: true, firstName: true, lastName: true, jersey: true },
         });
+        const blocked = zbyva.map(p => ({
+          ...(details.find(d => d.id === p.playerId) ?? { id: p.playerId }),
+          code:   p.code,
+          reason: p.error,
+        }));
+
+        // Když jde jen o chybějící základní licenci, držíme původní kód —
+        // aplikace na něj má navázanou nabídku „odeslat i tak".
+        const jenLicence = blocked.every(b => b.code === 'NO_LICENCE');
         return res.status(422).json({
-          error: 'Soupiska obsahuje hráče bez platné licence',
-          code: 'UNLICENSED_PLAYERS',
-          unlicensed: details,
+          error: jenLicence
+            ? 'Soupiska obsahuje hráče bez platné licence'
+            : 'Soupiska obsahuje hráče, kteří za tenhle tým nastoupit nemohou',
+          code:  jenLicence ? 'UNLICENSED_PLAYERS' : 'INELIGIBLE_PLAYERS',
+          unlicensed: blocked,
+          blocked,
         });
       }
     }
