@@ -244,4 +244,86 @@ if (process.env.FIO_API_TOKEN && process.env.NODE_ENV === 'production') {
   }, 2 * 60 * 1000);
 }
 
+// ============ UPOMÍNKY NA POPLATEK ZA DOMÁCÍ ZÁPAS ============
+// Poplatek je splatný do 48 h před výkopem. Bez upomínky se na to zapomíná
+// a rozhodčí pak stojí na hale se zápasem, který nejde zahájit.
+if (process.env.NODE_ENV === 'production') {
+  const REMINDER_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hodin
+
+  async function runHomeFeeReminders() {
+    try {
+      const now    = new Date();
+      const in48h  = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+      const matches = await prismaLib.match.findMany({
+        where: {
+          status:            'UPCOMING',
+          homeFeePaid:       false,
+          homeFeeReminderAt: null,
+          date:              { gte: now, lte: in48h },
+        },
+        include: {
+          homeTeam: { select: { id: true, abbr: true } },
+          awayTeam: { select: { abbr: true } },
+        },
+      });
+
+      for (const match of matches) {
+        const managers = await prismaLib.manager.findMany({
+          where:  { teamId: match.homeTeamId },
+          select: { userId: true },
+        });
+        const dateStr = new Date(match.date).toLocaleDateString('cs-CZ');
+        for (const m of managers) {
+          await notifRoutes.createNotification(
+            m.userId,
+            'Neuhrazený poplatek za domácí zápas',
+            `${match.homeTeam.abbr} vs ${match.awayTeam.abbr} (${dateStr}) — poplatek 2 200 Kč je splatný do 48 h před výkopem. Bez úhrady nelze zápas zahájit.`,
+            'payments',
+          );
+        }
+        await prismaLib.match.update({
+          where: { id: match.id },
+          data:  { homeFeeReminderAt: new Date() },
+        });
+      }
+
+      if (matches.length > 0) {
+        console.log(`[HomeFee] Odesláno ${matches.length} upomínek na poplatek za domácí zápas.`);
+      }
+    } catch (err) {
+      console.error('[HomeFee] Chyba při odesílání upomínek:', err.message);
+    }
+  }
+
+  setTimeout(() => {
+    runHomeFeeReminders();
+    setInterval(runHomeFeeReminders, REMINDER_INTERVAL_MS);
+  }, 4 * 60 * 1000);
+}
+
+// ==================== REKONCILIACE STRIPE ====================
+// Doplněk k webhooku: kdyby některý nedorazil (deploy, výpadek sítě), tahle
+// úloha se Stripe doptá na platby, které u nás visí jako nezaplacené.
+if (process.env.NODE_ENV === 'production') {
+  const { reconcileStripePayments } = require('./src/services/stripeSync');
+  const STRIPE_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hodin
+
+  async function runStripeSync() {
+    try {
+      const results = await reconcileStripePayments();
+      if (results.skipped) return;
+      if (results.fixed.length > 0) {
+        console.log(`[StripeSync] Dorovnáno ${results.fixed.length} plateb, které webhook minul:`, results.fixed);
+      }
+    } catch (err) {
+      console.error('[StripeSync] Chyba:', err.message);
+    }
+  }
+
+  setTimeout(() => {
+    runStripeSync();
+    setInterval(runStripeSync, STRIPE_SYNC_INTERVAL_MS);
+  }, 3 * 60 * 1000);
+}
+
 start();

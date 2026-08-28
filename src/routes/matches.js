@@ -188,6 +188,19 @@ router.post('/:id/start', requireAuth, async (req, res, next) => {
       });
     }
 
+    // Poplatek za domácí zápas je splatný do 48 h před výkopem. Dosud se
+    // nikde nevynucoval – zápas šlo odehrát, aniž by ho někdo zaplatil.
+    // Supervisor může přes `force` pustit zápas i tak (dohoda, platba na místě).
+    if (!match.homeFeePaid) {
+      if (!(isSup && req.body?.force === true)) {
+        return res.status(400).json({
+          error: `Nelze zahájit zápas – ${match.homeTeam.abbr} nemá uhrazený poplatek za domácí zápas.`,
+          code:  'HOME_FEE_UNPAID',
+        });
+      }
+      console.warn(`[Matches] Zápas ${match.id} zahájen supervizorem i s neuhrazeným poplatkem.`);
+    }
+
     const updated = await prisma.match.update({
       where: { id: req.params.id },
       data:  { status: 'LIVE' },

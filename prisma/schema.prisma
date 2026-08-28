@@ -180,6 +180,8 @@ model Match {
   status          MatchStatus @default(UPCOMING)
   homeFeePaid     Boolean     @default(false)
   homeFeeStripeId String?
+  homeFeeSessionId String?    // rozpracovaná Checkout session
+  homeFeeReminderAt DateTime?  // kdy odešla upomínka na neuhrazený poplatek
   homeFeeVS       String?     @unique // variabilní symbol pro převod (prefix 4)
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
@@ -400,6 +402,7 @@ model TeamPayment {
   paidAt         DateTime?
   method         String?
   stripeId       String?
+  sessionId      String?       // rozpracovaná Stripe Checkout session
   variableSymbol String?       @unique
 
   team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
@@ -418,6 +421,8 @@ model PlayerPayment {
   superStatus    PaymentStatus @default(PENDING)
   superPaidAt    DateTime?
   stripeId       String?
+  licSessionId   String?  // rozpracovaná Checkout session – licence
+  superSessionId String?  // rozpracovaná Checkout session – superlicence
   variableSymbol      String?  @unique // licence (prefix 1)
   superVariableSymbol String?  @unique // superlicence (prefix 2)
 

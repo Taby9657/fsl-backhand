@@ -55,6 +55,9 @@ async function createCheckout({ name, amountCzk, type, metadata, email }) {
       quantity: 1,
     }],
     locale: 'cs',
+    // Session drzime hodinu. Delsi platnost jen zvysuje sanci, ze nekdo
+    // dokonci starou platbu, kterou uz mezitim uhradil jinak.
+    expires_at: Math.floor(Date.now() / 1000) + 60 * 60,
     success_url: `${web}/payment-success?type=${type}`,
     cancel_url:  `${web}/platby`,
     ...(email ? { customer_email: email } : {}),
@@ -89,6 +92,20 @@ router.get('/me', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// Vrati drive zalozenou Checkout session, pokud je porad otevrena.
+// Bez toho vznikala pri kazdem kliknuti nova session a kdo si platbu otevrel
+// dvakrat, mohl obe dokoncit a zaplatit dvakrat.
+async function reuseOpenSession(sessionId) {
+  if (!sessionId) return null;
+  try {
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+    if (session.status === 'open' && session.url) return session;
+  } catch (_) {
+    // session neexistuje, vyprsela, nebo patri k jinemu klici – zalozime novou
+  }
+  return null;
+}
+
 // GET /payments/methods – ktere platebni cesty jsou zrovna k dispozici.
 // Klient podle toho skryje volby, ktere by stejne skoncily chybou.
 router.get('/methods', requireAuth, (req, res) => {
@@ -115,13 +132,20 @@ router.post('/player-license', requireAuth, async (req, res, next) => {
       return res.status(409).json({ error: 'Licence je již zaplacena' });
     }
 
-    const session = await createCheckout({
-      name:      `FSL hráčská licence ${player.payment?.season || '2025/26'}`,
-      amountCzk: player.payment?.licFee || 250,
-      type:      'license',
-      email:     req.user.email,
-      metadata:  { playerId: player.id, type: 'PLAYER_LICENSE' },
-    });
+    let session = await reuseOpenSession(player.payment?.licSessionId);
+    if (!session) {
+      session = await createCheckout({
+        name:      `FSL hráčská licence ${player.payment?.season || '2025/26'}`,
+        amountCzk: player.payment?.licFee || 250,
+        type:      'license',
+        email:     req.user.email,
+        metadata:  { playerId: player.id, type: 'PLAYER_LICENSE' },
+      });
+      await prisma.playerPayment.update({
+        where: { playerId: player.id },
+        data:  { licSessionId: session.id },
+      });
+    }
 
     res.json({ url: session.url, sessionId: session.id });
   } catch (err) { next(err); }
@@ -143,13 +167,20 @@ router.post('/home-fee', requireAuth, async (req, res, next) => {
     if (match.homeFeePaid) return res.status(409).json({ error: 'Poplatek za tento zápas je již uhrazen' });
 
     const dateStr = new Date(match.date).toLocaleDateString('cs-CZ');
-    const session = await createCheckout({
-      name:      `FSL poplatek za domácí zápas (${dateStr})`,
-      amountCzk: HOME_FEE_AMOUNT,
-      type:      'home-fee',
-      email:     req.user.email,
-      metadata:  { teamId: match.homeTeamId, matchId, type: 'HOME_FEE' },
-    });
+    let session = await reuseOpenSession(match.homeFeeSessionId);
+    if (!session) {
+      session = await createCheckout({
+        name:      `FSL poplatek za domácí zápas (${dateStr})`,
+        amountCzk: HOME_FEE_AMOUNT,
+        type:      'home-fee',
+        email:     req.user.email,
+        metadata:  { teamId: match.homeTeamId, matchId, type: 'HOME_FEE' },
+      });
+      await prisma.match.update({
+        where: { id: matchId },
+        data:  { homeFeeSessionId: session.id },
+      });
+    }
 
     res.json({ url: session.url, sessionId: session.id });
   } catch (err) { next(err); }
@@ -168,13 +199,20 @@ router.post('/super-license', requireAuth, async (req, res, next) => {
       return res.status(409).json({ error: 'Super licence je již zaplacena' });
     }
 
-    const session = await createCheckout({
-      name:      `FSL super licence hráče ${player.payment?.season || '2025/26'}`,
-      amountCzk: player.payment?.superFee || 250,
-      type:      'super-license',
-      email:     req.user.email,
-      metadata:  { playerId: player.id, type: 'SUPER_LICENSE' },
-    });
+    let session = await reuseOpenSession(player.payment?.superSessionId);
+    if (!session) {
+      session = await createCheckout({
+        name:      `FSL super licence hráče ${player.payment?.season || '2025/26'}`,
+        amountCzk: player.payment?.superFee || 250,
+        type:      'super-license',
+        email:     req.user.email,
+        metadata:  { playerId: player.id, type: 'SUPER_LICENSE' },
+      });
+      await prisma.playerPayment.update({
+        where: { playerId: player.id },
+        data:  { superSessionId: session.id },
+      });
+    }
 
     res.json({ url: session.url, sessionId: session.id });
   } catch (err) { next(err); }
@@ -197,13 +235,20 @@ router.post('/team-registration', requireAuth, async (req, res, next) => {
     if (payment.status === 'PAID')   return res.status(409).json({ error: 'Registrace týmu je již zaplacena' });
     if (payment.status === 'WAIVED') return res.status(409).json({ error: 'Poplatek za registraci je odpuštěn' });
 
-    const session = await createCheckout({
-      name:      `FSL registrace týmu ${payment.team.name} ${payment.season}`,
-      amountCzk: payment.amount,
-      type:      'team-registration',
-      email:     req.user.email,
-      metadata:  { teamId, type: 'TEAM_REG' },
-    });
+    let session = await reuseOpenSession(payment.sessionId);
+    if (!session) {
+      session = await createCheckout({
+        name:      `FSL registrace týmu ${payment.team.name} ${payment.season}`,
+        amountCzk: payment.amount,
+        type:      'team-registration',
+        email:     req.user.email,
+        metadata:  { teamId, type: 'TEAM_REG' },
+      });
+      await prisma.teamPayment.update({
+        where: { teamId },
+        data:  { sessionId: session.id },
+      });
+    }
 
     res.json({ url: session.url, sessionId: session.id });
   } catch (err) { next(err); }
@@ -286,6 +331,52 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
     }
   }
 
+  // Refundace – vrátíme platbu do nezaplaceného stavu, ať v aplikaci nesvítí
+  // „Zaplaceno" u něčeho, co je zpátky na účtu hráče.
+  if (event.type === 'charge.refunded') {
+    const charge = event.data.object;
+    const fullyRefunded = charge.refunded === true || charge.amount_refunded >= charge.amount;
+
+    if (fullyRefunded && charge.payment_intent) {
+      try {
+        const list = await stripe.checkout.sessions.list({
+          payment_intent: charge.payment_intent,
+          limit: 1,
+        });
+        const metadata = list.data[0]?.metadata ?? {};
+
+        if (metadata.type === 'PLAYER_LICENSE' && metadata.playerId) {
+          await prisma.playerPayment.update({
+            where: { playerId: metadata.playerId },
+            data:  { licStatus: 'PENDING', licPaidAt: null, licMethod: null, stripeId: null },
+          });
+          await prisma.player.update({
+            where: { id: metadata.playerId },
+            data:  { licensed: false },
+          });
+        } else if (metadata.type === 'SUPER_LICENSE' && metadata.playerId) {
+          await prisma.playerPayment.update({
+            where: { playerId: metadata.playerId },
+            data:  { superStatus: 'PENDING', superPaidAt: null, superLic: false },
+          });
+        } else if (metadata.type === 'TEAM_REG' && metadata.teamId) {
+          await prisma.teamPayment.update({
+            where: { teamId: metadata.teamId },
+            data:  { status: 'PENDING', paidAt: null, method: null, stripeId: null },
+          });
+        } else if (metadata.type === 'HOME_FEE' && metadata.matchId) {
+          await prisma.match.update({
+            where: { id: metadata.matchId },
+            data:  { homeFeePaid: false, homeFeeStripeId: null },
+          });
+        }
+      } catch (err) {
+        console.error('Zpracování refundace selhalo:', err);
+        return res.status(500).json({ error: 'Interní chyba při zpracování refundace' });
+      }
+    }
+  }
+
   res.json({ received: true });
 });
 
@@ -314,6 +405,16 @@ router.put('/team/:teamId', requireSupervisor, async (req, res, next) => {
 router.put('/player/:playerId', requireSupervisor, async (req, res, next) => {
   try {
     const { licStatus, superStatus } = req.body;
+    const validStatuses = ['PENDING', 'PAID', 'OVERDUE', 'WAIVED'];
+    if (licStatus && !validStatuses.includes(licStatus)) {
+      return res.status(400).json({ error: 'Neplatný stav licence' });
+    }
+    if (superStatus && !validStatuses.includes(superStatus)) {
+      return res.status(400).json({ error: 'Neplatný stav superlicence' });
+    }
+    if (!licStatus && !superStatus) {
+      return res.status(400).json({ error: 'Chybí licStatus nebo superStatus' });
+    }
     const payment = await prisma.playerPayment.update({
       where: { playerId: req.params.playerId },
       data: {
@@ -368,6 +469,15 @@ router.get('/vs/match/:matchId', requireAuth, async (req, res, next) => {
   try {
     const vs = await ensureMatchHomeFeeVS(req.params.matchId);
     res.json({ variableSymbol: vs });
+  } catch (err) { next(err); }
+});
+
+// POST /payments/stripe-sync – ruční rekonciliace proti Stripe (supervisor)
+router.post('/stripe-sync', requireSupervisor, async (req, res, next) => {
+  try {
+    const { reconcileStripePayments } = require('../services/stripeSync');
+    const results = await reconcileStripePayments();
+    res.json(results);
   } catch (err) { next(err); }
 });
 
