@@ -30,3 +30,7 @@ ALTER TABLE "PlayoffChoice" ADD CONSTRAINT "PlayoffChoice_primaryTeamId_fkey"
   FOREIGN KEY ("primaryTeamId") REFERENCES "Team"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 ALTER TABLE "PlayoffChoice" ADD CONSTRAINT "PlayoffChoice_secondaryTeamId_fkey"
   FOREIGN KEY ("secondaryTeamId") REFERENCES "Team"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- Pozdní příchody: hráč doplněný do sestavy až za běhu zápasu zůstane označený
+ALTER TABLE "LineupPlayer" ADD COLUMN "addedLate" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "LineupPlayer" ADD COLUMN "addedAt"   TIMESTAMP(3);

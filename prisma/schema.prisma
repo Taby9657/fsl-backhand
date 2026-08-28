@@ -271,6 +271,9 @@ model LineupPlayer {
   isGoalkeeper Boolean @default(false)
   isCaptain    Boolean @default(false)
   jerseyOverride Int?
+  /** Doplněn až za běhu zápasu (pozdní příchod). Zůstává vidět v zápise. */
+  addedLate    Boolean   @default(false)
+  addedAt      DateTime?
 
   lineup LineupSubmission @relation(fields: [lineupId], references: [id], onDelete: Cascade)
   player Player           @relation(fields: [playerId], references: [id])

@@ -281,6 +281,37 @@ router.post('/:id/events', requireAuth, async (req, res, next) => {
       return res.status(400).json({ error: 'Neplatná minuta zápasu' });
     }
 
+    // ── Hráči v události musí být na soupisce svého týmu ──
+    // Bez téhle kontroly šlo za běhu zápasu zapsat gól komukoli z ligy,
+    // a tím fakticky obejít soupisku i pravidla licencí.
+    const dotceni = [scorerId, assistId, penaltyId].filter(Boolean);
+    if (dotceni.length > 0) {
+      if (!teamId) {
+        return res.status(400).json({ error: 'teamId je povinné, když událost odkazuje na hráče' });
+      }
+      const naSoupisce = await prisma.lineupPlayer.findMany({
+        where: {
+          playerId: { in: dotceni },
+          lineup:   { matchId: req.params.id, teamId },
+        },
+        select: { playerId: true },
+      });
+      const povoleni = new Set(naSoupisce.map(l => l.playerId));
+      const mimo = [...new Set(dotceni)].filter(id => !povoleni.has(id));
+
+      if (mimo.length > 0) {
+        const kdo = await prisma.player.findMany({
+          where:  { id: { in: mimo } },
+          select: { id: true, firstName: true, lastName: true, jersey: true },
+        });
+        return res.status(422).json({
+          error: 'Událost odkazuje na hráče, který není na soupisce tohoto týmu',
+          code:  'NOT_IN_LINEUP',
+          players: kdo,
+        });
+      }
+    }
+
     const event = await prisma.matchEvent.create({
       data: {
         matchId: req.params.id,
@@ -432,6 +463,86 @@ router.put('/:id/lineup/:teamId', requireAuth, async (req, res, next) => {
       include: { players: { include: { player: true } } },
     });
     res.json(lineup);
+  } catch (err) { next(err); }
+});
+
+/**
+ * POST /matches/:id/lineup/:teamId/add – doplnění hráče za běhu zápasu.
+ *
+ * Pro pozdní příchody. Záměrně mnohem přísnější než skládání soupisky před
+ * zápasem: jen kmenový hráč vlastního týmu s platnou licencí. Hosta už
+ * po zahájení přidat nejde, aby nešlo přivolat posilu podle vývoje zápasu.
+ * Doplnění zůstane v zápise označené.
+ */
+router.post('/:id/lineup/:teamId/add', requireAuth, async (req, res, next) => {
+  try {
+    const { playerId, isGoalkeeper = false } = req.body;
+    const { id: matchId, teamId } = req.params;
+
+    if (!playerId) return res.status(400).json({ error: 'Chybí playerId' });
+
+    const jeVedouci    = req.user.manager?.some(m => m.teamId === teamId);
+    const jeSupervisor = isSupervisorUser(req.user);
+    if (!jeVedouci && !jeSupervisor) {
+      return res.status(403).json({ error: 'Nejsi vedoucí tohoto týmu' });
+    }
+
+    const match = await prisma.match.findUnique({
+      where:  { id: matchId },
+      select: { status: true, homeTeamId: true, awayTeamId: true },
+    });
+    if (!match) return res.status(404).json({ error: 'Zápas nenalezen' });
+    if (teamId !== match.homeTeamId && teamId !== match.awayTeamId) {
+      return res.status(400).json({ error: 'Zadaný tým nepatří do tohoto zápasu' });
+    }
+    if (match.status !== 'LIVE') {
+      return res.status(400).json({
+        error: 'Takhle se doplňuje jen do probíhajícího zápasu. Před zápasem uprav rovnou soupisku.',
+      });
+    }
+
+    const player = await prisma.player.findUnique({
+      where:  { id: playerId },
+      select: { id: true, teamId: true, firstName: true, lastName: true, jersey: true, payment: true },
+    });
+    if (!player) return res.status(404).json({ error: 'Hráč nenalezen' });
+
+    // Jen vlastní kmenový hráč — hosté se za běhu zápasu nepřidávají
+    if (player.teamId !== teamId) {
+      return res.status(422).json({
+        error: 'Za běhu zápasu lze doplnit jen hráče z vlastní soupisky, ne hostujícího',
+        code:  'GUEST_NOT_ALLOWED_LIVE',
+      });
+    }
+    if (!licence.maZakladniLicenci(player.payment)) {
+      return res.status(422).json({
+        error: 'Hráč nemá platnou licenci',
+        code:  'NO_LICENCE',
+      });
+    }
+
+    const lineup = await prisma.lineupSubmission.findUnique({
+      where: { matchId_teamId: { matchId, teamId } },
+    });
+    if (!lineup) return res.status(404).json({ error: 'Tým nemá pro tenhle zápas soupisku' });
+
+    const uz = await prisma.lineupPlayer.findUnique({
+      where: { lineupId_playerId: { lineupId: lineup.id, playerId } },
+    });
+    if (uz) return res.status(409).json({ error: 'Hráč už na soupisce je' });
+
+    const slot = await prisma.lineupPlayer.create({
+      data: {
+        lineupId: lineup.id,
+        playerId,
+        isGoalkeeper: !!isGoalkeeper,
+        addedLate: true,
+        addedAt:   new Date(),
+      },
+      include: { player: { select: { id: true, firstName: true, lastName: true, jersey: true } } },
+    });
+
+    res.status(201).json(slot);
   } catch (err) { next(err); }
 });
 
