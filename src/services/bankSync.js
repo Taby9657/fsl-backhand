@@ -392,8 +392,8 @@ async function sendNotification(userId, title, body, screen) {
  * Frontend z toho vygeneruje QR pomocí např. qrcode.js.
  */
 async function getPaymentQR(type, id) {
-  const IBAN   = process.env.BANK_IBAN;   // CZ6508000000192000145399
-  const BIC    = process.env.BANK_BIC;    // GIBACZPX (ČSOB, GE Money…)
+  const IBAN   = process.env.BANK_IBAN;   // ucet ligy – nastaveny jen v prostredi
+  const BIC    = process.env.BANK_BIC;
 
   if (!IBAN) throw new Error('BANK_IBAN není nastaven');
 
