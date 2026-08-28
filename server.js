@@ -12,6 +12,7 @@ const prismaLib = require('./src/lib/prisma');
 const { bankSync }       = require('./src/services/bankSync');
 const authRoutes         = require('./src/routes/auth');
 const teamRoutes         = require('./src/routes/teams');
+const leagueRoutes       = require('./src/routes/leagues');
 const playerRoutes       = require('./src/routes/players');
 const matchRoutes        = require('./src/routes/matches');
 const refereeRoutes      = require('./src/routes/referees');
@@ -76,6 +77,7 @@ app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().
 
 app.use('/api/auth',        authLimiter, authRoutes);
 app.use('/api/teams',       teamRoutes);
+app.use('/api/leagues',     leagueRoutes);
 app.use('/api/players',     playerRoutes);
 app.use('/api/matches',     matchRoutes);
 app.use('/api/referees',    refereeRoutes);

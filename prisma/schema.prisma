@@ -58,6 +58,7 @@ model Team {
   inviteCodes InviteCode[]
   payments    TeamPayment?
   draftOffers DraftOffer[]
+  seasons     TeamSeason[]
 }
 
 model Manager {
@@ -158,7 +159,11 @@ model Match {
   awayTeamId String
   refereeId  String?
   competition String     @default("FSL Liga")
+  // Textová divize zůstává kvůli starým zápasům; nové se váží na strukturu
   division   String      @default("Divize A")
+  leagueId     String?
+  conferenceId String?
+  divisionId   String?
   season     String      @default("2025/26")
   round      Int?
   date       DateTime
@@ -176,6 +181,10 @@ model Match {
   awayTeam  Team     @relation("AwayTeam", fields: [awayTeamId], references: [id])
   referee   Referee? @relation(fields: [refereeId], references: [id])
 
+  league     League?     @relation(fields: [leagueId],     references: [id], onDelete: SetNull)
+  conference Conference? @relation(fields: [conferenceId], references: [id], onDelete: SetNull)
+  divisionRef Division?  @relation(fields: [divisionId],   references: [id], onDelete: SetNull)
+
   events       MatchEvent[]
   lineups      LineupSubmission[]
   postmatches  PostmatchData[]
@@ -188,6 +197,9 @@ model Match {
   @@index([awayTeamId])
   @@index([refereeId])
   @@index([date])
+  @@index([leagueId])
+  @@index([conferenceId])
+  @@index([divisionId])
 }
 
 enum MatchStatus {
@@ -286,6 +298,74 @@ model RefRating {
   referee Referee @relation(fields: [refereeId], references: [id])
 
   @@unique([matchId, teamId])
+}
+
+// ==================== SOUTĚŽNÍ STRUKTURA ====================
+//
+// Sezóna může mít víc lig (max 10, rozlišených úrovní). Liga může mít
+// konference (max 2) a konference divize (max 2) — obojí volitelně, takže
+// první ročník může být jedna liga bez dalších vrstev.
+//
+// Zařazení týmu se drží na sezónu (TeamSeason), aby postup nebo sestup
+// nepřepsal loňské tabulky a statistiky.
+
+model League {
+  id        String   @id @default(uuid())
+  season    String
+  name      String
+  /** 1 = nejvyšší úroveň. Používá se k řazení. */
+  level     Int      @default(1)
+  createdAt DateTime @default(now())
+
+  conferences Conference[]
+  teamSeasons TeamSeason[]
+  matches     Match[]
+
+  @@unique([season, name])
+  @@index([season, level])
+}
+
+model Conference {
+  id       String @id @default(uuid())
+  leagueId String
+  name     String
+
+  league      League       @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  divisions   Division[]
+  teamSeasons TeamSeason[]
+  matches     Match[]
+
+  @@unique([leagueId, name])
+}
+
+model Division {
+  id           String @id @default(uuid())
+  conferenceId String
+  name         String
+
+  conference  Conference   @relation(fields: [conferenceId], references: [id], onDelete: Cascade)
+  teamSeasons TeamSeason[]
+  matches     Match[]
+
+  @@unique([conferenceId, name])
+}
+
+model TeamSeason {
+  id           String   @id @default(uuid())
+  teamId       String
+  season       String
+  leagueId     String
+  conferenceId String?
+  divisionId   String?
+  createdAt    DateTime @default(now())
+
+  team       Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  league     League      @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  conference Conference? @relation(fields: [conferenceId], references: [id], onDelete: SetNull)
+  division   Division?   @relation(fields: [divisionId], references: [id], onDelete: SetNull)
+
+  @@unique([teamId, season])
+  @@index([season, leagueId])
 }
 
 // ==================== PAYMENTS ====================

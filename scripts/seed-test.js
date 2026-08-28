@@ -269,20 +269,20 @@ async function main() {
     await prisma.playerPayment.create({ data: {
       playerId: player.id,
       season: SEASON,
-      licFee: 300, licStatus,
+      licFee: 250, licStatus,
       licPaidAt: licPaidAt ?? null,
       licMethod: licMethod ?? null,
-      superLic: false, superFee: 300, superStatus: 'PENDING',
+      superLic: false, superFee: 250, superStatus: 'PENDING',
       variableSymbol: String(100001 + i),
     }});
   }
 
   // Platby týmů
   await prisma.teamPayment.createMany({ data: [
-    { teamId: teamOrli.id,  season: SEASON, amount: 10000, status: 'PAID',    paidAt: daysAgo(25), method: 'bank', variableSymbol: '900001' },
-    { teamId: teamOhen.id,  season: SEASON, amount: 10000, status: 'PENDING', variableSymbol: '900002' },
-    { teamId: teamSila.id,  season: SEASON, amount: 10000, status: 'OVERDUE', variableSymbol: '900003' },
-    { teamId: teamBoure.id, season: SEASON, amount: 10000, status: 'PENDING', variableSymbol: '900004' },
+    { teamId: teamOrli.id,  season: SEASON, amount: 8000, status: 'PAID',    paidAt: daysAgo(25), method: 'bank', variableSymbol: '900001' },
+    { teamId: teamOhen.id,  season: SEASON, amount: 8000, status: 'PENDING', variableSymbol: '900002' },
+    { teamId: teamSila.id,  season: SEASON, amount: 8000, status: 'OVERDUE', variableSymbol: '900003' },
+    { teamId: teamBoure.id, season: SEASON, amount: 8000, status: 'PENDING', variableSymbol: '900004' },
   ]});
 
   console.log('  ✓ Platby hráčů (PAID/PENDING/OVERDUE/WAIVED) + týmové platby');

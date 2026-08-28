@@ -3,6 +3,24 @@ const express = require('express');
 const { requireSupervisor } = require('../middleware/auth');
 
 const router = express.Router();
+
+/**
+ * Filtr zápasů podle soutěžní struktury.
+ *
+ * Nové zápasy nesou leagueId/conferenceId/divisionId, starší jen textovou
+ * divizi. Bereme obojí, ať statistiky za minulé ročníky nezmizí.
+ */
+function matchScope({ leagueId, conferenceId, divisionId, division, season }) {
+  const where = {};
+  if (divisionId)   where.divisionId   = divisionId;
+  if (conferenceId) where.conferenceId = conferenceId;
+  if (leagueId)     where.leagueId     = leagueId;
+  if (division && !leagueId && !conferenceId && !divisionId) where.division = division;
+  if (season)       where.season       = season;
+  return where;
+}
+
+
 const prisma = require('../lib/prisma');
 
 // GET /stats/seasons – seznam dostupných ročníků
@@ -19,10 +37,9 @@ router.get('/seasons', async (req, res, next) => {
 // GET /stats/scorers – tabulka střelců
 router.get('/scorers', async (req, res, next) => {
   try {
-    const { division, season, limit = '20' } = req.query;
+    const { division, season, limit = '20', leagueId, conferenceId, divisionId } = req.query;
     const matchWhere = {
-      ...(division && { division }),
-      ...(season   && { season }),
+      ...matchScope({ leagueId, conferenceId, divisionId, division, season }),
     };
 
     const goals = await prisma.matchEvent.groupBy({
@@ -57,10 +74,9 @@ router.get('/scorers', async (req, res, next) => {
 // GET /stats/assisters – tabulka nahrávačů
 router.get('/assisters', async (req, res, next) => {
   try {
-    const { division, season, limit = '20' } = req.query;
+    const { division, season, limit = '20', leagueId, conferenceId, divisionId } = req.query;
     const matchWhere = {
-      ...(division && { division }),
-      ...(season   && { season }),
+      ...matchScope({ leagueId, conferenceId, divisionId, division, season }),
     };
 
     const assists = await prisma.matchEvent.groupBy({
@@ -94,8 +110,8 @@ router.get('/assisters', async (req, res, next) => {
 // GET /stats/points – kombinovaná tabulka (góly + asistence)
 router.get('/points', async (req, res, next) => {
   try {
-    const { division, season, limit = '20' } = req.query;
-    const mw = { ...(division && { division }), ...(season && { season }) };
+    const { division, season, limit = '20', leagueId, conferenceId, divisionId } = req.query;
+    const mw = matchScope({ leagueId, conferenceId, divisionId, division, season });
     const matchWhere = Object.keys(mw).length ? { match: mw } : {};
 
     const [goals, assists] = await Promise.all([
@@ -146,10 +162,9 @@ router.get('/points', async (req, res, next) => {
 // GET /stats/mvp – tabulka MVP (počet hlasování od soupeřů)
 router.get('/mvp', async (req, res, next) => {
   try {
-    const { division, season, limit = '20' } = req.query;
+    const { division, season, limit = '20', leagueId, conferenceId, divisionId } = req.query;
     const matchWhere = {
-      ...(division && { division }),
-      ...(season   && { season }),
+      ...matchScope({ leagueId, conferenceId, divisionId, division, season }),
     };
 
     const votes = await prisma.postmatchData.groupBy({
@@ -183,22 +198,29 @@ router.get('/mvp', async (req, res, next) => {
 // GET /stats/table – tabulka (výhry/remízy/prohry/skóre + forma posledních 5)
 router.get('/table', async (req, res, next) => {
   try {
-    let { division, season } = req.query;
+    let { division, season, leagueId, conferenceId, divisionId } = req.query;
 
-    // Pokud division není zadáno, vezmi první dostupnou
-    if (!division) {
+    // Bez jakéhokoli zúžení vezmeme skupinu posledního odehraného zápasu,
+    // ať tabulka nemíchá dohromady týmy z různých soutěží.
+    if (!division && !leagueId && !conferenceId && !divisionId) {
       const first = await prisma.match.findFirst({
-        where: { status: 'DONE', ...(season && { season }) },
-        select: { division: true },
+        where:   { status: 'DONE', ...(season && { season }) },
+        select:  { division: true, divisionId: true, conferenceId: true, leagueId: true },
         orderBy: { date: 'desc' },
       });
       if (!first) return res.json([]);
-      division = first.division;
+      if (first.divisionId)        divisionId   = first.divisionId;
+      else if (first.conferenceId) conferenceId = first.conferenceId;
+      else if (first.leagueId)     leagueId     = first.leagueId;
+      else                         division     = first.division;
     }
 
     // Načti seřazené podle data (pro výpočet formy)
     const matches = await prisma.match.findMany({
-      where: { division, status: 'DONE', ...(season && { season }) },
+      where: {
+        ...matchScope({ leagueId, conferenceId, divisionId, division, season }),
+        status: 'DONE',
+      },
       select: { homeTeamId: true, awayTeamId: true, homeScore: true, awayScore: true, date: true },
       orderBy: { date: 'desc' }, // nejnovější první → pro formu
     });
@@ -330,10 +352,9 @@ router.get('/referees', async (req, res, next) => {
 // Vrátí CSV soubor – pouze pro supervisory
 router.get('/export', requireSupervisor, async (req, res, next) => {
   try {
-    const { type = 'players', division, season } = req.query;
+    const { type = 'players', division, season, leagueId, conferenceId, divisionId } = req.query;
     const matchWhere = {
-      ...(division && { division }),
-      ...(season   && { season }),
+      ...matchScope({ leagueId, conferenceId, divisionId, division, season }),
     };
 
     // CSV helper — escapuj hodnoty pro Excel (ochrana proti CSV injection)

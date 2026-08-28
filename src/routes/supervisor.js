@@ -378,20 +378,37 @@ function generateRoundRobin(teamIds, doubleRoundRobin = false) {
 }
 
 // POST /supervisor/fixtures/preview – náhled (bez uložení)
-// Podporuje: division | conference | teamIds[]
+// Podporuje: leagueId | conferenceId | divisionId (nová struktura)
+//            division | conference | teamIds[]   (staré textové pole)
 router.post('/fixtures/preview', async (req, res, next) => {
   try {
-    const { division, conference, teamIds, doubleRoundRobin = false } = req.body;
+    const {
+      division, conference, teamIds,
+      leagueId, conferenceId, divisionId, season = null,
+      doubleRoundRobin = false,
+    } = req.body;
 
     let teams;
-    if (Array.isArray(teamIds) && teamIds.length >= 2) {
+    if (leagueId || conferenceId || divisionId) {
+      const sezona = season ?? await seasonSvc.currentSeason();
+      const zarazeni = await prisma.teamSeason.findMany({
+        where: {
+          season: sezona,
+          ...(divisionId   ? { divisionId }   : {}),
+          ...(conferenceId ? { conferenceId } : {}),
+          ...(leagueId     ? { leagueId }     : {}),
+        },
+        include: { team: true },
+      });
+      teams = zarazeni.map(z => z.team);
+    } else if (Array.isArray(teamIds) && teamIds.length >= 2) {
       teams = await prisma.team.findMany({ where: { id: { in: teamIds } } });
     } else if (conference) {
       teams = await prisma.team.findMany({ where: { conference } });
     } else if (division) {
       teams = await prisma.team.findMany({ where: { division } });
     } else {
-      return res.status(400).json({ error: 'Zadej division, conference nebo teamIds' });
+      return res.status(400).json({ error: 'Zadej ligu, konferenci, divizi nebo seznam týmů' });
     }
 
     if (teams.length < 2) return res.status(400).json({ error: 'Potřeba alespoň 2 týmy' });
@@ -418,6 +435,7 @@ router.post('/fixtures/generate', async (req, res, next) => {
   try {
     const {
       division, conference, teamIds,
+      leagueId, conferenceId, divisionId,
       competition      = 'FSL Liga',
       startDate,
       season           = null,
@@ -433,8 +451,41 @@ router.post('/fixtures/generate', async (req, res, next) => {
     let teams;
     let matchDivision = division ?? 'Mix';
     let matchConference = conference ?? null;
+    // Vazba nových zápasů na soutěžní strukturu
+    let struktura = null;
 
-    if (Array.isArray(teamIds) && teamIds.length >= 2) {
+    // Nová cesta: výběr podle ligy, konference nebo divize ze struktury
+    if (leagueId || conferenceId || divisionId) {
+      const sezona = season ?? await seasonSvc.currentSeason();
+      const zarazeni = await prisma.teamSeason.findMany({
+        where: {
+          season: sezona,
+          ...(divisionId   ? { divisionId }   : {}),
+          ...(conferenceId ? { conferenceId } : {}),
+          ...(leagueId     ? { leagueId }     : {}),
+        },
+        include: {
+          team:       true,
+          league:     { select: { id: true, name: true } },
+          conference: { select: { id: true, name: true } },
+          division:   { select: { id: true, name: true } },
+        },
+      });
+      teams = zarazeni.map(z => z.team);
+      const prvni = zarazeni[0];
+
+      // Zápasy označíme rozsahem, který supervisor zvolil — ne zařazením prvního
+      // týmu. Losování celé ligy se dvěma konferencemi jinak spadne pod jednu.
+      struktura = {
+        leagueId:     leagueId     ?? prvni?.leagueId     ?? null,
+        conferenceId: conferenceId ?? (divisionId ? prvni?.conferenceId ?? null : null),
+        divisionId:   divisionId   ?? null,
+      };
+
+      // Textová divize zůstává kvůli starším obrazovkám a exportům
+      matchDivision   = prvni?.division?.name ?? prvni?.conference?.name ?? prvni?.league?.name ?? 'Mix';
+      matchConference = prvni?.conference?.name ?? null;
+    } else if (Array.isArray(teamIds) && teamIds.length >= 2) {
       teams = await prisma.team.findMany({ where: { id: { in: teamIds } } });
       matchDivision = division || 'Mix';
     } else if (conference) {
@@ -444,7 +495,7 @@ router.post('/fixtures/generate', async (req, res, next) => {
     } else if (division) {
       teams = await prisma.team.findMany({ where: { division } });
     } else {
-      return res.status(400).json({ error: 'Zadej division, conference nebo teamIds' });
+      return res.status(400).json({ error: 'Zadej ligu, konferenci, divizi nebo seznam týmů' });
     }
 
     if (teams.length < 2) return res.status(400).json({ error: 'Potřeba alespoň 2 týmy' });
@@ -462,6 +513,10 @@ router.post('/fixtures/generate', async (req, res, next) => {
         awayTeamId:  f.awayTeamId,
         round:       f.round,
         division:    matchDivision,
+        // Nové zápasy se vážou na strukturu; bereme ji ze zařazení domácího týmu
+        leagueId:     struktura?.leagueId     ?? null,
+        conferenceId: struktura?.conferenceId ?? null,
+        divisionId:   struktura?.divisionId   ?? null,
         competition,
         date:        d,
         venue:       defaultVenue,
@@ -474,7 +529,17 @@ router.post('/fixtures/generate', async (req, res, next) => {
     // Zabraňuje nekonzistentnímu stavu při selhání (např. smazáno, ale nevytvořeno)
     await prisma.$transaction(async (tx) => {
       if (deleteExisting) {
-        if (Array.isArray(teamIds) && teamIds.length >= 2) {
+        if (leagueId || conferenceId || divisionId) {
+          // Mažeme přesně ten rozsah, který se právě losuje
+          await tx.match.deleteMany({
+            where: {
+              status: 'UPCOMING',
+              ...(divisionId   ? { divisionId }   : {}),
+              ...(conferenceId ? { conferenceId } : {}),
+              ...(leagueId     ? { leagueId }     : {}),
+            },
+          });
+        } else if (Array.isArray(teamIds) && teamIds.length >= 2) {
           await tx.match.deleteMany({
             where: { status: 'UPCOMING', OR: [{ homeTeamId: { in: teamIds } }, { awayTeamId: { in: teamIds } }] },
           });

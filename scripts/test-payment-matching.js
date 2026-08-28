@@ -19,11 +19,11 @@ function freshDb() {
       {
         id: 'pp1',
         playerId: 'p1',
-        licFee: 300,
+        licFee: 250,
         licStatus: 'PENDING',
         licPaidAt: null,
         licMethod: null,
-        superFee: 300,
+        superFee: 250,
         superStatus: 'PENDING',
         superPaidAt: null,
         superLic: false,
@@ -36,7 +36,7 @@ function freshDb() {
       {
         id: 'tp1',
         teamId: 't1',
-        amount: 10000,
+        amount: 8000,
         status: 'PENDING',
         paidAt: null,
         method: null,
@@ -161,7 +161,7 @@ const tx = (vs, amount) => ({
 
 (async () => {
   await test('licence: VS s prefixem 1 zaplatí licenci', async () => {
-    const r = await matchTransaction(tx('1000001', 300));
+    const r = await matchTransaction(tx('1000001', 250));
     assert(r.matched, `nespárováno: ${r.reason}`);
     assert(r.type === 'PLAYER_LICENSE', `typ ${r.type}`);
     assert(db.playerPayments[0].licStatus === 'PAID', 'licStatus není PAID');
@@ -170,7 +170,7 @@ const tx = (vs, amount) => ({
   });
 
   await test('superlicence: VS s prefixem 2 zaplatí superlicenci, ne licenci', async () => {
-    const r = await matchTransaction(tx('2000001', 300));
+    const r = await matchTransaction(tx('2000001', 250));
     assert(r.matched, `nespárováno: ${r.reason}`);
     assert(r.type === 'SUPER_LICENSE', `typ ${r.type}`);
     assert(db.playerPayments[0].superStatus === 'PAID', 'superStatus není PAID');
@@ -179,7 +179,7 @@ const tx = (vs, amount) => ({
   });
 
   await test('registrace týmu: VS s prefixem 3', async () => {
-    const r = await matchTransaction(tx('3000001', 10000));
+    const r = await matchTransaction(tx('3000001', 8000));
     assert(r.matched, `nespárováno: ${r.reason}`);
     assert(r.type === 'TEAM_REG', `typ ${r.type}`);
     assert(db.teamPayments[0].status === 'PAID', 'status není PAID');
@@ -212,19 +212,19 @@ const tx = (vs, amount) => ({
   });
 
   await test('druhá platba se stejným VS se nezpracuje dvakrát', async () => {
-    await matchTransaction(tx('1000001', 300));
-    const r = await matchTransaction(tx('1000001', 300));
+    await matchTransaction(tx('1000001', 250));
+    const r = await matchTransaction(tx('1000001', 250));
     assert(!r.matched, 'duplicitní platba prošla');
   });
 
   await test('neznámý VS se nespáruje', async () => {
-    const r = await matchTransaction(tx('9999999', 300));
+    const r = await matchTransaction(tx('9999999', 250));
     assert(!r.matched, 'neznámý VS prošel');
     assert(/nenalezen/.test(r.reason), `nečekaný důvod: ${r.reason}`);
   });
 
   await test('chybějící VS se nespáruje', async () => {
-    const r = await matchTransaction(tx(null, 300));
+    const r = await matchTransaction(tx(null, 250));
     assert(!r.matched, 'platba bez VS prošla');
   });
 
