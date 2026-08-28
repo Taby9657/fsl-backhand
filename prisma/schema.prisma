@@ -39,7 +39,9 @@ model Team {
   color      String   @default("#C9A140")
   logoUrl    String?
   venue      String?
-  division   String   @default("Divize A")
+  // Divizi a konferenci přiděluje supervisor až při rozlosování,
+  // ne při registraci ani při schvalování týmu.
+  division   String?
   conference String?
   regStatus   String   @default("APPROVED") // PENDING | APPROVED | REJECTED | APPEALING
   regNote     String?  // supervisor: důvod zamítnutí / poznámka ke schválení

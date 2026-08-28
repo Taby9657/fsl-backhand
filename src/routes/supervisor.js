@@ -233,21 +233,31 @@ router.put('/teams/:id/reject', async (req, res, next) => {
 router.post('/teams', async (req, res, next) => {
   try {
     const { name, abbr, division, color, venue, conference } = req.body;
-    if (!name || !abbr || !division) {
-      return res.status(400).json({ error: 'Chybí name, abbr nebo division' });
+    if (!name || !abbr) {
+      return res.status(400).json({ error: 'Chybí název nebo zkratka týmu' });
     }
     if (abbr.length > 3) {
       return res.status(400).json({ error: 'Zkratka max 3 znaky' });
     }
 
-    const existing = await prisma.team.findFirst({ where: { abbr: abbr.toUpperCase(), division } });
-    if (existing) return res.status(409).json({ error: `Tým se zkratkou ${abbr} již v divizi existuje` });
+    // Divize je volitelná — přiděluje se až při rozlosování. Kolizi zkratky
+    // proto hlídáme jen v rámci divize, do které tým rovnou patří.
+    const existing = await prisma.team.findFirst({
+      where: { abbr: abbr.toUpperCase(), division: division || null },
+    });
+    if (existing) {
+      return res.status(409).json({
+        error: division
+          ? `Tým se zkratkou ${abbr} už v divizi ${division} existuje`
+          : `Nezařazený tým se zkratkou ${abbr} už existuje`,
+      });
+    }
 
     const team = await prisma.team.create({
       data: {
         name,
         abbr:       abbr.toUpperCase(),
-        division,
+        division:   division || null,
         color:      color ?? '#C9A140',
         venue:      venue || null,
         conference: conference || null,
@@ -265,7 +275,8 @@ router.put('/teams/:id', async (req, res, next) => {
     const data = {};
     if (name)                data.name       = name;
     if (abbr)                data.abbr       = abbr.toUpperCase();
-    if (division)            data.division   = division;
+    // Prázdný řetězec znamená "vyřadit z divize", proto !== undefined
+    if (division !== undefined) data.division = division || null;
     if (color)               data.color      = color;
     if (venue !== undefined) data.venue      = venue || null;
     if (conference !== undefined) data.conference = conference || null;
