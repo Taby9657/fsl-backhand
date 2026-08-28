@@ -43,8 +43,8 @@ async function blockingMatches(season) {
   return { count, matches };
 }
 
-/** Rozešle notifikaci všem supervisorům. */
-async function notifySupervisors(title, body) {
+/** ID všech supervisorů — z databáze i z env záchranné brzdy. */
+async function supervisorIds() {
   const supervisors = await prisma.user.findMany({
     where: {
       OR: [
@@ -56,9 +56,28 @@ async function notifySupervisors(title, body) {
   });
   const envIds = (process.env.SUPERVISOR_USER_IDS ?? '')
     .split(',').map(s => s.trim()).filter(Boolean);
-  const ids = [...new Set([...supervisors.map(s => s.id), ...envIds])];
+  return [...new Set([...supervisors.map(s => s.id), ...envIds])];
+}
+
+/** Rozešle notifikaci všem supervisorům. */
+async function notifySupervisors(title, body) {
+  const ids = await supervisorIds();
   if (!ids.length) return;
   await createNotifications(ids.map(userId => ({ userId, title, body, screen: 'admin' })));
+}
+
+/**
+ * Smí tenhle uživatel potvrdit tenhle přechod?
+ *
+ * Pravidlo čtyř očí: potvrzuje někdo jiný než ten, kdo přechod naplánoval.
+ * Když je v lize jediný supervisor, není komu to předat — potvrzuje sám,
+ * pořád ale ve druhém kroku a s opsáním názvu sezóny.
+ */
+async function canConfirm(transition, userId) {
+  if (!transition || transition.status !== 'PENDING_CONFIRM') return false;
+  const ids = await supervisorIds();
+  if (ids.length < 2) return true;
+  return transition.createdById !== userId;
 }
 
 /**
@@ -171,6 +190,8 @@ async function processDueTransitions() {
 
 module.exports = {
   SEASON_RE,
+  supervisorIds,
+  canConfirm,
   currentSeason,
   blockingMatches,
   notifySupervisors,

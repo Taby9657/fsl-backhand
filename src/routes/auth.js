@@ -1,5 +1,6 @@
 const express = require('express');
 const https   = require('https');
+const bcrypt  = require('bcryptjs');
 const { OAuth2Client } = require('google-auth-library');
 const jwt = require('jsonwebtoken');
 
@@ -154,6 +155,112 @@ router.post('/apple', async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+});
+
+// ==================== E-MAIL + HESLO ====================
+//
+// Klasické přihlášení vedle Google a Apple. Účty založené přes poskytovatele
+// heslo nemají — u nich se uživateli řekne, kterou cestou se má přihlásit.
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+const MIN_HESLO = 8;
+
+function normalizeEmail(email) {
+  return (email ?? '').trim().toLowerCase();
+}
+
+// POST /auth/register – založení účtu e-mailem
+router.post('/register', async (req, res, next) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    const { password } = req.body;
+
+    if (!EMAIL_RE.test(email)) {
+      return res.status(400).json({ error: 'Zadej platnou e-mailovou adresu' });
+    }
+    if (!password || password.length < MIN_HESLO) {
+      return res.status(400).json({ error: `Heslo musí mít alespoň ${MIN_HESLO} znaků` });
+    }
+
+    const existing = await prisma.user.findUnique({ where: { email } });
+    if (existing) {
+      if (existing.passwordHash) {
+        return res.status(409).json({ error: 'Účet s tímto e-mailem už existuje. Přihlas se.' });
+      }
+      // Účet vznikl přes Google/Apple — heslo mu nedoplňujeme potichu,
+      // jinak by šlo cizí účet převzít znalostí e-mailu.
+      return res.status(409).json({
+        error: 'Tento e-mail už je registrovaný přes Google nebo Apple. Přihlas se stejnou cestou.',
+      });
+    }
+
+    const user = await prisma.user.create({
+      data: { email, passwordHash: await bcrypt.hash(password, 10) },
+      include: { player: true, referee: true, manager: { include: { team: true } } },
+    });
+
+    const token = issueToken(user.id);
+    res.status(201).json({ token, user: sanitizeUser(user) });
+  } catch (err) { next(err); }
+});
+
+// POST /auth/login – přihlášení e-mailem
+router.post('/login', async (req, res, next) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    const { password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Vyplň e-mail i heslo' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where:   { email },
+      include: { player: { include: { team: true } }, referee: true, manager: { include: { team: true } } },
+    });
+
+    // Uživatel existuje, ale vznikl přes poskytovatele — pošli ho správnou cestou.
+    if (user && !user.passwordHash) {
+      const cesta = user.appleId ? 'Apple' : user.googleId ? 'Google' : 'Google nebo Apple';
+      return res.status(409).json({ error: `Tento účet používá přihlášení přes ${cesta}.` });
+    }
+
+    // Stejná hláška pro neexistující účet i špatné heslo, ať se nedá zjistit,
+    // které e-maily jsou registrované.
+    const ok = user && await bcrypt.compare(password, user.passwordHash);
+    if (!ok) {
+      return res.status(401).json({ error: 'Nesprávný e-mail nebo heslo' });
+    }
+
+    const token = issueToken(user.id);
+    res.json({ token, user: sanitizeUser(user) });
+  } catch (err) { next(err); }
+});
+
+// PUT /auth/password – změna hesla přihlášeného uživatele
+router.put('/password', requireAuth, async (req, res, next) => {
+  try {
+    const { currentPassword, newPassword } = req.body;
+    if (!newPassword || newPassword.length < MIN_HESLO) {
+      return res.status(400).json({ error: `Nové heslo musí mít alespoň ${MIN_HESLO} znaků` });
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+
+    if (user.passwordHash) {
+      const ok = await bcrypt.compare(currentPassword ?? '', user.passwordHash);
+      if (!ok) return res.status(401).json({ error: 'Současné heslo nesouhlasí' });
+    }
+    // Účet bez hesla (Google/Apple) si heslo může doplnit — je přihlášený,
+    // takže vlastnictví účtu je prokázané.
+
+    await prisma.user.update({
+      where: { id: req.user.id },
+      data:  { passwordHash: await bcrypt.hash(newPassword, 10) },
+    });
+
+    res.json({ ok: true });
+  } catch (err) { next(err); }
 });
 
 // ==================== ME ====================

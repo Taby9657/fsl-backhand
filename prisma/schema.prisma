@@ -15,6 +15,8 @@ model User {
   googleId     String?  @unique
   appleId      String?  @unique
   pushToken    String?
+  // Klasické přihlášení e-mailem. Null u účtů založených přes Google/Apple.
+  passwordHash String?
   // Organizátor ligy. Nezávislé na hráčském profilu — supervisor ho mít nemusí.
   // Spravuje se z aplikace, ne přes env proměnnou a redeploy.
   isSupervisor Boolean  @default(false)

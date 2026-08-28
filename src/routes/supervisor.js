@@ -530,12 +530,18 @@ router.get('/season', async (req, res, next) => {
       where:   { status: { in: ['EXECUTED', 'FAILED'] } },
       orderBy: { executedAt: 'desc' },
     });
+    const supervisors = await seasonSvc.supervisorIds();
     res.json({
       currentSeason:   current,
       planned,
       lastTransition:  last,
       blockingMatches: blocking.count,
       blockingSample:  blocking.matches,
+      supervisorCount: supervisors.length,
+      // Pravidlo čtyř očí: potvrzuje někdo jiný než ten, kdo plánoval.
+      // Při jediném supervisorovi v lize potvrzuje sám.
+      canConfirm:      await seasonSvc.canConfirm(planned, req.user.id),
+      plannedByMe:     planned ? planned.createdById === req.user.id : false,
     });
   } catch (err) { next(err); }
 });
@@ -590,6 +596,11 @@ router.put('/season/:id/confirm', async (req, res, next) => {
     if (!transition) return res.status(404).json({ error: 'Přechod nenalezen' });
     if (transition.status !== 'PENDING_CONFIRM') {
       return res.status(409).json({ error: 'Tenhle přechod už potvrzení nečeká' });
+    }
+    if (!(await seasonSvc.canConfirm(transition, req.user.id))) {
+      return res.status(403).json({
+        error: 'Přechod musí potvrdit jiný supervisor, než ten, který ho naplánoval.',
+      });
     }
     if ((confirmSeason ?? '').trim() !== transition.newSeason) {
       return res.status(400).json({
