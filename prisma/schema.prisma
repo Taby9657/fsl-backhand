@@ -36,7 +36,9 @@ model Team {
   id        String   @id @default(uuid())
   name      String
   abbr      String   @db.VarChar(3)
-  color      String   @default("#C9A140")
+  // Primární sada dresů. Sekundární je volitelná — někdo hraje pořád ve stejném.
+  color          String   @default("#C9A140")
+  colorSecondary String?
   logoUrl    String?
   venue      String?
   // Divizi a konferenci přiděluje supervisor až při rozlosování,

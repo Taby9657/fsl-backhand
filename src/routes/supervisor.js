@@ -232,7 +232,7 @@ router.put('/teams/:id/reject', async (req, res, next) => {
 // POST /supervisor/teams – vytvoření týmu
 router.post('/teams', async (req, res, next) => {
   try {
-    const { name, abbr, division, color, venue, conference } = req.body;
+    const { name, abbr, division, color, colorSecondary, venue, conference } = req.body;
     if (!name || !abbr) {
       return res.status(400).json({ error: 'Chybí název nebo zkratka týmu' });
     }
@@ -259,6 +259,7 @@ router.post('/teams', async (req, res, next) => {
         abbr:       abbr.toUpperCase(),
         division:   division || null,
         color:      color ?? '#C9A140',
+        colorSecondary:  colorSecondary || null,
         venue:      venue || null,
         conference: conference || null,
       },
@@ -271,13 +272,14 @@ router.post('/teams', async (req, res, next) => {
 // PUT /supervisor/teams/:id – úprava týmu
 router.put('/teams/:id', async (req, res, next) => {
   try {
-    const { name, abbr, division, color, venue, conference } = req.body;
+    const { name, abbr, division, color, colorSecondary, venue, conference } = req.body;
     const data = {};
     if (name)                data.name       = name;
     if (abbr)                data.abbr       = abbr.toUpperCase();
     // Prázdný řetězec znamená "vyřadit z divize", proto !== undefined
     if (division !== undefined) data.division = division || null;
     if (color)               data.color      = color;
+    if (colorSecondary !== undefined) data.colorSecondary = colorSecondary || null;
     if (venue !== undefined) data.venue      = venue || null;
     if (conference !== undefined) data.conference = conference || null;
 

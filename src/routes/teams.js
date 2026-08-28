@@ -49,7 +49,7 @@ router.get('/:id', async (req, res, next) => {
 // POST /teams – registrace nového týmu (vedoucí)
 router.post('/', requireAuth, async (req, res, next) => {
   try {
-    const { name, abbr, color } = req.body;
+    const { name, abbr, color, colorSecondary } = req.body;
     if (!name || !abbr) return res.status(400).json({ error: 'Název a zkratka jsou povinné' });
 
     const team = await prisma.team.create({
@@ -57,6 +57,7 @@ router.post('/', requireAuth, async (req, res, next) => {
         name,
         abbr:      abbr.toUpperCase().slice(0, 3),
         color:     color || '#C9A140',
+        colorSecondary: colorSecondary || null,
         // Divizi přiděluje supervisor při rozlosování, ne vedoucí při registraci
         division:  null,
         regStatus: 'PENDING', // nový tým čeká na schválení supervisorem
