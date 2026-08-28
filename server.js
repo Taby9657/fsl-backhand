@@ -137,6 +137,8 @@ process.on('SIGTERM', async () => {
 
 // ==================== DRAFT EXPIRED WINDOWS CRON ====================
 // PERF-01: Spouští se každých 15 minut místo lazy volání při každém requestu
+const { processDueTransitions } = require('./src/services/seasonTransition');
+
 const DRAFT_CRON_INTERVAL = 15 * 60 * 1000; // 15 minut
 async function runDraftExpiry() {
   try {
@@ -147,6 +149,20 @@ async function runDraftExpiry() {
 }
 runDraftExpiry(); // hned při startu
 setInterval(runDraftExpiry, DRAFT_CRON_INTERVAL);
+
+// ==================== NAPLÁNOVANÝ PŘECHOD SEZÓNY ====================
+// Kontroluje se každých 15 minut i hned po startu — přesnost na čtvrthodinu
+// je pro přechod sezóny víc než dost.
+const SEASON_CRON_INTERVAL = 15 * 60 * 1000;
+async function runSeasonTransitions() {
+  try {
+    await processDueTransitions();
+  } catch (err) {
+    console.error('[Sezóna] Chyba při zpracování přechodů:', err.message);
+  }
+}
+runSeasonTransitions();
+setInterval(runSeasonTransitions, SEASON_CRON_INTERVAL);
 
 // ==================== AUTOMATICKÉ PÁROVÁNÍ PLATEB ====================
 // Spustí se každou noc ve 2:00 (pokud je FIO_API_TOKEN nastaven)

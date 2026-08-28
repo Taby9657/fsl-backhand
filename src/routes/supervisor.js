@@ -2,6 +2,7 @@ const express = require('express');
 
 const { requireSupervisor } = require('../middleware/auth');
 const { createNotification, createNotifications } = require('./notifications');
+const seasonSvc = require('../services/seasonTransition');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -509,65 +510,127 @@ router.get('/payments', async (req, res, next) => {
 // ==================== SEZÓNA ====================
 
 // POST /supervisor/new-season – uzavře starou sezónu, spustí novou
-router.post('/new-season', async (req, res, next) => {
-  try {
-    const { newSeason, cancelPending = false } = req.body;
+// ==================== PŘECHOD SEZÓNY ====================
+//
+// Dvoukrokový, naplánovaný na datum. Provede ho sám server, ale jen když
+// ve staré sezóně nezbývají neodehrané zápasy.
 
-    // Validace formátu sezóny (např. "2026/27")
-    if (!newSeason || !/^\d{4}\/\d{2}$/.test(newSeason)) {
+// GET /supervisor/season – aktuální sezóna, naplánovaný přechod a překážky
+router.get('/season', async (req, res, next) => {
+  try {
+    const current = await seasonSvc.currentSeason();
+    const [planned, blocking] = await Promise.all([
+      prisma.seasonTransition.findFirst({
+        where:   { status: { in: ['PENDING_CONFIRM', 'CONFIRMED'] } },
+        orderBy: { createdAt: 'desc' },
+      }),
+      seasonSvc.blockingMatches(current),
+    ]);
+    const last = await prisma.seasonTransition.findFirst({
+      where:   { status: { in: ['EXECUTED', 'FAILED'] } },
+      orderBy: { executedAt: 'desc' },
+    });
+    res.json({
+      currentSeason:   current,
+      planned,
+      lastTransition:  last,
+      blockingMatches: blocking.count,
+      blockingSample:  blocking.matches,
+    });
+  } catch (err) { next(err); }
+});
+
+// POST /supervisor/season – krok 1: naplánování (ještě neplatí, čeká na potvrzení)
+router.post('/season', async (req, res, next) => {
+  try {
+    const { newSeason, scheduledAt } = req.body;
+
+    if (!newSeason || !seasonSvc.SEASON_RE.test(newSeason)) {
       return res.status(400).json({ error: 'Neplatný formát sezóny – použij tvar "2026/27"' });
     }
+    const kdy = new Date(scheduledAt);
+    if (!scheduledAt || Number.isNaN(kdy.getTime())) {
+      return res.status(400).json({ error: 'Neplatné datum přechodu' });
+    }
+    if (kdy.getTime() < Date.now()) {
+      return res.status(400).json({ error: 'Datum přechodu musí být v budoucnosti' });
+    }
 
-    // Zjisti aktuální sezónu (nejnovější z DB)
-    const latestMatch = await prisma.match.findFirst({ orderBy: { createdAt: 'desc' }, select: { season: true } });
-    const oldSeason = latestMatch?.season ?? null;
-
-    if (oldSeason === newSeason) {
+    const current = await seasonSvc.currentSeason();
+    if (current === newSeason) {
       return res.status(409).json({ error: 'Tato sezóna je již aktivní' });
     }
 
-    let cancelledCount = 0;
-    if (cancelPending && oldSeason) {
-      // Zruš všechny UPCOMING zápasy ze staré sezóny
-      const result = await prisma.match.updateMany({
-        where: { season: oldSeason, status: 'UPCOMING' },
-        data:  { status: 'CANCELLED' },
-      });
-      cancelledCount = result.count;
+    const existing = await prisma.seasonTransition.findFirst({
+      where: { status: { in: ['PENDING_CONFIRM', 'CONFIRMED'] } },
+    });
+    if (existing) {
+      return res.status(409).json({ error: 'Jeden přechod už je naplánovaný. Nejdřív ho zruš.' });
     }
 
-    // MISSING-02 + BUG-15 OPRAVA: Reset licencí hráčů a plateb týmů na PENDING pro novou sezónu
-    // Přeskočí záznamy se stavem WAIVED — tyto jsou odpuštěny supervisorem a nesmí být resetovány
-    const [resetLic, resetTeam] = await Promise.all([
-      prisma.playerPayment.updateMany({
-        where: { licStatus: { not: 'WAIVED' } }, // BUG-15: zachovej WAIVED platby
-        data: { licStatus: 'PENDING', licPaidAt: null, licMethod: null,
-                superStatus: 'PENDING', superPaidAt: null, season: newSeason },
-      }),
-      prisma.teamPayment.updateMany({
-        where: { status: { not: 'WAIVED' } }, // BUG-15: zachovej WAIVED platby
-        data: { status: 'PENDING', paidAt: null, method: null, season: newSeason },
-      }),
-    ]);
-    // Zrušit player.licensed pouze pro hráče bez WAIVED licence
-    const waived = await prisma.playerPayment.findMany({
-      where: { licStatus: 'WAIVED' },
-      select: { playerId: true },
-    });
-    const waivedIds = waived.map(p => p.playerId);
-    await prisma.player.updateMany({
-      where: waivedIds.length > 0 ? { id: { notIn: waivedIds } } : {},
-      data: { licensed: false },
+    const transition = await prisma.seasonTransition.create({
+      data: { newSeason, scheduledAt: kdy, createdById: req.user.id },
     });
 
-    res.json({
-      oldSeason,
-      newSeason,
-      cancelledMatches: cancelledCount,
-      resetLicenses: resetLic.count,
-      resetTeams: resetTeam.count,
-      message: `Sezóna přepnuta na ${newSeason}. Zrušeno ${cancelledCount} zápasů, resetováno ${resetLic.count} licencí.`,
+    await seasonSvc.notifySupervisors(
+      'Naplánován přechod sezóny',
+      `Sezóna ${newSeason} je naplánovaná na ${kdy.toLocaleDateString('cs-CZ')}. Čeká na potvrzení.`,
+    );
+
+    res.status(201).json(transition);
+  } catch (err) { next(err); }
+});
+
+// PUT /supervisor/season/:id/confirm – krok 2: potvrzení opsáním názvu sezóny
+router.put('/season/:id/confirm', async (req, res, next) => {
+  try {
+    const { confirmSeason } = req.body;
+
+    const transition = await prisma.seasonTransition.findUnique({ where: { id: req.params.id } });
+    if (!transition) return res.status(404).json({ error: 'Přechod nenalezen' });
+    if (transition.status !== 'PENDING_CONFIRM') {
+      return res.status(409).json({ error: 'Tenhle přechod už potvrzení nečeká' });
+    }
+    if ((confirmSeason ?? '').trim() !== transition.newSeason) {
+      return res.status(400).json({
+        error: `Pro potvrzení opiš přesně název sezóny: ${transition.newSeason}`,
+      });
+    }
+
+    const updated = await prisma.seasonTransition.update({
+      where: { id: transition.id },
+      data:  { status: 'CONFIRMED', confirmedAt: new Date() },
     });
+
+    await seasonSvc.notifySupervisors(
+      'Přechod sezóny potvrzen',
+      `Sezóna ${transition.newSeason} se spustí ${transition.scheduledAt.toLocaleDateString('cs-CZ')} automaticky.`,
+    );
+
+    res.json(updated);
+  } catch (err) { next(err); }
+});
+
+// DELETE /supervisor/season/:id – zrušení naplánovaného přechodu
+router.delete('/season/:id', async (req, res, next) => {
+  try {
+    const transition = await prisma.seasonTransition.findUnique({ where: { id: req.params.id } });
+    if (!transition) return res.status(404).json({ error: 'Přechod nenalezen' });
+    if (!['PENDING_CONFIRM', 'CONFIRMED'].includes(transition.status)) {
+      return res.status(409).json({ error: 'Tenhle přechod už zrušit nelze' });
+    }
+
+    const updated = await prisma.seasonTransition.update({
+      where: { id: transition.id },
+      data:  { status: 'CANCELLED' },
+    });
+
+    await seasonSvc.notifySupervisors(
+      'Přechod sezóny zrušen',
+      `Naplánovaný přechod na sezónu ${transition.newSeason} byl zrušen.`,
+    );
+
+    res.json(updated);
   } catch (err) { next(err); }
 });
 

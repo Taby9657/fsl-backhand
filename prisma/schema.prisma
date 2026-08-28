@@ -330,6 +330,30 @@ model BankTransaction {
   createdAt      DateTime @default(now())
 }
 
+model SeasonTransition {
+  id          String                  @id @default(uuid())
+  newSeason   String
+  scheduledAt DateTime
+  status      SeasonTransitionStatus  @default(PENDING_CONFIRM)
+  createdById String
+  createdAt   DateTime                @default(now())
+  confirmedAt DateTime?
+  executedAt  DateTime?
+  // Poslední upozornění, že přechod blokují neodehrané zápasy — ať se nespamuje
+  blockedNotifiedAt DateTime?
+  result      String?
+
+  @@index([status, scheduledAt])
+}
+
+enum SeasonTransitionStatus {
+  PENDING_CONFIRM
+  CONFIRMED
+  EXECUTED
+  CANCELLED
+  FAILED
+}
+
 enum PaymentStatus {
   PENDING
   PAID
