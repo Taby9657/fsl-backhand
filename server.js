@@ -75,6 +75,58 @@ app.use(express.urlencoded({ extended: true }));
 
 app.get('/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
+// ==================== NAVRAT ZE STRIPE ====================
+// Stripe umi presmerovat jen na http(s), ne na fsl:// – proto tyhle dve
+// stranky. Az bude nasazeny web na fslleague.cz, staci prepnout PUBLIC_WEB_URL
+// na nej a tyhle routy uz se nepouziji.
+
+function returnPage({ title, message, tone }) {
+  const color = tone === 'ok' ? '#3FBF7F' : '#C9A140';
+  return `<!doctype html>
+<html lang="cs"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title} · FSL</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:#0D0120; color:#fff; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; }
+  .card { max-width:340px; padding:32px 24px; text-align:center; }
+  .dot { width:64px; height:64px; margin:0 auto 20px; border-radius:50%;
+         background:${color}22; border:2px solid ${color}; display:flex; align-items:center; justify-content:center;
+         font-size:30px; color:${color}; }
+  h1 { font-size:22px; margin:0 0 10px; }
+  p  { font-size:15px; line-height:1.5; color:#A79EB5; margin:0 0 28px; }
+  a  { display:block; padding:14px 20px; border-radius:12px; background:${color}; color:#0D0120;
+       font-weight:700; text-decoration:none; }
+</style>
+</head><body>
+  <div class="card">
+    <div class="dot">${tone === 'ok' ? '&#10003;' : '&#8635;'}</div>
+    <h1>${title}</h1>
+    <p>${message}</p>
+    <a href="fsl://payments">Zpět do aplikace</a>
+  </div>
+  <script>setTimeout(function(){ location.href = 'fsl://payments'; }, 1200);</script>
+</body></html>`;
+}
+
+app.get('/payment-success', (req, res) => {
+  res.type('html').send(returnPage({
+    tone: 'ok',
+    title: 'Zaplaceno',
+    message: 'Díky! Platbu jsme přijali. V aplikaci se stav aktualizuje během chvilky.',
+  }));
+});
+
+app.get('/platby', (req, res) => {
+  res.type('html').send(returnPage({
+    tone: 'warn',
+    title: 'Platba zrušena',
+    message: 'Nic jsme ti nestrhli. Zkusit to můžeš znovu v aplikaci – kartou, přes peněženku nebo převodem.',
+  }));
+});
+
 // ==================== API ROUTES ====================
 
 app.use('/api/auth',        authLimiter, authRoutes);
