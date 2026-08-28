@@ -16,11 +16,20 @@ function webUrl() {
   return raw.split(',')[0].trim().replace(/\/$/, '');
 }
 
-// Ověří, že je Stripe vůbec nakonfigurovaný. Bez toho vrací Stripe
-// nesrozumitelné "Invalid API Key provided: sk_test_…".
-function assertStripe(res) {
+// Je Stripe vubec nakonfigurovany? Pozor na `sk_test_...` z .env.example –
+// s tim Stripe vraci nesrozumitelne "Invalid API Key provided: sk_test_…".
+function stripeConfigured() {
   const key = process.env.STRIPE_SECRET_KEY || '';
-  if (!/^sk_(test|live)_/.test(key) || key.length < 30) {
+  return /^sk_(test|live)_/.test(key) && key.length >= 30;
+}
+
+// Je nastaveny ucet ligy pro prevody?
+function transferConfigured() {
+  return !!process.env.BANK_IBAN;
+}
+
+function assertStripe(res) {
+  if (!stripeConfigured()) {
     res.status(503).json({
       error: 'Platba kartou teď není dostupná. Použij prosím platbu převodem s QR kódem.',
       code:  'STRIPE_NOT_CONFIGURED',
@@ -78,6 +87,17 @@ router.get('/me', requireAuth, async (req, res, next) => {
       teamPayment,
     });
   } catch (err) { next(err); }
+});
+
+// GET /payments/methods – ktere platebni cesty jsou zrovna k dispozici.
+// Klient podle toho skryje volby, ktere by stejne skoncily chybou.
+router.get('/methods', requireAuth, (req, res) => {
+  const card = stripeConfigured();
+  res.json({
+    card,
+    wallet:   card,        // Apple Pay / Google Pay jedou pres stejnou Checkout session
+    transfer: transferConfigured(),
+  });
 });
 
 // ==================== STRIPE – HRÁČSKÁ LICENCE ====================
@@ -315,6 +335,12 @@ router.put('/player/:playerId', requireSupervisor, async (req, res, next) => {
 // id:   playerId (licence), teamId (registrace) nebo matchId (domácí zápas)
 router.get('/qr/:type/:id', requireAuth, async (req, res, next) => {
   try {
+    if (!transferConfigured()) {
+      return res.status(503).json({
+        error: 'Platba převodem zatím není spuštěná. Zaplať prosím kartou nebo přes peněženku.',
+        code:  'BANK_NOT_CONFIGURED',
+      });
+    }
     const data = await getPaymentQR(req.params.type, req.params.id);
     res.json(data);
   } catch (err) { next(err); }
