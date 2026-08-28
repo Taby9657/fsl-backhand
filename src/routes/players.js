@@ -132,8 +132,9 @@ router.post('/', requireAuth, async (req, res, next) => {
     });
     // Kmenový tým se rovnou promítne do soupisky sezóny — z ní se skládá sestava
     if (cilovyTeamId) {
-      const sezona = await seasonSvc.currentSeason();
-      await licence.pridatDoSoupisky(player.id, cilovyTeamId, sezona, { isHome: true });
+      // Sezóna se bere z přihlášky týmu, ne z té, kterou zrovna ukazuje liga
+      const sezona = await licence.sezonaTymu(cilovyTeamId, await seasonSvc.currentSeason());
+      if (sezona) await licence.pridatDoSoupisky(player.id, cilovyTeamId, sezona, { isHome: true });
     }
 
     // Kód se počítá jako použitý až tady — když hráč skutečně vznikl
@@ -199,8 +200,8 @@ router.post('/:id/leave-team', requireAuth, async (req, res, next) => {
     if (player.userId !== req.user.id) return res.status(403).json({ error: 'Nemáte oprávnění' });
     if (!player.teamId) return res.status(400).json({ error: 'Hráč není v žádném týmu' });
 
-    const sezona = await seasonSvc.currentSeason();
-    await licence.odebratZeSoupisky(req.params.id, player.teamId, sezona);
+    const sezona = await licence.sezonaTymu(player.teamId, await seasonSvc.currentSeason());
+    if (sezona) await licence.odebratZeSoupisky(req.params.id, player.teamId, sezona);
 
     const updated = await prisma.player.update({
       where: { id: req.params.id },
@@ -221,8 +222,8 @@ router.delete('/:id/team/:teamId', requireAuth, async (req, res, next) => {
     if (!isManager && !isSup) return res.status(403).json({ error: 'Nemáte oprávnění' });
     if (player.teamId !== req.params.teamId) return res.status(400).json({ error: 'Hráč není v tomto týmu' });
 
-    const sezona = await seasonSvc.currentSeason();
-    await licence.odebratZeSoupisky(req.params.id, req.params.teamId, sezona);
+    const sezona = await licence.sezonaTymu(req.params.teamId, await seasonSvc.currentSeason());
+    if (sezona) await licence.odebratZeSoupisky(req.params.id, req.params.teamId, sezona);
 
     await prisma.player.update({
       where: { id: req.params.id },

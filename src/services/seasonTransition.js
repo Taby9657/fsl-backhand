@@ -15,13 +15,40 @@ const { createNotifications } = require('../routes/notifications');
 
 const SEASON_RE = /^\d{4}\/\d{2}$/;
 
-/** Aktuální sezóna = sezóna posledního založeného zápasu. */
+/**
+ * Aktuální sezóna.
+ *
+ * Bere se z nastavení ligy. Když tam ještě nic není (stará data), spadne
+ * zpátky na sezónu posledního založeného zápasu — což byla původní logika
+ * a její slabina: sezónu určovala testovací data a měnit se dala jen
+ * přechodem sezóny.
+ */
 async function currentSeason() {
+  const nastaveni = await prisma.settings.findUnique({ where: { id: 'singleton' } });
+  if (nastaveni?.currentSeason) return nastaveni.currentSeason;
+
   const latest = await prisma.match.findFirst({
     orderBy: { createdAt: 'desc' },
     select: { season: true },
   });
   return latest?.season ?? null;
+}
+
+/** Zapíše aktuální sezónu do nastavení. */
+async function setCurrentSeason(season) {
+  return prisma.settings.upsert({
+    where:  { id: 'singleton' },
+    create: { id: 'singleton', currentSeason: season },
+    update: { currentSeason: season },
+  });
+}
+
+/** Následující ročník: 2025/26 → 2026/27. */
+function nextSeason(season) {
+  const m = /^(\d{4})\/(\d{2})$/.exec(season ?? '');
+  if (!m) return null;
+  const od = Number(m[1]) + 1;
+  return `${od}/${String((od + 1) % 100).padStart(2, '0')}`;
 }
 
 /** Zápasy, které brání přechodu — nezahrané nebo rozehrané v dané sezóně. */
@@ -110,6 +137,8 @@ async function applyNewSeason(newSeason) {
     }),
   ]);
 
+  await setCurrentSeason(newSeason);
+
   const waived = await prisma.playerPayment.findMany({
     where: { licStatus: 'WAIVED' },
     select: { playerId: true },
@@ -195,6 +224,8 @@ async function processDueTransitions() {
 }
 
 module.exports = {
+  setCurrentSeason,
+  nextSeason,
   SEASON_RE,
   supervisorIds,
   canConfirm,

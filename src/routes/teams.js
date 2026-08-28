@@ -54,6 +54,13 @@ router.post('/', requireAuth, async (req, res, next) => {
     const { name, abbr, color, colorSecondary } = req.body;
     if (!name || !abbr) return res.status(400).json({ error: 'Název a zkratka jsou povinné' });
 
+    // Tým se přihlašuje do konkrétní sezóny. Bez ní by skončil v té, kterou
+    // zrovna ukazuje liga — a při přepnutí sezóny by z ní zmizel.
+    const season = req.body.season || await seasonSvc.currentSeason();
+    if (!season || !seasonSvc.SEASON_RE.test(season)) {
+      return res.status(400).json({ error: 'Vyber sezónu ve tvaru 2026/27' });
+    }
+
     const team = await prisma.team.create({
       data: {
         name,
@@ -69,6 +76,10 @@ router.post('/', requireAuth, async (req, res, next) => {
       include: { managers: true },
     });
 
+    // Přihláška do sezóny. Ligu přiděluje supervisor až při rozlosování,
+    // takže leagueId zůstává prázdné.
+    await prisma.teamSeason.create({ data: { teamId: team.id, season } });
+
     // Vygeneruj pozvánkový kód
     const code = `FSL-${team.abbr}-${uuidv4().slice(0, 4).toUpperCase()}`;
     await prisma.inviteCode.create({ data: { code, teamId: team.id } });
@@ -77,7 +88,7 @@ router.post('/', requireAuth, async (req, res, next) => {
     await createNotification(
       req.user.id,
       'Registrace přijata 📋',
-      `Tým ${team.name} byl přihlášen do ligy. Čeká na schválení supervisorem.`,
+      `Tým ${team.name} byl přihlášen do sezóny ${season}. Čeká na schválení supervisorem.`,
       'admin',
     );
 
@@ -179,7 +190,9 @@ router.get('/:id/invite', requireAuth, async (req, res, next) => {
  */
 router.get('/:id/roster', async (req, res, next) => {
   try {
-    const season = req.query.season || await seasonSvc.currentSeason();
+    // Bez výslovné sezóny bereme tu, do které je tým přihlášený
+    const season = req.query.season
+      || await licence.sezonaTymu(req.params.id, await seasonSvc.currentSeason());
 
     const radky = await prisma.teamRoster.findMany({
       where: { teamId: req.params.id, season },
@@ -234,7 +247,8 @@ router.get('/:id/roster', async (req, res, next) => {
  */
 router.post('/:id/roster/home', requireAuth, async (req, res, next) => {
   try {
-    const season = req.body.season || await seasonSvc.currentSeason();
+    const season = req.body.season
+      || await licence.sezonaTymu(req.params.id, await seasonSvc.currentSeason());
 
     const jeVedouci = req.user.manager?.some(m => m.teamId === req.params.id);
     if (!jeVedouci) return res.status(403).json({ error: 'Nejsi vedoucí tohoto týmu' });
@@ -269,7 +283,8 @@ router.post('/:id/roster/home', requireAuth, async (req, res, next) => {
 router.post('/:id/roster', requireAuth, async (req, res, next) => {
   try {
     const { playerId } = req.body;
-    const season = req.body.season || await seasonSvc.currentSeason();
+    const season = req.body.season
+      || await licence.sezonaTymu(req.params.id, await seasonSvc.currentSeason());
 
     const jeVedouci = req.user.manager?.some(m => m.teamId === req.params.id);
     if (!jeVedouci) return res.status(403).json({ error: 'Nejsi vedoucí tohoto týmu' });
@@ -298,7 +313,8 @@ router.post('/:id/roster', requireAuth, async (req, res, next) => {
 // DELETE /teams/:id/roster/:playerId – odebrání hostujícího hráče
 router.delete('/:id/roster/:playerId', requireAuth, async (req, res, next) => {
   try {
-    const season = req.query.season || await seasonSvc.currentSeason();
+    const season = req.query.season
+      || await licence.sezonaTymu(req.params.id, await seasonSvc.currentSeason());
 
     const jeVedouci = req.user.manager?.some(m => m.teamId === req.params.id);
     if (!jeVedouci) return res.status(403).json({ error: 'Nejsi vedoucí tohoto týmu' });

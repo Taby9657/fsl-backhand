@@ -65,6 +65,21 @@ async function tymyVSezone(playerId, season) {
   return new Set(radky.map(r => r.teamId));
 }
 
+/**
+ * Sezóna, do které je tým přihlášený.
+ *
+ * Tým se přihlašuje na konkrétní sezónu, takže i jeho soupiska patří do ní.
+ * Kdyby přihlášku neměl (stará data), použije se aktuální sezóna ligy.
+ */
+async function sezonaTymu(teamId, fallback = null) {
+  const prihlaska = await prisma.teamSeason.findFirst({
+    where:   { teamId },
+    orderBy: { season: 'desc' },
+    select:  { season: true },
+  });
+  return prihlaska?.season ?? fallback;
+}
+
 /** Je hráč na soupisce tohohle týmu? */
 async function jeNaSoupisce(playerId, teamId, season) {
   const radek = await prisma.teamRoster.findUnique({
@@ -293,6 +308,7 @@ module.exports = {
   maZakladniLicenci,
   startyPodleTymu,
   tymyVSezone,
+  sezonaTymu,
   jeNaSoupisce,
   pridatDoSoupisky,
   odebratZeSoupisky,

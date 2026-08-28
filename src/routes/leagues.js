@@ -16,13 +16,11 @@ const MAX_LIG_V_SEZONE   = 10;
 const MAX_KONFERENCI     = 2;
 const MAX_DIVIZI         = 2;
 
-/** Aktuální sezóna = sezóna posledního založeného zápasu. */
+const seasonSvc = require('../services/seasonTransition');
+
+/** Aktuální sezóna z nastavení ligy. */
 async function aktualniSezona() {
-  const latest = await prisma.match.findFirst({
-    orderBy: { createdAt: 'desc' },
-    select:  { season: true },
-  });
-  return latest?.season ?? '2025/26';
+  return (await seasonSvc.currentSeason()) ?? '2025/26';
 }
 
 const stromInclude = {
@@ -77,27 +75,35 @@ router.get('/teams', async (req, res, next) => {
   try {
     const season = req.query.season || await aktualniSezona();
 
-    const teams = await prisma.team.findMany({
-      orderBy: { name: 'asc' },
-      select: {
-        id: true, name: true, abbr: true, color: true, regStatus: true,
-        _count:  { select: { players: true } },
-        seasons: {
-          where: { season },
+    // Jen týmy přihlášené do téhle sezóny — tým bez přihlášky do soutěže nepatří
+    const prihlasky = await prisma.teamSeason.findMany({
+      where: { season },
+      include: {
+        team: {
           select: {
-            leagueId: true, conferenceId: true, divisionId: true,
-            league:     { select: { id: true, name: true } },
-            conference: { select: { id: true, name: true } },
-            division:   { select: { id: true, name: true } },
+            id: true, name: true, abbr: true, color: true, regStatus: true,
+            _count: { select: { players: true } },
           },
         },
+        league:     { select: { id: true, name: true } },
+        conference: { select: { id: true, name: true } },
+        division:   { select: { id: true, name: true } },
       },
     });
 
-    res.json({
-      season,
-      teams: teams.map(({ seasons, ...t }) => ({ ...t, placement: seasons[0] ?? null })),
-    });
+    const teams = prihlasky
+      .map(p => ({
+        ...p.team,
+        placement: p.leagueId
+          ? {
+            leagueId: p.leagueId, conferenceId: p.conferenceId, divisionId: p.divisionId,
+            league: p.league, conference: p.conference, division: p.division,
+          }
+          : null,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    res.json({ season, teams });
   } catch (err) { next(err); }
 });
 
@@ -263,9 +269,14 @@ router.put('/placement/:teamId', async (req, res, next) => {
     const team = await prisma.team.findUnique({ where: { id: req.params.teamId } });
     if (!team) return res.status(404).json({ error: 'Tým nenalezen' });
 
-    // Vyřazení ze soutěže
+    // Vyřazení z ligy — přihláška do sezóny zůstává, jen se zruší zařazení.
+    // Smazat celou přihlášku by tým ze sezóny odhlásilo, což je jiná akce.
     if (!leagueId) {
-      await prisma.teamSeason.deleteMany({ where: { teamId: team.id, season } });
+      await prisma.teamSeason.upsert({
+        where:  { teamId_season: { teamId: team.id, season } },
+        create: { teamId: team.id, season },
+        update: { leagueId: null, conferenceId: null, divisionId: null },
+      });
       return res.json({ ok: true, placement: null });
     }
 

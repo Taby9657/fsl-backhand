@@ -366,17 +366,22 @@ model Division {
   @@unique([conferenceId, name])
 }
 
+/// Přihláška týmu do sezóny.
+///
+/// Vzniká při registraci týmu, kdy ještě není zařazený do žádné ligy —
+/// zařazení dělá supervisor až při rozlosování. Proto je leagueId volitelné.
+/// Tým se do každé sezóny přihlašuje znovu, nepřenáší se automaticky.
 model TeamSeason {
   id           String   @id @default(uuid())
   teamId       String
   season       String
-  leagueId     String
+  leagueId     String?
   conferenceId String?
   divisionId   String?
   createdAt    DateTime @default(now())
 
   team       Team        @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  league     League      @relation(fields: [leagueId], references: [id], onDelete: Cascade)
+  league     League?     @relation(fields: [leagueId], references: [id], onDelete: SetNull)
   conference Conference? @relation(fields: [conferenceId], references: [id], onDelete: SetNull)
   division   Division?   @relation(fields: [divisionId], references: [id], onDelete: SetNull)
 
@@ -508,6 +513,17 @@ model RoundHighlight {
 }
 
 // ==================== DRAFT ====================
+
+/// Nastavení ligy. Jediný řádek s pevným id "singleton".
+///
+/// Aktuální sezóna se dřív odvozovala ze sezóny posledního založeného zápasu,
+/// takže ji určovala testovací data a měnit se dala jen přechodem sezóny.
+/// Teď je uložená natvrdo a supervisor ji umí přepnout.
+model Settings {
+  id            String   @id @default("singleton")
+  currentSeason String?
+  updatedAt     DateTime @updatedAt
+}
 
 /// Soupiska týmu na sezónu — kdo za tým smí nastupovat.
 ///
