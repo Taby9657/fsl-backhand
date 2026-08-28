@@ -1,10 +1,13 @@
 const express = require('express');
 const https   = require('https');
 const bcrypt  = require('bcryptjs');
+const crypto  = require('crypto');
 const { OAuth2Client } = require('google-auth-library');
 const jwt = require('jsonwebtoken');
 
 const { issueToken, requireAuth, isSupervisorUser } = require('../middleware/auth');
+
+const { sendMail, resetPasswordMail, providerAccountMail } = require('../services/mailer');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -260,6 +263,122 @@ router.put('/password', requireAuth, async (req, res, next) => {
     });
 
     res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// ==================== OBNOVA ZAPOMENUTÉHO HESLA ====================
+//
+// Uživatel si vyžádá šestimístný kód na e-mail a s ním si nastaví nové heslo.
+// Kód jsme zvolili místo odkazu, protože nevyžaduje deep linky a zadá se
+// rovnou v aplikaci.
+
+const RESET_PLATNOST_MIN = 30;
+const RESET_MAX_POKUSU   = 5;
+
+/** Odpověď je vždy stejná, ať účet existuje nebo ne — jinak by šlo zjišťovat, kdo je registrovaný. */
+const RESET_ODPOVED = { ok: true, message: 'Pokud účet existuje, poslali jsme na něj kód.' };
+
+// POST /auth/forgot-password – vyžádání kódu
+router.post('/forgot-password', async (req, res, next) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    if (!EMAIL_RE.test(email)) {
+      return res.status(400).json({ error: 'Zadej platnou e-mailovou adresu' });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+
+    // Účet neexistuje → tváříme se stejně, ale nic neposíláme.
+    if (!user) return res.json(RESET_ODPOVED);
+
+    // Účet přes Google/Apple → pošleme vysvětlení, ne kód. E-mail jde majiteli
+    // účtu, takže se tím nic neprozrazuje.
+    if (!user.passwordHash) {
+      const provider = user.appleId ? 'Apple' : user.googleId ? 'Google' : 'Google nebo Apple';
+      const mail = providerAccountMail(provider);
+      await sendMail({ to: email, ...mail });
+      return res.json(RESET_ODPOVED);
+    }
+
+    // Starší nepoužité kódy zneplatníme, ať platí vždy jen ten poslední.
+    await prisma.passwordReset.updateMany({
+      where: { userId: user.id, usedAt: null },
+      data:  { usedAt: new Date() },
+    });
+
+    const code = String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+    await prisma.passwordReset.create({
+      data: {
+        userId:    user.id,
+        codeHash:  await bcrypt.hash(code, 10),
+        expiresAt: new Date(Date.now() + RESET_PLATNOST_MIN * 60 * 1000),
+      },
+    });
+
+    const mail = resetPasswordMail(code, RESET_PLATNOST_MIN);
+    await sendMail({ to: email, ...mail });
+
+    res.json(RESET_ODPOVED);
+  } catch (err) { next(err); }
+});
+
+// POST /auth/reset-password – nastavení nového hesla pomocí kódu
+router.post('/reset-password', async (req, res, next) => {
+  try {
+    const email = normalizeEmail(req.body.email);
+    const { code, newPassword } = req.body;
+
+    if (!EMAIL_RE.test(email) || !code) {
+      return res.status(400).json({ error: 'Vyplň e-mail i kód z e-mailu' });
+    }
+    if (!newPassword || newPassword.length < MIN_HESLO) {
+      return res.status(400).json({ error: `Nové heslo musí mít alespoň ${MIN_HESLO} znaků` });
+    }
+
+    const user = await prisma.user.findUnique({ where: { email } });
+    const neplatny = { error: 'Kód je neplatný nebo vypršel. Vyžádej si nový.' };
+    if (!user) return res.status(400).json(neplatny);
+
+    const reset = await prisma.passwordReset.findFirst({
+      where:   { userId: user.id, usedAt: null, expiresAt: { gt: new Date() } },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!reset) return res.status(400).json(neplatny);
+
+    if (reset.attempts >= RESET_MAX_POKUSU) {
+      await prisma.passwordReset.update({
+        where: { id: reset.id },
+        data:  { usedAt: new Date() },
+      });
+      return res.status(429).json({ error: 'Příliš mnoho pokusů. Vyžádej si nový kód.' });
+    }
+
+    const ok = await bcrypt.compare(String(code).trim(), reset.codeHash);
+    if (!ok) {
+      await prisma.passwordReset.update({
+        where: { id: reset.id },
+        data:  { attempts: { increment: 1 } },
+      });
+      return res.status(400).json(neplatny);
+    }
+
+    await prisma.$transaction([
+      prisma.user.update({
+        where: { id: user.id },
+        data:  { passwordHash: await bcrypt.hash(newPassword, 10) },
+      }),
+      prisma.passwordReset.update({
+        where: { id: reset.id },
+        data:  { usedAt: new Date() },
+      }),
+    ]);
+
+    const full = await prisma.user.findUnique({
+      where:   { id: user.id },
+      include: { player: { include: { team: true } }, referee: true, manager: { include: { team: true } } },
+    });
+
+    res.json({ token: issueToken(full.id), user: sanitizeUser(full) });
   } catch (err) { next(err); }
 });
 

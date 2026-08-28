@@ -332,6 +332,19 @@ model BankTransaction {
   createdAt      DateTime @default(now())
 }
 
+model PasswordReset {
+  id        String   @id @default(uuid())
+  userId    String
+  // Kód se ukládá jako hash — z databáze ho nikdo nepřečte.
+  codeHash  String
+  expiresAt DateTime
+  usedAt    DateTime?
+  attempts  Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([userId, expiresAt])
+}
+
 model SeasonTransition {
   id          String                  @id @default(uuid())
   newSeason   String
