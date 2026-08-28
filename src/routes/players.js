@@ -73,9 +73,30 @@ router.get('/:id', async (req, res, next) => {
 // Vyžaduje: jméno, příjmení, číslo dresu, pozici, teamId
 router.post('/', requireAuth, async (req, res, next) => {
   try {
-    const { firstName, lastName, jersey, position, birthdate, phone, teamId } = req.body;
-    if (!firstName || !lastName || !jersey || !teamId) {
-      return res.status(400).json({ error: 'Chybí povinné údaje (jméno, příjmení, číslo dresu, tým)' });
+    const { firstName, lastName, jersey, position, birthdate, phone, teamId, inviteCode } = req.body;
+    if (!firstName || !lastName || !jersey) {
+      return res.status(400).json({ error: 'Chybí povinné údaje (jméno, příjmení, číslo dresu)' });
+    }
+
+    // Tým se odvozuje z pozvánkového kódu. Holé teamId zůstává jako fallback
+    // pro starší verze aplikace, které kód ještě neposílají.
+    let invite = null;
+    let cilovyTeamId = teamId;
+
+    if (inviteCode) {
+      invite = await prisma.inviteCode.findUnique({
+        where:   { code: String(inviteCode).toUpperCase() },
+        include: { team: true },
+      });
+      if (!invite) return res.status(404).json({ error: 'Neplatný pozvánkový kód' });
+      if (invite.expiresAt && invite.expiresAt < new Date()) {
+        return res.status(400).json({ error: 'Pozvánkový kód vypršel' });
+      }
+      cilovyTeamId = invite.teamId;
+    }
+
+    if (!cilovyTeamId) {
+      return res.status(400).json({ error: 'Chybí pozvánkový kód' });
     }
 
     // BUG-09 OPRAVA: Validace čísla dresu (zabraňuje NaN z parseInt)
@@ -90,14 +111,14 @@ router.post('/', requireAuth, async (req, res, next) => {
 
     // Zkontroluj unikátnost čísla dresu v týmu
     const jerseyTaken = await prisma.player.findFirst({
-      where: { teamId, jersey: jerseyNum },
+      where: { teamId: cilovyTeamId, jersey: jerseyNum },
     });
     if (jerseyTaken) return res.status(409).json({ error: `Číslo dresu ${jerseyNum} je již obsazeno v tomto týmu` });
 
     const player = await prisma.player.create({
       data: {
         userId: req.user.id,
-        teamId,
+        teamId: cilovyTeamId,
         firstName,
         lastName,
         jersey: jerseyNum,
@@ -107,6 +128,14 @@ router.post('/', requireAuth, async (req, res, next) => {
         payment: { create: {} },
       },
     });
+    // Kód se počítá jako použitý až tady — když hráč skutečně vznikl
+    if (invite) {
+      await prisma.inviteCode.update({
+        where: { id: invite.id },
+        data:  { usedCount: { increment: 1 } },
+      });
+    }
+
     res.status(201).json(player);
   } catch (err) { next(err); }
 });

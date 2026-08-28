@@ -179,11 +179,10 @@ router.post('/join/:code', requireAuth, async (req, res, next) => {
       return res.status(400).json({ error: 'Pozvánkový kód vypršel' });
     }
 
-    await prisma.inviteCode.update({
-      where: { id: invite.id },
-      data: { usedCount: { increment: 1 } },
-    });
-
+    // POZOR: tohle je jen ověření kódu, ne skutečné připojení k týmu.
+    // Počítadlo použití se zvyšuje až ve chvíli, kdy hráč opravdu vznikne
+    // (POST /players) — jinak by ho nafoukl každý, kdo si kód jen ověří
+    // a pak registraci nedokončí.
     res.json({ team: invite.team });
   } catch (err) { next(err); }
 });
