@@ -447,7 +447,7 @@ async function getPaymentQR(type, id) {
     `MSG:${message}`,
   ].join('*');
 
-  return { spayd, vs, amount, iban: IBAN, message };
+  return { spayd, vs, amount, iban: IBAN, bic: BIC || null, message };
 }
 
 module.exports = {

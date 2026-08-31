@@ -55,7 +55,12 @@ async function verifyAppleToken(identityToken) {
       {
         algorithms: ['RS256'],
         issuer:    'https://appleid.apple.com',
-        audience:  process.env.APPLE_CLIENT_ID || 'cz.fsl.app',
+        // Aplikace se prokazuje App ID (cz.fsl.app), web Services ID (cz.fsl.web).
+        // Token vydany pro web ma jine `aud`, takze musime uznat obe hodnoty.
+        audience:  [
+          process.env.APPLE_CLIENT_ID || 'cz.fsl.app',
+          process.env.APPLE_WEB_CLIENT_ID,
+        ].filter(Boolean),
       },
       (err, decoded) => {
         if (err) reject(err);
