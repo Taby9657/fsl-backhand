@@ -59,7 +59,10 @@ async function ensurePlayerVS(playerId, type = 'PLAYER_LICENSE') {
     if (!payment) throw new Error('PlayerPayment nenalezen');
     if (payment[field]) return payment[field];
 
-    const count = await prisma.playerPayment.count();
+    // Počítáme jen už PŘIDĚLENÉ symboly, ne všechny platební řádky. S count()
+    // přes celou tabulku se pořadové číslo nehýbe, takže každý další hráč
+    // potřeboval o jeden retry víc a pátý narazil na strop pěti pokusů.
+    const count = await prisma.playerPayment.count({ where: { [field]: { not: null } } });
     // attempt v pořadovém čísle: při kolizi se pokusíme o jiný symbol,
     // jinak by se opakovaně generoval ten samý a retry by nikdy neuspěl
     const vs = generateVS(type, count + 1 + attempt);
@@ -83,7 +86,8 @@ async function ensureTeamVS(teamId) {
     if (!payment) throw new Error('TeamPayment nenalezen');
     if (payment.variableSymbol) return payment.variableSymbol;
 
-    const count = await prisma.teamPayment.count();
+    // Stejný důvod jako u hráčů – jen už přidělené symboly.
+    const count = await prisma.teamPayment.count({ where: { variableSymbol: { not: null } } });
     const vs    = generateVS('TEAM_REG', count + 1 + attempt);
     try {
       await prisma.teamPayment.update({ where: { teamId }, data: { variableSymbol: vs } });
