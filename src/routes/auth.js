@@ -436,9 +436,19 @@ router.delete('/account', requireAuth, async (req, res, next) => {
 
 // Odstraní citlivé interní fieldy
 function sanitizeUser(user) {
-  const { googleId, appleId, ...safe } = user;
-  // Klient nemá jak zjistit obsah SUPERVISOR_USER_IDS — musíme mu roli poslat.
-  return { ...safe, isSupervisor: isSupervisorUser(user) };
+  // passwordHash a pushToken nesmí ven. Prisma vrací u `include` všechny
+  // skalární sloupce, takže se sem dostanou, i když je nikdo nechce – dřív
+  // odcházel bcrypt hash hesla klientovi při každém přihlášení i /auth/me.
+  const { googleId, appleId, passwordHash, pushToken, ...safe } = user;
+
+  return {
+    ...safe,
+    // Klient nemá jak zjistit obsah SUPERVISOR_USER_IDS — musíme mu roli poslat.
+    isSupervisor: isSupervisorUser(user),
+    // Účty z Google/Apple heslo nemají. Podle tohohle pole klient pozná, jestli
+    // se má ptát na současné heslo, nebo jen nabídnout jeho nastavení.
+    hasPassword: !!passwordHash,
+  };
 }
 
 module.exports = router;
