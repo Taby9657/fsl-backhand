@@ -348,7 +348,14 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         if (metadata.type === 'PLAYER_LICENSE' && metadata.playerId) {
           await prisma.playerPayment.update({
             where: { playerId: metadata.playerId },
-            data:  { licStatus: 'PENDING', licPaidAt: null, licMethod: null, stripeId: null },
+            data:  {
+              licStatus: 'PENDING', licPaidAt: null, licMethod: null,
+              // Session i stripeId musi pryc. Checkout session zustava u Stripe
+              // navzdy `complete`/`paid` (refunduje se charge, ne session), takze
+              // dokud tu session id lezi, rekonciliace platbu do 6 h zase oznaci
+              // za zaplacenou a refundaci tim tise zrusi.
+              stripeId: null, licSessionId: null,
+            },
           });
           await prisma.player.update({
             where: { id: metadata.playerId },
@@ -357,17 +364,23 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         } else if (metadata.type === 'SUPER_LICENSE' && metadata.playerId) {
           await prisma.playerPayment.update({
             where: { playerId: metadata.playerId },
-            data:  { superStatus: 'PENDING', superPaidAt: null, superLic: false },
+            data:  {
+              superStatus: 'PENDING', superPaidAt: null, superLic: false,
+              superSessionId: null,
+            },
           });
         } else if (metadata.type === 'TEAM_REG' && metadata.teamId) {
           await prisma.teamPayment.update({
             where: { teamId: metadata.teamId },
-            data:  { status: 'PENDING', paidAt: null, method: null, stripeId: null },
+            data:  {
+              status: 'PENDING', paidAt: null, method: null,
+              stripeId: null, sessionId: null,
+            },
           });
         } else if (metadata.type === 'HOME_FEE' && metadata.matchId) {
           await prisma.match.update({
             where: { id: metadata.matchId },
-            data:  { homeFeePaid: false, homeFeeStripeId: null },
+            data:  { homeFeePaid: false, homeFeeStripeId: null, homeFeeSessionId: null },
           });
         }
       } catch (err) {

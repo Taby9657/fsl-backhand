@@ -13,12 +13,34 @@
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const prisma = require('../lib/prisma');
 
-/** Je session skutečně zaplacená? */
+/**
+ * Je session skutečně zaplacená – a nebyla mezitím vrácena?
+ *
+ * Refundace se u Stripe děje na charge / payment intentu, ne na Checkout session.
+ * Ta zůstane napořád `complete` / `paid`. Bez kontroly payment intentu by tahle
+ * úloha vracenou platbu do 6 hodin zase označila za zaplacenou a tiše tím
+ * zrušila refundaci.
+ */
 async function isPaid(sessionId) {
   if (!sessionId) return false;
   try {
     const session = await stripe.checkout.sessions.retrieve(sessionId);
-    return session.status === 'complete' && session.payment_status === 'paid';
+    if (session.status !== 'complete' || session.payment_status !== 'paid') return false;
+
+    // payment_intent je bez expandu string, s expandem objekt – snes obojí.
+    const intentId = typeof session.payment_intent === 'string'
+      ? session.payment_intent
+      : session.payment_intent?.id;
+
+    if (intentId) {
+      const intent = await stripe.paymentIntents.retrieve(intentId, {
+        expand: ['latest_charge'],
+      });
+      const charge = intent.latest_charge;
+      if (charge && (charge.refunded === true || charge.amount_refunded > 0)) return false;
+    }
+
+    return true;
   } catch (_) {
     return false; // session neexistuje nebo patří k jinému klíči
   }
