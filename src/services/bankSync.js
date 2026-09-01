@@ -146,6 +146,27 @@ async function fetchFioTransactions(days = 30) {
 }
 
 /**
+ * Fio posílá datum jako `2026-09-01+0200` – ISO datum plus offset, bez času.
+ * `new Date()` na tenhle tvar vrací **Invalid Date**. Neošetřené by to shodilo
+ * zápis do BankTransaction, transakce by se neuložila, každou noc se zkusila
+ * znovu a nikdy by se nespárovala.
+ */
+function parseFioDate(raw) {
+  if (!raw) return new Date();
+
+  const m = String(raw).match(/^(\d{4}-\d{2}-\d{2})(?:([+-])(\d{2}):?(\d{2}))?/);
+  if (m) {
+    const [, den, znak, hh, mm] = m;
+    const offset = znak ? `${znak}${hh}:${mm}` : 'Z';
+    const d = new Date(`${den}T00:00:00${offset}`);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+
+  const fallback = new Date(raw);
+  return Number.isNaN(fallback.getTime()) ? new Date() : fallback;
+}
+
+/**
  * Normalizuje Fio transakci do jednoduchého objektu.
  * Fio vrací každé pole jako { value, name, id } nebo null.
  */
@@ -155,13 +176,16 @@ function parseTransaction(raw) {
   const amount = get('column1');   // Objem (záporný = odchozí)
   if (!amount || amount <= 0) return null; // zajímají nás jen příchozí
 
+  const id = get('column22');      // ID pohybu
+  if (!id) return null;            // bez ID nejde hlídat duplicity – radši přeskočit
+
   return {
-    transactionId:  String(get('column22') ?? get('column0')), // ID pohybu
+    transactionId:  String(id),
     amount:         Math.round(amount),
     variableSymbol: String(get('column5') ?? '').trim() || null,
     senderAccount:  get('column2'),
     senderName:     get('column10'),
-    date:           new Date(get('column0') ?? Date.now()),
+    date:           parseFioDate(get('column0')),
     message:        get('column16') ?? '',
   };
 }
@@ -462,4 +486,5 @@ module.exports = {
   ensureMatchHomeFeeVS,
   getPaymentQR,
   matchTransaction, // exportováno kvůli testům párování
+  parseTransaction, // dtto – hlídá se tvar data z Fio
 };

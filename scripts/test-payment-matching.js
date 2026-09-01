@@ -127,7 +127,7 @@ require.cache[notifPath] = {
   },
 };
 
-const { matchTransaction } = require('../src/services/bankSync');
+const { matchTransaction, parseTransaction } = require('../src/services/bankSync');
 
 /* ---------- testovací runner ---------- */
 
@@ -226,6 +226,49 @@ const tx = (vs, amount) => ({
   await test('chybějící VS se nespáruje', async () => {
     const r = await matchTransaction(tx(null, 250));
     assert(!r.matched, 'platba bez VS prošla');
+  });
+
+  // ---------- tvar dat z Fio ----------
+  // Fio posílá datum jako `2026-09-01+0200`. `new Date()` na to vrací Invalid
+  // Date, což dřív shodilo zápis BankTransaction a platba se nikdy nespárovala.
+
+  const fioTx = (over = {}) => ({
+    column0:  { value: '2026-09-01+0200' },
+    column1:  { value: 250 },
+    column2:  { value: '2703584865' },
+    column5:  { value: '10000001' },
+    column10: { value: 'Jakub Tabasek' },
+    column16: { value: 'FSL licence Jakub Tabasek' },
+    column22: { value: 27000123456 },
+    ...over,
+  });
+
+  await test('Fio: datum s offsetem se naparsuje na platné datum', async () => {
+    const t = parseTransaction(fioTx());
+    assert(t !== null, 'transakce zahozena');
+    assert(!Number.isNaN(t.date.getTime()), 'Invalid Date – zápis do DB by spadl');
+    assert(t.date.toISOString() === '2026-08-31T22:00:00.000Z', `nečekané datum ${t.date.toISOString()}`);
+  });
+
+  await test('Fio: ostatní pole sedí a ID je řetězec', async () => {
+    const t = parseTransaction(fioTx());
+    assert(t.transactionId === '27000123456', `ID ${t.transactionId}`);
+    assert(t.amount === 250, `částka ${t.amount}`);
+    assert(t.variableSymbol === '10000001', `VS ${t.variableSymbol}`);
+    assert(t.senderName === 'Jakub Tabasek', `odesílatel ${t.senderName}`);
+  });
+
+  await test('Fio: odchozí platba se zahodí', async () => {
+    assert(parseTransaction(fioTx({ column1: { value: -250 } })) === null, 'odchozí platba prošla');
+  });
+
+  await test('Fio: transakce bez ID pohybu se zahodí', async () => {
+    assert(parseTransaction(fioTx({ column22: null })) === null, 'transakce bez ID prošla');
+  });
+
+  await test('Fio: rozbité datum shodí na dnešek, ne na Invalid Date', async () => {
+    const t = parseTransaction(fioTx({ column0: { value: 'nesmysl' } }));
+    assert(!Number.isNaN(t.date.getTime()), 'Invalid Date');
   });
 
   console.log(`\n${passed} prošlo, ${failed} selhalo`);
