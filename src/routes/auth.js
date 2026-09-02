@@ -88,19 +88,41 @@ router.post('/google', async (req, res, next) => {
       return res.status(500).json({ error: 'Google OAuth není nakonfigurován' });
     }
 
-    const ticket = await googleClient.verifyIdToken({
-      idToken,
-      audience: validAudiences,
-    });
-    const { sub: googleId, email, name, picture } = ticket.getPayload();
+    // Neplatný nebo expirovaný token je chyba klienta — dřív odsud padala 500
+    let ticket;
+    try {
+      ticket = await googleClient.verifyIdToken({ idToken, audience: validAudiences });
+    } catch (verifyErr) {
+      return res.status(401).json({ error: 'Neplatný nebo expirovaný Google token' });
+    }
+    const { sub: googleId, email, email_verified: emailOveren } = ticket.getPayload();
+
+    // Podle e-mailu se párují jen ověřené adresy. Neověřený e-mail si u Googlu
+    // nastaví kdokoli s vlastní doménou a napojil by se tím na cizí účet.
+    const lzeParovatPodleMailu = !!email && emailOveren === true;
 
     // Najdi nebo vytvoř uživatele
     let user = await prisma.user.findFirst({
-      where: { OR: [{ googleId }, { email }] },
+      where: lzeParovatPodleMailu ? { OR: [{ googleId }, { email }] } : { googleId },
       include: { player: { include: { team: true, payment: true } }, referee: true, manager: { include: { team: true } } },
     });
 
     if (!user) {
+      if (!email) return res.status(400).json({ error: 'Google účet neposlal e-mail' });
+      if (!emailOveren) {
+        return res.status(403).json({
+          error: 'Google účet nemá ověřený e-mail. Ověř ho u Googlu, nebo se přihlas e-mailem a heslem.',
+          code:  'EMAIL_NOT_VERIFIED',
+        });
+      }
+      // Na neověřený e-mail se nedá založit účet, který by přebil existující
+      const kolize = await prisma.user.findUnique({ where: { email } });
+      if (kolize) {
+        return res.status(409).json({
+          error: 'Účet s tímhle e-mailem už existuje. Přihlas se tou cestou, kterou jsi ho zakládal.',
+          code:  'EMAIL_TAKEN',
+        });
+      }
       user = await prisma.user.create({
         data: { email, googleId },
         include: { player: { include: { team: true, payment: true } }, referee: true, manager: { include: { team: true } } },
@@ -137,15 +159,33 @@ router.post('/apple', async (req, res, next) => {
     if (!decoded) return res.status(400).json({ error: 'Neplatný Apple token' });
 
     const appleId = decoded.sub;
-    const email = appleEmail || decoded.email;
+    // E-mail z tokenu je podepsaný Applem; ten z těla požadavku posílá klient
+    // a použije se jen při zakládání nového účtu, nikdy k párování na existující.
+    const tokenEmail = decoded.email;
+    const emailOveren = decoded.email_verified === true || decoded.email_verified === 'true';
+    const lzeParovatPodleMailu = !!tokenEmail && emailOveren;
 
     let user = await prisma.user.findFirst({
-      where: { OR: [{ appleId }, ...(email ? [{ email }] : [])] },
+      where: lzeParovatPodleMailu ? { OR: [{ appleId }, { email: tokenEmail }] } : { appleId },
       include: { player: { include: { team: true, payment: true } }, referee: true, manager: { include: { team: true } } },
     });
 
     if (!user) {
+      const email = tokenEmail || appleEmail;
       if (!email) return res.status(400).json({ error: 'E-mail je povinný při první registraci přes Apple' });
+      if (tokenEmail && !emailOveren) {
+        return res.status(403).json({
+          error: 'Apple účet nemá ověřený e-mail. Přihlas se e-mailem a heslem.',
+          code:  'EMAIL_NOT_VERIFIED',
+        });
+      }
+      const kolize = await prisma.user.findUnique({ where: { email } });
+      if (kolize) {
+        return res.status(409).json({
+          error: 'Účet s tímhle e-mailem už existuje. Přihlas se tou cestou, kterou jsi ho zakládal.',
+          code:  'EMAIL_TAKEN',
+        });
+      }
       user = await prisma.user.create({
         data: { email, appleId },
         include: { player: { include: { team: true, payment: true } }, referee: true, manager: { include: { team: true } } },
