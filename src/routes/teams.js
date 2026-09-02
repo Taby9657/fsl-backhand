@@ -73,8 +73,22 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
 // POST /teams – registrace nového týmu (vedoucí)
 router.post('/', requireAuth, async (req, res, next) => {
   try {
-    const { name, abbr, color, colorSecondary } = req.body;
+    const { name, abbr, color, colorSecondary, venue } = req.body;
     if (!name || !abbr) return res.status(400).json({ error: 'Název a zkratka jsou povinné' });
+
+    // Jeden uživatel = jeden tým. Bez téhle kontroly stačilo zopakovat
+    // požadavek po timeoutu a v lize byly dva stejné týmy s jedním vedoucím.
+    const uzVede = await prisma.manager.findFirst({
+      where:   { userId: req.user.id },
+      include: { team: { select: { id: true, name: true, regStatus: true } } },
+    });
+    if (uzVede) {
+      return res.status(409).json({
+        error: `Už vedeš tým ${uzVede.team?.name ?? ''}. Další tým z jednoho účtu založit nejde.`,
+        code:  'ALREADY_MANAGER',
+        team:  uzVede.team,
+      });
+    }
 
     // Tým se přihlašuje do konkrétní sezóny. Bez ní by skončil v té, kterou
     // zrovna ukazuje liga — a při přepnutí sezóny by z ní zmizel.
@@ -83,28 +97,34 @@ router.post('/', requireAuth, async (req, res, next) => {
       return res.status(400).json({ error: 'Vyber sezónu ve tvaru 2026/27' });
     }
 
-    const team = await prisma.team.create({
-      data: {
-        name,
-        abbr:      abbr.toUpperCase().slice(0, 3),
-        color:     color || '#C9A140',
-        colorSecondary: colorSecondary || null,
-        // Divizi přiděluje supervisor při rozlosování, ne vedoucí při registraci
-        division:  null,
-        regStatus: 'PENDING', // nový tým čeká na schválení supervisorem
-        managers:  { create: { userId: req.user.id } },
-        payments:  { create: {} },
-      },
-      include: { managers: true },
+    const zkratka = abbr.toUpperCase().slice(0, 3);
+    const code = `FSL-${zkratka}-${uuidv4().slice(0, 4).toUpperCase()}`;
+
+    // Tým, přihláška do sezóny i pozvánkový kód vzniknou najednou. Dřív to byly
+    // tři samostatné zápisy a při chybě v druhém zůstal tým bez sezóny a bez kódu.
+    const team = await prisma.$transaction(async (tx) => {
+      const novy = await tx.team.create({
+        data: {
+          name,
+          abbr:      zkratka,
+          venue:     venue?.trim() || null,
+          color:     color || '#C9A140',
+          colorSecondary: colorSecondary || null,
+          // Divizi přiděluje supervisor při rozlosování, ne vedoucí při registraci
+          division:  null,
+          regStatus: 'PENDING', // nový tým čeká na schválení supervisorem
+          managers:  { create: { userId: req.user.id } },
+          // Platba nese sezónu, do které se tým hlásí — jde do názvu položky ve Stripe
+          payments:  { create: { season } },
+          // Přihláška do sezóny. Ligu přiděluje supervisor až při rozlosování,
+          // takže leagueId zůstává prázdné.
+          seasons:     { create: { season } },
+          inviteCodes: { create: { code } },
+        },
+        include: { managers: true },
+      });
+      return novy;
     });
-
-    // Přihláška do sezóny. Ligu přiděluje supervisor až při rozlosování,
-    // takže leagueId zůstává prázdné.
-    await prisma.teamSeason.create({ data: { teamId: team.id, season } });
-
-    // Vygeneruj pozvánkový kód
-    const code = `FSL-${team.abbr}-${uuidv4().slice(0, 4).toUpperCase()}`;
-    await prisma.inviteCode.create({ data: { code, teamId: team.id } });
 
     // Notifikuj vedoucího o přijetí žádosti
     await createNotification(
@@ -162,10 +182,16 @@ router.put('/:id', requireAuth, async (req, res, next) => {
     const isManager = req.user.manager?.some(m => m.teamId === req.params.id);
     if (!isManager) return res.status(403).json({ error: 'Nejste vedoucí tohoto týmu' });
 
-    const { name, color } = req.body;
+    // Domácí halu si vedoucí spravuje sám — dřív ji uměl nastavit jen supervisor
+    const { name, color, colorSecondary, venue } = req.body;
     const team = await prisma.team.update({
       where: { id: req.params.id },
-      data: { ...(name && { name }), ...(color && { color }) },
+      data: {
+        ...(name && { name }),
+        ...(color && { color }),
+        ...(colorSecondary !== undefined && { colorSecondary: colorSecondary || null }),
+        ...(venue !== undefined && { venue: venue?.trim() || null }),
+      },
     });
     res.json(team);
   } catch (err) { next(err); }
@@ -374,7 +400,16 @@ router.post('/join/:code', requireAuth, async (req, res, next) => {
     });
     if (!invite) return res.status(404).json({ error: 'Neplatný pozvánkový kód' });
     if (invite.expiresAt && invite.expiresAt < new Date()) {
-      return res.status(400).json({ error: 'Pozvánkový kód vypršel' });
+      return res.status(400).json({ error: 'Pozvánkový kód vypršel', code: 'CODE_EXPIRED' });
+    }
+    // Zamítnutý tým už hrát nebude — ať se do něj nikdo nezapisuje.
+    // PENDING naopak projde: nový tým na schválení teprve čeká a soupisku
+    // potřebuje mít, klient jen ukáže, že se na schválení čeká.
+    if (invite.team?.regStatus === 'REJECTED') {
+      return res.status(409).json({
+        error: 'Registrace tohohle týmu byla zamítnutá, přidat se do něj nedá',
+        code:  'TEAM_REJECTED',
+      });
     }
 
     // POZOR: tohle je jen ověření kódu, ne skutečné připojení k týmu.
