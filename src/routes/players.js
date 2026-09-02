@@ -1,12 +1,21 @@
 const express = require('express');
 
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, optionalAuth, isSupervisorUser } = require('../middleware/auth');
 const { uploadPhoto } = require('../utils/fileUpload');
+const { verejnyHrac } = require('../utils/verejneUdaje');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
 const licence = require('../services/licence');
 const seasonSvc = require('../services/seasonTransition');
+
+/** Supervisor, hráč sám, nebo vedoucí jeho týmu. */
+function vidiOsobniUdaje(user, player) {
+  if (!user) return false;
+  if (isSupervisorUser(user)) return true;
+  if (user.player?.id === player.id) return true;
+  return player.teamId ? (user.manager ?? []).some(m => m.teamId === player.teamId) : false;
+}
 
 // GET /players – seznam všech hráčů (veřejné)
 router.get('/', async (req, res, next) => {
@@ -20,7 +29,7 @@ router.get('/', async (req, res, next) => {
       include: { team: { select: { id: true, name: true, abbr: true, color: true } } },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
     });
-    res.json(players);
+    res.json(players.map(verejnyHrac));
   } catch (err) { next(err); }
 });
 
@@ -54,7 +63,9 @@ router.get('/my/stats', requireAuth, async (req, res, next) => {
 });
 
 // GET /players/:id – detail hráče
-router.get('/:id', async (req, res, next) => {
+// Veřejné, proto `optionalAuth`: telefon, datum narození a platby vidí jen
+// hráč sám, vedoucí jeho týmu a supervisor.
+router.get('/:id', optionalAuth, async (req, res, next) => {
   try {
     const player = await prisma.player.findUnique({
       where: { id: req.params.id },
@@ -67,7 +78,7 @@ router.get('/:id', async (req, res, next) => {
       },
     });
     if (!player) return res.status(404).json({ error: 'Hráč nenalezen' });
-    res.json(player);
+    res.json(vidiOsobniUdaje(req.user, player) ? player : verejnyHrac(player));
   } catch (err) { next(err); }
 });
 
