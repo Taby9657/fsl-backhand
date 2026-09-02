@@ -1,8 +1,9 @@
 const express = require('express');
 
-const { requireAuth, requireManager } = require('../middleware/auth');
+const { requireAuth, requireManager, optionalAuth, isSupervisorUser } = require('../middleware/auth');
 const { createNotification } = require('./notifications');
 const { uploadLogo } = require('../utils/fileUpload');
+const { verejnyHrac } = require('../utils/verejneUdaje');
 const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
@@ -33,8 +34,29 @@ router.get('/divisions', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+/**
+ * Veřejná podoba týmu — soupiska bez osobních údajů a bez kontaktů na vedoucí.
+ * Vedoucí týmu a supervisor dostanou objekt tak, jak přišel z databáze.
+ */
+function verejnyTym(team) {
+  return {
+    ...team,
+    players: (team.players ?? []).map(verejnyHrac),
+    managers: (team.managers ?? []).map(m => ({ id: m.id, teamId: m.teamId })),
+  };
+}
+
+/** Vedoucí daného týmu nebo supervisor — jen ti smí vidět plný detail. */
+function vidiDetaily(user, teamId) {
+  if (!user) return false;
+  if (isSupervisorUser(user)) return true;
+  return (user.manager ?? []).some(m => m.teamId === teamId);
+}
+
 // GET /teams/:id – detail týmu
-router.get('/:id', async (req, res, next) => {
+// Veřejně přístupné, proto `optionalAuth`: anonym dostane jen soupisku,
+// vedoucí týmu a supervisor i platby a kontakty.
+router.get('/:id', optionalAuth, async (req, res, next) => {
   try {
     const team = await prisma.team.findUnique({
       where: { id: req.params.id },
@@ -44,7 +66,7 @@ router.get('/:id', async (req, res, next) => {
       },
     });
     if (!team) return res.status(404).json({ error: 'Tým nenalezen' });
-    res.json(team);
+    res.json(vidiDetaily(req.user, team.id) ? team : verejnyTym(team));
   } catch (err) { next(err); }
 });
 
