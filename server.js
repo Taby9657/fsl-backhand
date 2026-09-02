@@ -56,12 +56,27 @@ app.use(rateLimit({
   message:  { error: 'Příliš mnoho požadavků, zkuste to za chvíli' },
 }));
 
-// Přísnější limiter pro auth endpointy
+// Přísnější limiter — jen na cesty, kde se hádá heslo nebo zakládá účet.
+// Dřív visel na celém /api/auth včetně GET /auth/me, které klient volá při
+// každém startu: na sdílené wifi v hale vyčerpal limit celý tým naráz.
 const authLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 hodina
   max:      20,
-  message:  { error: 'Příliš mnoho pokusů o přihlášení' },
+  // Povedené přihlášení se nepočítá — limit má brzdit hádání, ne běžný provoz
+  skipSuccessfulRequests: true,
+  message:  { error: 'Příliš mnoho pokusů o přihlášení, zkus to za chvíli' },
 });
+
+// Cesty pod /api/auth, na které se limiter vztahuje
+const CITLIVE_AUTH_CESTY = [
+  '/login',
+  '/register',
+  '/google',
+  '/apple',
+  '/forgot-password',
+  '/reset-password',
+  '/password',
+];
 
 // ==================== PARSOVÁNÍ ====================
 
@@ -129,7 +144,8 @@ app.get('/platby', (req, res) => {
 
 // ==================== API ROUTES ====================
 
-app.use('/api/auth',        authLimiter, authRoutes);
+CITLIVE_AUTH_CESTY.forEach(cesta => app.use(`/api/auth${cesta}`, authLimiter));
+app.use('/api/auth',        authRoutes);
 app.use('/api/teams',       teamRoutes);
 app.use('/api/leagues',     leagueRoutes);
 app.use('/api/players',     playerRoutes);
