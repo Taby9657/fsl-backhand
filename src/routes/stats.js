@@ -22,6 +22,7 @@ function matchScope({ leagueId, conferenceId, divisionId, division, season }) {
 
 
 const prisma = require('../lib/prisma');
+const { VEREJNY_HRAC } = require('../utils/verejneUdaje');
 const standings = require('../services/standings');
 
 // GET /stats/seasons – seznam dostupných ročníků
@@ -59,7 +60,7 @@ router.get('/scorers', async (req, res, next) => {
     const playerIds = goals.map(g => g.scorerId).filter(Boolean);
     const players = await prisma.player.findMany({
       where: { id: { in: playerIds } },
-      include: { team: { select: { id: true, abbr: true, color: true } } },
+      select: { ...VEREJNY_HRAC, team: { select: { id: true, abbr: true, color: true } } },
     });
     const playerMap = Object.fromEntries(players.map(p => [p.id, p]));
 
@@ -95,7 +96,7 @@ router.get('/assisters', async (req, res, next) => {
     const playerIds = assists.map(a => a.assistId).filter(Boolean);
     const players = await prisma.player.findMany({
       where: { id: { in: playerIds } },
-      include: { team: { select: { id: true, abbr: true, color: true } } },
+      select: { ...VEREJNY_HRAC, team: { select: { id: true, abbr: true, color: true } } },
     });
     const playerMap = Object.fromEntries(players.map(p => [p.id, p]));
 
@@ -143,7 +144,7 @@ router.get('/points', async (req, res, next) => {
     const allIds = Object.keys(pointsMap);
     const players = await prisma.player.findMany({
       where: { id: { in: allIds } },
-      include: { team: { select: { id: true, abbr: true, color: true } } },
+      select: { ...VEREJNY_HRAC, team: { select: { id: true, abbr: true, color: true } } },
     });
 
     const result = players
@@ -183,7 +184,7 @@ router.get('/mvp', async (req, res, next) => {
     const playerIds = votes.map(v => v.opponentMvpId).filter(Boolean);
     const players = await prisma.player.findMany({
       where: { id: { in: playerIds } },
-      include: { team: { select: { id: true, abbr: true, color: true } } },
+      select: { ...VEREJNY_HRAC, team: { select: { id: true, abbr: true, color: true } } },
     });
     const playerMap = Object.fromEntries(players.map(p => [p.id, p]));
 
