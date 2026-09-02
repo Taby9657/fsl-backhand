@@ -40,7 +40,7 @@ router.get('/:id', async (req, res, next) => {
       where: { id: req.params.id },
       include: {
         players: { orderBy: { jersey: 'asc' }, include: { payment: true } },
-        managers: { include: { user: true } },
+        managers: { include: { user: { select: { id: true, email: true } } } },
       },
     });
     if (!team) return res.status(404).json({ error: 'Tým nenalezen' });
