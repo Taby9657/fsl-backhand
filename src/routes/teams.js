@@ -392,7 +392,10 @@ router.delete('/:id/roster/:playerId', requireAuth, async (req, res, next) => {
 });
 
 // POST /teams/join/:code – hráč se připojí k týmu pomocí kódu
-router.post('/join/:code', requireAuth, async (req, res, next) => {
+// Ověření kódu je veřejné — tajemstvím je samotný kód a stránka pozvánky
+// musí ukázat tým i tomu, kdo ještě není přihlášený. Připojení k týmu
+// přihlášení pořád vyžaduje (POST /players a POST /players/join).
+router.post('/join/:code', optionalAuth, async (req, res, next) => {
   try {
     const invite = await prisma.inviteCode.findUnique({
       where: { code: req.params.code.toUpperCase() },
