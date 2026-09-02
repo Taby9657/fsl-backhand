@@ -112,11 +112,14 @@ router.put('/:id', requireAuth, async (req, res, next) => {
     if (!ref) return res.status(404).json({ error: 'Rozhodčí nenalezen' });
     if (ref.userId !== req.user.id) return res.status(403).json({ error: 'Nemáte oprávnění' });
 
-    const { phone, address, city, zip, bankAccount, bankCode } = req.body;
+    // Rodné číslo šlo dřív zapsat jen při registraci z webu — kdo se registroval
+    // z aplikace, neměl ho jak doplnit a supervisor mu nemohl poslat odměnu.
+    const { phone, birthNo, address, city, zip, bankAccount, bankCode } = req.body;
     const updated = await prisma.referee.update({
       where: { id: req.params.id },
       data: {
         ...(phone       !== undefined && { phone:       phone       || null }),
+        ...(birthNo     !== undefined && { birthNo:     birthNo     || null }),
         ...(address     !== undefined && { address:     address     || null }),
         ...(city        !== undefined && { city:        city        || null }),
         ...(zip         !== undefined && { zip:         zip         || null }),
