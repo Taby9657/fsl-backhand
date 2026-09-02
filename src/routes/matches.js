@@ -3,6 +3,7 @@ const express = require('express');
 const { requireAuth, requireSupervisor, isSupervisorUser } = require('../middleware/auth');
 const { createNotifications } = require('./notifications');
 const { sendPush } = require('../services/push');
+const { VEREJNY_HRAC, VEREJNA_PLATBA } = require('../utils/verejneUdaje');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -76,15 +77,26 @@ router.get('/:id', async (req, res, next) => {
       include: {
         homeTeam: true,
         awayTeam: true,
-        referee:  true,
+        // Rozhodčí má v tabulce i rodné číslo, adresu a číslo účtu — ven jde
+        // jen to, co ukazuje detail zápasu
+        referee:  { select: { id: true, firstName: true, lastName: true, level: true, status: true, photoUrl: true } },
         events: {
-          include: { scorer: true, assist: true, penalty: true },
+          include: {
+            scorer:  { select: VEREJNY_HRAC },
+            assist:  { select: VEREJNY_HRAC },
+            penalty: { select: VEREJNY_HRAC },
+          },
           orderBy: [{ period: 'asc' }, { minute: 'asc' }],
         },
         lineups: {
-          include: { players: { include: { player: { include: { payment: true } } } } },
+          include: {
+            players: {
+              // Soupiska je veřejná — z platby jde ven jen stav licence pro odznak
+              include: { player: { select: { ...VEREJNY_HRAC, payment: { select: VEREJNA_PLATBA } } } },
+            },
+          },
         },
-        postmatches: { include: { opponentMvp: true } },
+        postmatches: { include: { opponentMvp: { select: VEREJNY_HRAC } } },
       },
     });
     if (!match) return res.status(404).json({ error: 'Zápas nenalezen' });
