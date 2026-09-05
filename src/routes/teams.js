@@ -3,7 +3,7 @@ const express = require('express');
 const { requireAuth, requireManager, optionalAuth, isSupervisorUser } = require('../middleware/auth');
 const { createNotification } = require('./notifications');
 const { uploadLogo } = require('../utils/fileUpload');
-const { verejnyHrac } = require('../utils/verejneUdaje');
+const { verejnyHrac, verejnyZaznamTymu, VEREJNY_TYM } = require('../utils/verejneUdaje');
 const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
@@ -12,10 +12,18 @@ const licence = require('../services/licence');
 const seasonSvc = require('../services/seasonTransition');
 
 // GET /teams – seznam všech týmů
-router.get('/', async (req, res, next) => {
+//
+// Bez přihlášení jde ven jen vyjmenovaná sada polí. Dřív se posílal celý řádek
+// z databáze, takže veřejně svítil `regNote` (důvod zamítnutí od supervisora),
+// `regAppeal` (odvolání týmu) i velikost soupisky. Supervisor dostává řádek
+// v plné podobě, protože na něm stojí jeho obrazovky.
+router.get('/', optionalAuth, async (req, res, next) => {
   try {
+    const jeSupervisor = isSupervisorUser(req.user);
     const teams = await prisma.team.findMany({
-      include: { _count: { select: { players: true } } },
+      ...(jeSupervisor
+        ? { include: { _count: { select: { players: true } } } }
+        : { select: VEREJNY_TYM }),
       orderBy: { name: 'asc' },
     });
     res.json(teams);
@@ -23,24 +31,31 @@ router.get('/', async (req, res, next) => {
 });
 
 // GET /teams/divisions – veřejný seznam divizí (MUSÍ být před /:id !)
-router.get('/divisions', async (req, res, next) => {
+//
+// Slouží jen jako číselník do filtrů (web i záložka Zápasy v appce), takže
+// ven jdou názvy, ne počty — kolik týmů v divizi je, patří supervisorovi.
+router.get('/divisions', optionalAuth, async (req, res, next) => {
   try {
     const divisions = await prisma.team.groupBy({
       by: ['division', 'conference'],
       _count: { division: true },
       orderBy: { division: 'asc' },
     });
-    res.json(divisions);
+    if (isSupervisorUser(req.user)) return res.json(divisions);
+    res.json(divisions.map(({ division, conference }) => ({ division, conference })));
   } catch (err) { next(err); }
 });
 
 /**
  * Veřejná podoba týmu — soupiska bez osobních údajů a bez kontaktů na vedoucí.
  * Vedoucí týmu a supervisor dostanou objekt tak, jak přišel z databáze.
+ *
+ * Pole se vyjmenovávají, ne odečítají: `...team` sem dřív protahoval i stav
+ * registrace včetně poznámky supervisora a odvolání týmu.
  */
 function verejnyTym(team) {
   return {
-    ...team,
+    ...verejnyZaznamTymu(team),
     players: (team.players ?? []).map(verejnyHrac),
     managers: (team.managers ?? []).map(m => ({ id: m.id, teamId: m.teamId })),
   };
