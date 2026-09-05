@@ -4,10 +4,13 @@
  * Čtení je veřejné (potřebuje ho tabulka i statistiky), zápis smí jen
  * supervisor. Hloubka je volitelná — liga bez konferencí je platný stav,
  * stejně jako konference bez divizí.
+ *
+ * Veřejné čtení ukazuje strukturu, ne čísla: `teamCount` u ligy, konference
+ * i divize a velikosti soupisek v `/leagues/teams` vidí jen supervisor.
  */
 
 const express = require('express');
-const { requireSupervisor } = require('../middleware/auth');
+const { requireSupervisor, optionalAuth, isSupervisorUser } = require('../middleware/auth');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -33,15 +36,19 @@ const stromInclude = {
 // ==================== ČTENÍ (veřejné) ====================
 
 // GET /leagues?season=2025/26 – celý strom soutěží pro sezónu
-router.get('/', async (req, res, next) => {
+router.get('/', optionalAuth, async (req, res, next) => {
   try {
     const season = req.query.season || await aktualniSezona();
+    const jeSupervisor = isSupervisorUser(req.user);
 
     const leagues = await prisma.league.findMany({
       where:   { season },
       orderBy: [{ level: 'asc' }, { name: 'asc' }],
       include: stromInclude,
     });
+
+    // Bez supervisora se počty ani nepočítají — ať se na ně nedá dostat omylem
+    if (!jeSupervisor) return res.json({ season, leagues });
 
     // Počty týmů dopočítáme jedním dotazem, ať se nešahá do DB v cyklu
     const zarazeni = await prisma.teamSeason.groupBy({
@@ -71,9 +78,10 @@ router.get('/', async (req, res, next) => {
 });
 
 // GET /leagues/teams?season=2025/26 – týmy se zařazením, včetně nezařazených
-router.get('/teams', async (req, res, next) => {
+router.get('/teams', optionalAuth, async (req, res, next) => {
   try {
     const season = req.query.season || await aktualniSezona();
+    const jeSupervisor = isSupervisorUser(req.user);
 
     // Jen týmy přihlášené do téhle sezóny — tým bez přihlášky do soutěže nepatří
     const prihlasky = await prisma.teamSeason.findMany({
@@ -81,8 +89,12 @@ router.get('/teams', async (req, res, next) => {
       include: {
         team: {
           select: {
-            id: true, name: true, abbr: true, color: true, regStatus: true,
-            _count: { select: { players: true } },
+            id: true, name: true, abbr: true, color: true,
+            // Stav registrace a velikost soupisky jsou podklad pro rozlosování,
+            // ne veřejný údaj — proto jen supervisorovi.
+            ...(jeSupervisor
+              ? { regStatus: true, _count: { select: { players: true } } }
+              : {}),
           },
         },
         league:     { select: { id: true, name: true } },
