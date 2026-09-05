@@ -105,11 +105,17 @@ router.post('/', requireAuth, async (req, res, next) => {
       });
     }
 
-    // Tým se přihlašuje do konkrétní sezóny. Bez ní by skončil v té, kterou
-    // zrovna ukazuje liga — a při přepnutí sezóny by z ní zmizel.
-    const season = req.body.season || await seasonSvc.currentSeason();
+    // Tým se vždycky hlásí do sezóny, která zrovna běží. `season` z těla
+    // požadavku se schválně ignoruje: dřív se dala poslat i příští sezóna,
+    // takže tým vznikl v soutěži, která ještě není otevřená — a do té běžící
+    // nepatřil, i když ho tam vedoucí čekal. Do další sezóny se tým přihlašuje
+    // znovu, na to je `POST /seasons/teams`.
+    const season = await seasonSvc.currentSeason();
     if (!season || !seasonSvc.SEASON_RE.test(season)) {
-      return res.status(400).json({ error: 'Vyber sezónu ve tvaru 2026/27' });
+      return res.status(409).json({
+        error: 'Liga nemá nastavenou aktuální sezónu, registrace týmů je zavřená.',
+        code:  'NO_CURRENT_SEASON',
+      });
     }
 
     const zkratka = abbr.toUpperCase().slice(0, 3);
