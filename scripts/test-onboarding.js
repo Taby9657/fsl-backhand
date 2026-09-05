@@ -215,11 +215,13 @@ const server = app.listen(0, async () => {
   ok(doZamitnuteho.status === 404, 'bez profilu nejde použít join (404, ne pád)');
 
   // --- registrace týmu ---
-  const tym = await volej('/teams', { name: 'Draci', abbr: 'DRA', venue: 'Hala Jih', season: '2026/27' }, 'U5');
+  // Sezóna z těla se schválně ignoruje — proto se posílá jiná než aktuální
+  // ('2026/27' z mocku) a čeká se, že tým stejně skončí v té aktuální.
+  const tym = await volej('/teams', { name: 'Draci', abbr: 'DRA', venue: 'Hala Jih', season: '2027/28' }, 'U5');
   ok(tym.status === 201, 'tým se založí');
   ok(tym.telo.team?.venue === 'Hala Jih', 'domácí hala se uloží (dřív se zahazovala)');
-  ok(tym.telo.team?.payments?.season === '2026/27', 'platba týmu nese zvolenou sezónu');
-  ok(tym.telo.team?.seasons?.[0]?.season === '2026/27', 'přihláška do sezóny vznikla v téže transakci');
+  ok(tym.telo.team?.payments?.season === '2026/27', 'platba týmu nese aktuální sezónu, ne tu z požadavku');
+  ok(tym.telo.team?.seasons?.[0]?.season === '2026/27', 'přihláška vznikla do aktuální sezóny, ne do příští');
   ok(!!tym.telo.inviteCode, 'pozvánkový kód se vrátil rovnou v odpovědi');
 
   db.managers.push({ userId: 'U5', teamId: tym.telo.team.id, team: tym.telo.team });
