@@ -18,6 +18,36 @@ const VEREJNY_HRAC = {
   licensed: true,
 };
 
+/**
+ * Co z týmu smí ven bez přihlášení.
+ *
+ * Vynechané je celé kolečko kolem registrace (`regStatus`, `regNote`,
+ * `regAppeal`, `regAppealAt`) — důvod zamítnutí od supervisora ani text
+ * odvolání týmu nemá číst kdokoliv — a `_count`, protože počty týmů
+ * a velikosti soupisek jsou informace pro vedení ligy, ne pro veřejnost.
+ */
+const VEREJNY_TYM = {
+  id: true,
+  name: true,
+  abbr: true,
+  color: true,
+  colorSecondary: true,
+  logoUrl: true,
+  venue: true,
+  division: true,
+  conference: true,
+};
+
+/** Ořezání už načteného týmu na veřejná pole. */
+function verejnyZaznamTymu(team) {
+  if (!team) return team;
+  const orezany = {};
+  for (const klic of Object.keys(VEREJNY_TYM)) {
+    if (klic in team) orezany[klic] = team[klic];
+  }
+  return orezany;
+}
+
 /** Stav licence pro odznak u soupisky — bez čísel plateb. */
 const VEREJNA_PLATBA = {
   season: true,
@@ -58,4 +88,7 @@ function verejnaPlatba(payment) {
   return orezana;
 }
 
-module.exports = { VEREJNY_HRAC, VEREJNA_PLATBA, verejnyHrac, verejnaPlatba };
+module.exports = {
+  VEREJNY_HRAC, VEREJNA_PLATBA, VEREJNY_TYM,
+  verejnyHrac, verejnaPlatba, verejnyZaznamTymu,
+};
