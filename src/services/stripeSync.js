@@ -46,6 +46,15 @@ async function isPaid(sessionId) {
   }
 }
 
+/** Aktuální sezóna; když ji nejde zjistit, sezónu neřešíme. */
+async function currentSeason() {
+  try {
+    return await require('./seasonTransition').currentSeason();
+  } catch (_) {
+    return null;
+  }
+}
+
 async function reconcileStripePayments() {
   const results = { checked: 0, fixed: [] };
 
@@ -88,8 +97,20 @@ async function reconcileStripePayments() {
   }
 
   // ── Registrace týmů ──
+  //
+  // Řádek `PAID` z minulé sezóny sem patří taky: registrace se platí každý
+  // ročník znovu, takže rozdělaná session u loňského zaplaceného řádku je
+  // letošní platba, které se ztratil webhook. Bez téhle podmínky by ji
+  // rekonciliace přeskočila a peníze by zůstaly nespárované.
+  const sezona = await currentSeason();
   const teamPayments = await prisma.teamPayment.findMany({
-    where: { status: { not: 'PAID' }, sessionId: { not: null } },
+    where: {
+      sessionId: { not: null },
+      OR: [
+        { status: { not: 'PAID' } },
+        ...(sezona ? [{ season: { not: sezona } }] : []),
+      ],
+    },
   });
 
   for (const t of teamPayments) {
@@ -97,9 +118,12 @@ async function reconcileStripePayments() {
     if (await isPaid(t.sessionId)) {
       await prisma.teamPayment.update({
         where: { teamId: t.teamId },
-        data:  { status: 'PAID', paidAt: new Date(), method: 'stripe', stripeId: t.sessionId },
+        data:  {
+          status: 'PAID', paidAt: new Date(), method: 'stripe', stripeId: t.sessionId,
+          ...(sezona ? { season: sezona } : {}),
+        },
       });
-      results.fixed.push({ type: 'TEAM_REG', teamId: t.teamId });
+      results.fixed.push({ type: 'TEAM_REG', teamId: t.teamId, season: sezona ?? undefined });
     }
   }
 
