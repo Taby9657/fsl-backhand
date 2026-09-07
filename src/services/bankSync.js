@@ -283,16 +283,33 @@ async function payPlayerLicense(payment, tx) {
   if (payment.licStatus === 'PAID') {
     return { matched: false, reason: 'licence již evidována jako zaplacená' };
   }
-  if (tx.amount < payment.licFee) {
-    return {
-      matched: false,
-      reason: `nedostatečná částka (přišlo ${tx.amount}, požadováno ${payment.licFee})`,
-    };
+
+  const zaplaceno = (payment.licPaidAmount ?? 0) + tx.amount;
+
+  if (zaplaceno < payment.licFee) {
+    // Částečná platba: připíšeme ji a čekáme na doplatek. Dřív se takový
+    // převod zahodil a člověk zůstal napořád nezaplacený.
+    const pripsano = await prisma.playerPayment.updateMany({
+      where: { id: payment.id, licStatus: { not: 'PAID' } },
+      data:  { licPaidAmount: zaplaceno, licMethod: 'bank' },
+    });
+    if (pripsano.count === 0) {
+      return { matched: false, reason: 'platba právě zpracována jiným procesem (race condition)' };
+    }
+    const chybi = payment.licFee - zaplaceno;
+    await sendNotification(
+      payment.player.userId,
+      'Přijata částečná platba',
+      `Přišlo ${tx.amount} Kč, celkem evidujeme ${zaplaceno} z ${payment.licFee} Kč. Do zaplacení licence chybí ${chybi} Kč.`,
+      'payments',
+    );
+    return castecna('PLAYER_LICENSE', { playerId: payment.playerId }, tx, zaplaceno, payment.licFee);
   }
+
   // Atomický update se WHERE podmínkou: zabrání race condition při souběžném zpracování
   const updated = await prisma.playerPayment.updateMany({
     where: { id: payment.id, licStatus: { not: 'PAID' } },
-    data:  { licStatus: 'PAID', licPaidAt: tx.date, licMethod: 'bank' },
+    data:  { licStatus: 'PAID', licPaidAt: tx.date, licMethod: 'bank', licPaidAmount: zaplaceno },
   });
   if (updated.count === 0) {
     return { matched: false, reason: 'platba právě zpracována jiným procesem (race condition)' };
@@ -308,22 +325,41 @@ async function payPlayerLicense(payment, tx) {
     `Licenční poplatek ${tx.amount} Kč byl spárován.`,
     'payments',
   );
-  return { matched: true, type: 'PLAYER_LICENSE', playerId: payment.playerId, amount: tx.amount };
+  await hlidejPreplatek('licence', zaplaceno, payment.licFee, tx);
+  return {
+    matched: true, type: 'PLAYER_LICENSE', playerId: payment.playerId,
+    amount: tx.amount, paidTotal: zaplaceno,
+  };
 }
 
 async function paySuperLicense(payment, tx) {
   if (payment.superStatus === 'PAID') {
     return { matched: false, reason: 'superlicence již evidována jako zaplacená' };
   }
-  if (tx.amount < payment.superFee) {
-    return {
-      matched: false,
-      reason: `nedostatečná částka pro superlicenci (přišlo ${tx.amount}, požadováno ${payment.superFee})`,
-    };
+
+  const zaplaceno = (payment.superPaidAmount ?? 0) + tx.amount;
+
+  if (zaplaceno < payment.superFee) {
+    const pripsano = await prisma.playerPayment.updateMany({
+      where: { id: payment.id, superStatus: { not: 'PAID' } },
+      data:  { superPaidAmount: zaplaceno },
+    });
+    if (pripsano.count === 0) {
+      return { matched: false, reason: 'superlicence právě zpracována jiným procesem (race condition)' };
+    }
+    const chybi = payment.superFee - zaplaceno;
+    await sendNotification(
+      payment.player.userId,
+      'Přijata částečná platba',
+      `Přišlo ${tx.amount} Kč, celkem evidujeme ${zaplaceno} z ${payment.superFee} Kč. Do zaplacení superlicence chybí ${chybi} Kč.`,
+      'payments',
+    );
+    return castecna('SUPER_LICENSE', { playerId: payment.playerId }, tx, zaplaceno, payment.superFee);
   }
+
   const updated = await prisma.playerPayment.updateMany({
     where: { id: payment.id, superStatus: { not: 'PAID' } },
-    data:  { superStatus: 'PAID', superPaidAt: tx.date, superLic: true },
+    data:  { superStatus: 'PAID', superPaidAt: tx.date, superLic: true, superPaidAmount: zaplaceno },
   });
   if (updated.count === 0) {
     return { matched: false, reason: 'superlicence právě zpracována jiným procesem (race condition)' };
@@ -335,22 +371,58 @@ async function paySuperLicense(payment, tx) {
     `Super licence ${tx.amount} Kč zaplacena.`,
     'payments',
   );
-  return { matched: true, type: 'SUPER_LICENSE', playerId: payment.playerId, amount: tx.amount };
+  await hlidejPreplatek('superlicence', zaplaceno, payment.superFee, tx);
+  return {
+    matched: true, type: 'SUPER_LICENSE', playerId: payment.playerId,
+    amount: tx.amount, paidTotal: zaplaceno,
+  };
 }
 
 async function payTeamRegistration(payment, tx) {
-  if (payment.status === 'PAID') {
+  // Registrace se platí každou sezónu znovu, ale `TeamPayment` je jeden řádek
+  // na tým. Řádek z minulé sezóny proto neznamená, že je zaplaceno teď —
+  // jinak by tým, který zaplatil loni, o poplatek letos nikdy nepožádal.
+  const sezona     = await aktualniSezonaBezpecne();
+  const zeStare    = jeZeStareSezony(payment, sezona);
+  const jizPrislo  = zeStare ? 0 : (payment.paidAmount ?? 0);
+  const novaSezona = zeStare ? { season: sezona } : {};
+
+  // Při přeúčtování na novou sezónu se na starý řádek nedá vázat podmínkou
+  // `status not PAID` (starý řádek PAID je) — hlídáme tedy sezónu, na kterou
+  // jsme se dívali. Kdyby ji mezitím přepsal jiný proces, update neprojde.
+  const kde = zeStare
+    ? { id: payment.id, season: payment.season }
+    : { id: payment.id, status: { not: 'PAID' } };
+
+  if (payment.status === 'PAID' && !zeStare) {
     return { matched: false, reason: 'týmová platba již zaplacena' };
   }
-  if (tx.amount < payment.amount) {
-    return {
-      matched: false,
-      reason: `nedostatečná částka (přišlo ${tx.amount}, požadováno ${payment.amount})`,
-    };
+  if (payment.status === 'WAIVED' && !zeStare) {
+    return { matched: false, reason: 'poplatek za registraci je odpuštěn' };
   }
+
+  const zaplaceno = jizPrislo + tx.amount;
+
+  if (zaplaceno < payment.amount) {
+    const pripsano = await prisma.teamPayment.updateMany({
+      where: kde,
+      data:  { ...novaSezona, status: 'PENDING', paidAmount: zaplaceno, method: 'bank' },
+    });
+    if (pripsano.count === 0) {
+      return { matched: false, reason: 'týmová platba právě zpracována jiným procesem (race condition)' };
+    }
+    const chybi = payment.amount - zaplaceno;
+    await notifyTeamManagers(
+      payment.teamId,
+      'Přijata částečná platba',
+      `Přišlo ${tx.amount} Kč, celkem evidujeme ${zaplaceno} z ${payment.amount} Kč. Do zaplacení registrace chybí ${chybi} Kč.`,
+    );
+    return castecna('TEAM_REG', { teamId: payment.teamId }, tx, zaplaceno, payment.amount);
+  }
+
   const updated = await prisma.teamPayment.updateMany({
-    where: { id: payment.id, status: { not: 'PAID' } },
-    data:  { status: 'PAID', paidAt: tx.date, method: 'bank' },
+    where: kde,
+    data:  { ...novaSezona, status: 'PAID', paidAt: tx.date, method: 'bank', paidAmount: zaplaceno },
   });
   if (updated.count === 0) {
     return { matched: false, reason: 'týmová platba právě zpracována jiným procesem (race condition)' };
@@ -361,7 +433,11 @@ async function payTeamRegistration(payment, tx) {
     'Platba přijata',
     `Registrační poplatek ${tx.amount} Kč byl spárován.`,
   );
-  return { matched: true, type: 'TEAM_REG', teamId: payment.teamId, amount: tx.amount };
+  await hlidejPreplatek('registrace týmu', zaplaceno, payment.amount, tx);
+  return {
+    matched: true, type: 'TEAM_REG', teamId: payment.teamId,
+    amount: tx.amount, paidTotal: zaplaceno, ...(zeStare ? { season: sezona } : {}),
+  };
 }
 
 const HOME_FEE_AMOUNT = 2200;
@@ -370,27 +446,107 @@ async function payHomeFee(match, tx) {
   if (match.homeFeePaid) {
     return { matched: false, reason: 'poplatek za tento zápas je již uhrazen' };
   }
-  if (tx.amount < HOME_FEE_AMOUNT) {
-    return {
-      matched: false,
-      reason: `nedostatečná částka (přišlo ${tx.amount}, požadováno ${HOME_FEE_AMOUNT})`,
-    };
+
+  const zaplaceno = (match.homeFeePaidAmount ?? 0) + tx.amount;
+  const dateStr   = new Date(match.date).toLocaleDateString('cs-CZ');
+
+  if (zaplaceno < HOME_FEE_AMOUNT) {
+    const pripsano = await prisma.match.updateMany({
+      where: { id: match.id, homeFeePaid: false },
+      data:  { homeFeePaidAmount: zaplaceno },
+    });
+    if (pripsano.count === 0) {
+      return { matched: false, reason: 'poplatek právě zpracován jiným procesem (race condition)' };
+    }
+    const chybi = HOME_FEE_AMOUNT - zaplaceno;
+    await notifyTeamManagers(
+      match.homeTeamId,
+      'Přijata částečná platba',
+      `Na poplatek za domácí zápas ${dateStr} přišlo ${tx.amount} Kč, celkem evidujeme ${zaplaceno} z ${HOME_FEE_AMOUNT} Kč. Chybí ${chybi} Kč.`,
+    );
+    return castecna('HOME_FEE', { matchId: match.id, teamId: match.homeTeamId }, tx, zaplaceno, HOME_FEE_AMOUNT);
   }
+
   const updated = await prisma.match.updateMany({
     where: { id: match.id, homeFeePaid: false },
-    data:  { homeFeePaid: true },
+    data:  { homeFeePaid: true, homeFeePaidAmount: zaplaceno },
   });
   if (updated.count === 0) {
     return { matched: false, reason: 'poplatek právě zpracován jiným procesem (race condition)' };
   }
 
-  const dateStr = new Date(match.date).toLocaleDateString('cs-CZ');
   await notifyTeamManagers(
     match.homeTeamId,
     'Platba přijata',
     `Poplatek za domácí zápas ${dateStr} (${tx.amount} Kč) byl spárován.`,
   );
-  return { matched: true, type: 'HOME_FEE', matchId: match.id, teamId: match.homeTeamId, amount: tx.amount };
+  await hlidejPreplatek(`domácí zápas ${dateStr}`, zaplaceno, HOME_FEE_AMOUNT, tx);
+  return {
+    matched: true, type: 'HOME_FEE', matchId: match.id, teamId: match.homeTeamId,
+    amount: tx.amount, paidTotal: zaplaceno,
+  };
+}
+
+// ---------- částečné platby a přeplatky ----------
+
+/**
+ * Výsledek pro připsanou, ale zatím nedostatečnou platbu.
+ *
+ * `matched: true` je tu schválně: transakci jsme přiřadili konkrétní platbě
+ * a připsali ji, takže nepatří mezi nespárované. Že poplatek ještě není
+ * pokrytý, nese `partial` a `missing`.
+ */
+function castecna(type, klic, tx, zaplaceno, potreba) {
+  return {
+    matched: true,
+    partial: true,
+    type,
+    ...klic,
+    amount:    tx.amount,
+    paidTotal: zaplaceno,
+    missing:   potreba - zaplaceno,
+    reason:    `částečná platba (celkem ${zaplaceno} z ${potreba} Kč, chybí ${potreba - zaplaceno})`,
+  };
+}
+
+/** Přeplatek supervisor uvidí — sám se nevrací, musí ho někdo poslat zpátky. */
+async function hlidejPreplatek(co, zaplaceno, potreba, tx) {
+  if (zaplaceno <= potreba) return;
+  await ohlasSupervisorum(
+    'Přeplatek',
+    `Na ${co} přišlo celkem ${zaplaceno} Kč místo ${potreba} Kč `
+    + `(poslední převod ${tx.amount} Kč, VS ${tx.variableSymbol}). Přeplatek ${zaplaceno - potreba} Kč je potřeba vrátit.`,
+  );
+}
+
+/** Aktuální sezóna; když ji nejde zjistit, radši nic nepřepočítáváme. */
+async function aktualniSezonaBezpecne() {
+  try {
+    const { currentSeason } = require('./seasonTransition');
+    return await currentSeason();
+  } catch (_) {
+    return null;
+  }
+}
+
+/** Je platební řádek z jiné (starší) sezóny, než ve které jsme teď? */
+function jeZeStareSezony(payment, sezona) {
+  return !!sezona && !!payment.season && payment.season !== sezona;
+}
+
+/** Oznámení všem supervisorům – používá se u přeplatků a dvojích plateb. */
+async function ohlasSupervisorum(title, body) {
+  try {
+    const supervisori = await prisma.user.findMany({
+      where:  { isSupervisor: true },
+      select: { id: true },
+    });
+    for (const u of supervisori) {
+      await sendNotification(u.id, title, body, 'payments');
+    }
+  } catch (err) {
+    console.error('Oznámení supervisorům selhalo:', err.message);
+  }
 }
 
 /** Pošle oznámení všem vedoucím týmu. */
@@ -485,6 +641,8 @@ module.exports = {
   ensureTeamVS,
   ensureMatchHomeFeeVS,
   getPaymentQR,
-  matchTransaction, // exportováno kvůli testům párování
-  parseTransaction, // dtto – hlídá se tvar data z Fio
+  ohlasSupervisorum, // dvojí platby hlásí i Stripe webhook
+  jeZeStareSezony,   // sdílí ho webhook i endpoint registrace týmu
+  matchTransaction,  // exportováno kvůli testům párování
+  parseTransaction,  // dtto – hlídá se tvar data z Fio
 };

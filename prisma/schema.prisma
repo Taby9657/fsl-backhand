@@ -179,6 +179,8 @@ model Match {
   awayScore       Int         @default(0)
   status          MatchStatus @default(UPCOMING)
   homeFeePaid     Boolean     @default(false)
+  /// Kolik uz na poplatek za tento zapas prislo (viz PlayerPayment.licPaidAmount).
+  homeFeePaidAmount Int       @default(0)
   homeFeeStripeId String?
   homeFeeSessionId String?    // rozpracovaná Checkout session
   homeFeeReminderAt DateTime?  // kdy odešla upomínka na neuhrazený poplatek
@@ -399,6 +401,8 @@ model TeamPayment {
   season         String        @default("2025/26")
   amount         Int           @default(8000)
   status         PaymentStatus @default(PENDING)
+  /// Kolik uz na registraci prislo v sezone `season` (viz PlayerPayment.licPaidAmount).
+  paidAmount     Int           @default(0)
   paidAt         DateTime?
   method         String?
   stripeId       String?
@@ -416,10 +420,14 @@ model PlayerPayment {
   licStatus      PaymentStatus @default(PENDING)
   licPaidAt      DateTime?
   licMethod      String?
+  /// Kolik uz na licenci prislo. Castecna platba se pricita, PAID se nastavi az pri pokryti licFee.
+  licPaidAmount  Int           @default(0)
   superLic       Boolean       @default(false)
   superFee       Int           @default(250)
   superStatus    PaymentStatus @default(PENDING)
   superPaidAt    DateTime?
+  /// Kolik uz na superlicenci prislo (viz licPaidAmount).
+  superPaidAmount Int          @default(0)
   stripeId       String?
   licSessionId   String?  // rozpracovaná Checkout session – licence
   superSessionId String?  // rozpracovaná Checkout session – superlicence

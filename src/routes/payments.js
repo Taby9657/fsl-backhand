@@ -2,7 +2,12 @@ const express = require('express');
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { requireAuth, requireSupervisor } = require('../middleware/auth');
-const { bankSync, ensurePlayerVS, ensureTeamVS, ensureMatchHomeFeeVS, getPaymentQR, HOME_FEE_AMOUNT } = require('../services/bankSync');
+const {
+  bankSync, ensurePlayerVS, ensureTeamVS, ensureMatchHomeFeeVS, getPaymentQR,
+  HOME_FEE_AMOUNT, ohlasSupervisorum, jeZeStareSezony,
+} = require('../services/bankSync');
+const { overPlatbu } = require('../utils/opravneniPlatby');
+const seasonSvc = require('../services/seasonTransition');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -65,7 +70,48 @@ async function createCheckout({ name, amountCzk, type, metadata, email }) {
   });
 }
 
+// Kolik Stripe doopravdy strhl, v korunách. Session drží haléře.
+function castkaZeSession(session) {
+  const halere = session?.amount_total;
+  return typeof halere === 'number' ? Math.round(halere / 100) : null;
+}
+
+/**
+ * Platba dorazila na něco, co už zaplacené bylo (jinou session, nebo
+ * převodem). Dřív se taková platba tiše zapsala přes tu první a nikde po ní
+ * nezůstala stopa — peníze u Stripe zůstaly a nikdo o nich nevěděl.
+ */
+async function ohlasDvojiPlatbu(co, session, castka) {
+  console.warn(`Dvojí platba: ${co}, session ${session.id}, ${castka ?? '?'} Kč`);
+  await ohlasSupervisorum(
+    'Dvojí platba',
+    `Přišla platba za ${co} (${castka ?? '?'} Kč, Stripe session ${session.id}), `
+    + 'ale ta položka už byla zaplacená. Peníze je potřeba vrátit.',
+  );
+}
+
 // ==================== PŘEHLED PLATEB ====================
+
+/**
+ * Registrace se platí každou sezónu znovu, ale `TeamPayment` je jeden řádek
+ * na tým se sloupcem `season`. Řádek `PAID` z minulé sezóny proto neznamená,
+ * že je zaplaceno teď — pro aktuální sezónu se na něj musí koukat jako na
+ * nezaplacený. Přepíše se až ve chvíli, kdy nová platba doopravdy dorazí.
+ */
+function platbaTymuProSezonu(payment, sezona) {
+  if (!payment) return null;
+  if (!jeZeStareSezony(payment, sezona)) return payment;
+  return {
+    ...payment,
+    season:     sezona,
+    status:     'PENDING',
+    paidAt:     null,
+    method:     null,
+    paidAmount: 0,
+    // Ať je z odpovědi poznat, že tým platil, jen v jiném ročníku.
+    paidSeason: payment.status === 'PAID' ? payment.season : null,
+  };
+}
 
 // GET /payments/me – moje platby (hráč + vedoucí)
 router.get('/me', requireAuth, async (req, res, next) => {
@@ -85,9 +131,12 @@ router.get('/me', requireAuth, async (req, res, next) => {
       teamPayment = team?.payments ?? null;
     }
 
+    const sezona = await seasonSvc.currentSeason();
+
     res.json({
       playerPayment: player?.payment ?? null,
-      teamPayment,
+      teamPayment:   platbaTymuProSezonu(teamPayment, sezona),
+      currentSeason: sezona,
     });
   } catch (err) { next(err); }
 });
@@ -232,17 +281,27 @@ router.post('/team-registration', requireAuth, async (req, res, next) => {
       include: { team: { select: { name: true } } },
     });
     if (!payment) return res.status(404).json({ error: 'Platba týmu nenalezena' });
-    if (payment.status === 'PAID')   return res.status(409).json({ error: 'Registrace týmu je již zaplacena' });
-    if (payment.status === 'WAIVED') return res.status(409).json({ error: 'Poplatek za registraci je odpuštěn' });
+
+    // Zaplaceno loni ≠ zaplaceno letos. Řádek z minulé sezóny registraci
+    // v téhle sezóně neblokuje — jinak by o poplatek nikdo nikdy nepožádal.
+    const sezona  = await seasonSvc.currentSeason();
+    const zeStare = jeZeStareSezony(payment, sezona);
+
+    if (!zeStare) {
+      if (payment.status === 'PAID')   return res.status(409).json({ error: 'Registrace týmu je již zaplacena' });
+      if (payment.status === 'WAIVED') return res.status(409).json({ error: 'Poplatek za registraci je odpuštěn' });
+    }
 
     let session = await reuseOpenSession(payment.sessionId);
     if (!session) {
       session = await createCheckout({
-        name:      `FSL registrace týmu ${payment.team.name} ${payment.season}`,
+        name:      `FSL registrace týmu ${payment.team.name} ${sezona || payment.season}`,
         amountCzk: payment.amount,
         type:      'team-registration',
         email:     req.user.email,
-        metadata:  { teamId, type: 'TEAM_REG' },
+        // Sezóna jde do metadat, ať webhook ví, za jaký ročník se platí,
+        // i kdyby se mezitím přepnula.
+        metadata:  { teamId, type: 'TEAM_REG', season: sezona || payment.season || '' },
       });
       await prisma.teamPayment.update({
         where: { teamId },
@@ -298,31 +357,71 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         return res.json({ received: true, idempotent: true });
       }
 
-      // Zpracuj platební událost
+      // Zpracuj platební událost.
+      //
+      // Zápis je všude přes `updateMany` s podmínkou „ještě není zaplaceno" —
+      // stejně, jako to odjakživa dělá bankovní párování. Idempotence výš
+      // hlídá jen opakování TÉHLE session; bez podmínky tady by druhá platba
+      // (jiná session, nebo převod na účet) tiše přepsala tu první a nikde by
+      // po ní nezůstala stopa. Když podmínka neprojde, je to dvojí platba
+      // a musí ji vidět supervisor, aby ji vrátil.
+      const castka = castkaZeSession(session);
+
       if (metadata.type === 'PLAYER_LICENSE') {
-        await prisma.playerPayment.update({
-          where: { playerId: metadata.playerId },
-          data:  { licStatus: 'PAID', licPaidAt: new Date(), licMethod: 'stripe', stripeId: session.id },
+        const updated = await prisma.playerPayment.updateMany({
+          where: { playerId: metadata.playerId, licStatus: { not: 'PAID' } },
+          data:  {
+            licStatus: 'PAID', licPaidAt: new Date(), licMethod: 'stripe',
+            stripeId: session.id, ...(castka ? { licPaidAmount: castka } : {}),
+          },
         });
-        await prisma.player.update({
-          where: { id: metadata.playerId },
-          data:  { licensed: true },
-        });
+        if (updated.count === 0) {
+          await ohlasDvojiPlatbu('hráčská licence', session, castka);
+        } else {
+          await prisma.player.update({
+            where: { id: metadata.playerId },
+            data:  { licensed: true },
+          });
+        }
       } else if (metadata.type === 'SUPER_LICENSE') {
-        await prisma.playerPayment.update({
-          where: { playerId: metadata.playerId },
-          data:  { superStatus: 'PAID', superPaidAt: new Date(), superLic: true, stripeId: session.id },
+        const updated = await prisma.playerPayment.updateMany({
+          where: { playerId: metadata.playerId, superStatus: { not: 'PAID' } },
+          data:  {
+            superStatus: 'PAID', superPaidAt: new Date(), superLic: true,
+            stripeId: session.id, ...(castka ? { superPaidAmount: castka } : {}),
+          },
         });
+        if (updated.count === 0) await ohlasDvojiPlatbu('superlicence', session, castka);
       } else if (metadata.type === 'HOME_FEE' && metadata.matchId) {
-        await prisma.match.update({
-          where: { id: metadata.matchId },
-          data:  { homeFeePaid: true, homeFeeStripeId: session.id },
+        const updated = await prisma.match.updateMany({
+          where: { id: metadata.matchId, homeFeePaid: false },
+          data:  {
+            homeFeePaid: true, homeFeeStripeId: session.id,
+            ...(castka ? { homeFeePaidAmount: castka } : {}),
+          },
         });
+        if (updated.count === 0) await ohlasDvojiPlatbu('poplatek za domácí zápas', session, castka);
       } else if (metadata.type === 'TEAM_REG' && metadata.teamId) {
-        await prisma.teamPayment.update({
-          where: { teamId: metadata.teamId },
-          data:  { status: 'PAID', paidAt: new Date(), method: 'stripe', stripeId: session.id },
+        // Registrace se platí každou sezónu znovu. Když je uložený řádek
+        // z minulého ročníku, přepisujeme ho na nový — a vážeme se na sezónu,
+        // kterou jsme viděli, ne na `status`, protože ten je u starého
+        // zaplaceného řádku PAID.
+        const soucasna = await prisma.teamPayment.findUnique({ where: { teamId: metadata.teamId } });
+        const sezona   = metadata.season || soucasna?.season || null;
+        const zeStare  = !!soucasna && jeZeStareSezony(soucasna, sezona);
+        const kde      = zeStare
+          ? { teamId: metadata.teamId, season: soucasna.season }
+          : { teamId: metadata.teamId, status: { not: 'PAID' } };
+
+        const updated = await prisma.teamPayment.updateMany({
+          where: kde,
+          data:  {
+            status: 'PAID', paidAt: new Date(), method: 'stripe', stripeId: session.id,
+            ...(sezona ? { season: sezona } : {}),
+            ...(castka ? { paidAmount: castka } : {}),
+          },
         });
+        if (updated.count === 0) await ohlasDvojiPlatbu('registrace týmu', session, castka);
       }
     } catch (dbErr) {
       // BUG-01 OPRAVA: vrať 500 při selhání DB, aby Stripe mohl webhook opakovat
@@ -350,6 +449,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
             where: { playerId: metadata.playerId },
             data:  {
               licStatus: 'PENDING', licPaidAt: null, licMethod: null,
+              licPaidAmount: 0,
               // Session i stripeId musi pryc. Checkout session zustava u Stripe
               // navzdy `complete`/`paid` (refunduje se charge, ne session), takze
               // dokud tu session id lezi, rekonciliace platbu do 6 h zase oznaci
@@ -366,7 +466,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
             where: { playerId: metadata.playerId },
             data:  {
               superStatus: 'PENDING', superPaidAt: null, superLic: false,
-              superSessionId: null,
+              superPaidAmount: 0, superSessionId: null,
             },
           });
         } else if (metadata.type === 'TEAM_REG' && metadata.teamId) {
@@ -374,13 +474,16 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
             where: { teamId: metadata.teamId },
             data:  {
               status: 'PENDING', paidAt: null, method: null,
-              stripeId: null, sessionId: null,
+              paidAmount: 0, stripeId: null, sessionId: null,
             },
           });
         } else if (metadata.type === 'HOME_FEE' && metadata.matchId) {
           await prisma.match.update({
             where: { id: metadata.matchId },
-            data:  { homeFeePaid: false, homeFeeStripeId: null, homeFeeSessionId: null },
+            data:  {
+              homeFeePaid: false, homeFeePaidAmount: 0,
+              homeFeeStripeId: null, homeFeeSessionId: null,
+            },
           });
         }
       } catch (err) {
@@ -455,6 +558,9 @@ router.get('/qr/:type/:id', requireAuth, async (req, res, next) => {
         code:  'BANK_NOT_CONFIGURED',
       });
     }
+    // Bez tohohle stačilo být přihlášený kdokoli a znát cizí id — a ta jsou
+    // vidět ve veřejném API. K platbě patří její vlastník a supervisor.
+    if (!await overPlatbu(req, res, req.params.type, req.params.id)) return;
     const data = await getPaymentQR(req.params.type, req.params.id);
     res.json(data);
   } catch (err) { next(err); }
@@ -464,6 +570,8 @@ router.get('/qr/:type/:id', requireAuth, async (req, res, next) => {
 router.get('/vs/player/:playerId', requireAuth, async (req, res, next) => {
   try {
     const { type = 'PLAYER_LICENSE' } = req.query;
+    const kontrola = type === 'SUPER_LICENSE' ? 'super-license' : 'player-license';
+    if (!await overPlatbu(req, res, kontrola, req.params.playerId)) return;
     const vs = await ensurePlayerVS(req.params.playerId, type);
     res.json({ variableSymbol: vs });
   } catch (err) { next(err); }
@@ -472,6 +580,7 @@ router.get('/vs/player/:playerId', requireAuth, async (req, res, next) => {
 // GET /payments/vs/team/:teamId – vrátí (nebo vygeneruje) VS registrace týmu
 router.get('/vs/team/:teamId', requireAuth, async (req, res, next) => {
   try {
+    if (!await overPlatbu(req, res, 'team-reg', req.params.teamId)) return;
     const vs = await ensureTeamVS(req.params.teamId);
     res.json({ variableSymbol: vs });
   } catch (err) { next(err); }
@@ -480,6 +589,7 @@ router.get('/vs/team/:teamId', requireAuth, async (req, res, next) => {
 // GET /payments/vs/match/:matchId – VS poplatku za konkrétní domácí zápas
 router.get('/vs/match/:matchId', requireAuth, async (req, res, next) => {
   try {
+    if (!await overPlatbu(req, res, 'home-fee', req.params.matchId)) return;
     const vs = await ensureMatchHomeFeeVS(req.params.matchId);
     res.json({ variableSymbol: vs });
   } catch (err) { next(err); }
