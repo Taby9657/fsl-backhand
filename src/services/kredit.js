@@ -40,6 +40,10 @@ const BALICKY = [
   { size: 7,  price: 1600 },
   { size: 12, price: 2700 },
   { size: 16, price: 3500 },
+  // Dvacítka míří na hráče se superlicencí, kteří chodí doplňovat sestavy.
+  // Vychází na rovných 200 Kč za zápas — o pětinu líp než jednotlivý start,
+  // což je přesně ta pobídka, aby v lize byl kdo zaskočit.
+  { size: 20, price: 4000 },
 ];
 
 /** Od kolika zápasů se balíček počítá jako „přivedení hráče do ligy". */

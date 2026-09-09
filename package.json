@@ -15,6 +15,7 @@
     "test:onboarding": "node scripts/test-onboarding.js",
     "test:roster": "node scripts/test-roster-slot.js",
     "test:kredit": "node scripts/test-kredit.js",
+    "reset:data": "node scripts/reset-data.js",
     "check:schema": "node scripts/check-schema.js"
   },
   "dependencies": {
