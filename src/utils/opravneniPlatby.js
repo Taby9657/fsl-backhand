@@ -11,6 +11,7 @@
  *   - licence a superlicence → vlastní hráčský profil
  *   - registrace týmu        → vedoucí toho týmu
  *   - balíček zápasů         → hráč, kterému balíček patří
+ *   - pokuta za kontumaci    → vedoucí potrestaného týmu
  *
  * Poplatek za domácí zápas (`home-fee`) tu byl do 9. 9. 2026. Zápasy dnes
  * platí hráči v balíčku, takže ten typ zmizel — a `smiKPlatbe` ho vrací jako
@@ -23,6 +24,7 @@ const { isSupervisorUser } = require('../middleware/auth');
 const TYPY_HRAC = ['player-license', 'super-license'];
 const TYPY_TYM  = ['team-reg'];
 const TYPY_BALICEK = ['match-pack'];
+const TYPY_POKUTA  = ['fine'];
 
 /**
  * @returns {Promise<boolean|null>} true = smí, false = nesmí, null = neznámý typ
@@ -37,6 +39,17 @@ async function smiKPlatbe(user, type, id) {
 
   if (TYPY_TYM.includes(type)) {
     return (user.manager ?? []).some(m => m.teamId === id);
+  }
+
+  if (TYPY_POKUTA.includes(type)) {
+    const teamIds = (user.manager ?? []).map(m => m.teamId);
+    if (teamIds.length === 0) return false;
+    const pokuta = await prisma.fine.findUnique({
+      where:  { id },
+      select: { teamId: true },
+    });
+    // Pokutu platí vedoucí potrestaného týmu. Soupeři do ní nic není.
+    return !!pokuta && teamIds.includes(pokuta.teamId);
   }
 
   if (TYPY_BALICEK.includes(type)) {
@@ -68,4 +81,4 @@ async function overPlatbu(req, res, type, id) {
   return true;
 }
 
-module.exports = { smiKPlatbe, overPlatbu, TYPY_HRAC, TYPY_TYM, TYPY_BALICEK };
+module.exports = { smiKPlatbe, overPlatbu, TYPY_HRAC, TYPY_TYM, TYPY_BALICEK, TYPY_POKUTA };

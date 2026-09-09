@@ -26,8 +26,11 @@ const FIO_TOKEN    = process.env.FIO_API_TOKEN;
  *   Hráč – licence:     1 + 7místné číslo (prefix 1)
  *   Hráč – superlicence: 2 + 7místné číslo (prefix 2)
  *   Tým  – registrace:  3 + 7místné číslo (prefix 3)
- *   Tým  – domácí zápas: 4 + 7místné číslo (prefix 4)
+ *   Tým  – pokuta za kontumaci: 5 + 7místné číslo (prefix 5)
  *   Hráč – balíček zápasů: 7 + 7místné číslo (prefix 7)
+ *
+ * Prefix 4 patřil poplatku za domácí zápas, zrušenému 9. 9. 2026.
+ * Nerecykluje se.
  */
 function generateVS(type, sequenceNumber) {
   // BUG-07 OPRAVA: Zamezení přetečení pořadového čísla VS
@@ -42,6 +45,7 @@ function generateVS(type, sequenceNumber) {
     // Prefix 4 patřil poplatku za domácí zápas. Ten se od 9. 9. 2026
     // nevybírá a číslo se schválně nerecykluje — kdyby dorazil starý
     // převod, ať skončí mezi nespárovanými a někdo se na něj podívá.
+    FINE:           5,
     MATCH_PACK:     7,
   };
   const prefix = prefixes[type] ?? 9;
@@ -117,6 +121,26 @@ async function ensurePackVS(packId) {
     const vs    = generateVS('MATCH_PACK', count + 1 + attempt);
     try {
       await prisma.matchPack.update({ where: { id: packId }, data: { variableSymbol: vs } });
+      return vs;
+    } catch (err) {
+      if (err.code !== 'P2002' || attempt >= 4) throw err;
+    }
+  }
+}
+
+/**
+ * Přidělí VS pokutě za kontumaci.
+ */
+async function ensureFineVS(fineId) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const fine = await prisma.fine.findUnique({ where: { id: fineId } });
+    if (!fine) throw new Error('Pokuta nenalezena');
+    if (fine.variableSymbol) return fine.variableSymbol;
+
+    const count = await prisma.fine.count({ where: { variableSymbol: { not: null } } });
+    const vs    = generateVS('FINE', count + 1 + attempt);
+    try {
+      await prisma.fine.update({ where: { id: fineId }, data: { variableSymbol: vs } });
       return vs;
     } catch (err) {
       if (err.code !== 'P2002' || attempt >= 4) throw err;
@@ -271,7 +295,14 @@ async function matchTransaction(tx) {
   });
   if (teamPayment) return payTeamRegistration(teamPayment, tx);
 
-  // 4. Balíček zápasů (prefix 7)
+  // 4. Pokuta za kontumaci (prefix 5)
+  const fine = await prisma.fine.findUnique({
+    where:   { variableSymbol: vs },
+    include: { team: { select: { id: true, name: true, abbr: true } } },
+  });
+  if (fine) return payFine(fine, tx);
+
+  // 5. Balíček zápasů (prefix 7)
   const pack = await prisma.matchPack.findUnique({
     where:   { variableSymbol: vs },
     include: { player: { select: { id: true, firstName: true, lastName: true, userId: true } } },
@@ -564,6 +595,16 @@ async function getPaymentQR(type, id) {
     vs      = await ensureTeamVS(id, 'TEAM_REG');
     amount  = payment.amount;
     message = `FSL registrace ${payment.team.name}`;
+  } else if (type === 'fine') {
+    // id = fineId (jedna kontumace = jedna pokuta)
+    const fine = await prisma.fine.findUnique({
+      where:   { id },
+      include: { team: { select: { name: true } } },
+    });
+    if (!fine) throw new Error('Pokuta nenalezena');
+    vs      = await ensureFineVS(id);
+    amount  = fine.amount;
+    message = `FSL pokuta kontumace ${fine.team.name}`;
   } else if (type === 'match-pack') {
     // id = packId (každý koupený balíček má vlastní VS). Převodem je balíček
     // bez poplatku — u dvacítky za 4 000 Kč to proti kartě dělá 66,50 Kč.
@@ -598,6 +639,56 @@ async function getPaymentQR(type, id) {
  * Kredit vzniká teprve při plné částce — částečná platba se připíše
  * a čeká na doplatek, stejně jako u ostatních poplatků.
  */
+/**
+ * Pokuta za kontumaci zaplacená převodem.
+ *
+ * Dokud není zaplacená celá, tým další zápas nerozehraje — proto se
+ * částečná platba připisuje stejně jako u ostatních poplatků a vedoucí
+ * se dozví, kolik chybí. Jinak by čekal, že už může hrát.
+ */
+async function payFine(fine, tx) {
+  if (fine.status === 'PAID' || fine.status === 'WAIVED') {
+    return { matched: false, reason: 'pokuta už je vyřízená' };
+  }
+
+  const zaplaceno = (fine.paidAmount ?? 0) + tx.amount;
+
+  if (zaplaceno < fine.amount) {
+    const pripsano = await prisma.fine.updateMany({
+      where: { id: fine.id, status: { notIn: ['PAID', 'WAIVED'] } },
+      data:  { paidAmount: zaplaceno, method: 'bank' },
+    });
+    if (pripsano.count === 0) {
+      return { matched: false, reason: 'pokuta právě zpracována jiným procesem (race condition)' };
+    }
+    const chybi = fine.amount - zaplaceno;
+    await notifyTeamManagers(
+      fine.teamId,
+      'Pokuta — chybí doplatek',
+      `Přijali jsme ${tx.amount} Kč, celkem evidujeme ${zaplaceno} z ${fine.amount} Kč. `
+      + `Chybí ${chybi} Kč — do zaplacení celé částky zápas rozhodčí nespustí.`,
+    );
+    return castecna('FINE', { fineId: fine.id, teamId: fine.teamId }, tx, zaplaceno, fine.amount);
+  }
+
+  const updated = await prisma.fine.updateMany({
+    where: { id: fine.id, status: { notIn: ['PAID', 'WAIVED'] } },
+    data:  { status: 'PAID', paidAt: new Date(), method: 'bank', paidAmount: zaplaceno },
+  });
+  if (updated.count === 0) {
+    return { matched: false, reason: 'pokuta právě zpracována jiným procesem (race condition)' };
+  }
+
+  await notifyTeamManagers(
+    fine.teamId,
+    'Pokuta je zaplacená',
+    `${tx.amount} Kč jsme spárovali. Tým může znovu nastoupit.`,
+  );
+  await hlidejPreplatek(`pokuta ${fine.team?.abbr ?? ''}`, zaplaceno, fine.amount, tx);
+
+  return { matched: true, type: 'FINE', fineId: fine.id, teamId: fine.teamId, amount: tx.amount };
+}
+
 async function payMatchPack(pack, tx) {
   if (pack.status === 'PAID') {
     return { matched: false, reason: 'balíček už evidujeme jako zaplacený' };
@@ -658,6 +749,7 @@ module.exports = {
   ensurePlayerVS,
   ensureTeamVS,
   ensurePackVS,
+  ensureFineVS,
   getPaymentQR,
   ohlasSupervisorum, // dvojí platby hlásí i Stripe webhook
   jeZeStareSezony,   // sdílí ho webhook i endpoint registrace týmu

@@ -6,6 +6,7 @@ const { sendPush } = require('../services/push');
 const { VEREJNY_HRAC, VEREJNA_PLATBA } = require('../utils/verejneUdaje');
 const pocty  = require('../services/pocty');
 const kredit = require('../services/kredit');
+const pokuty = require('../services/pokuty');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -216,6 +217,23 @@ router.post('/:id/start', requireAuth, async (req, res, next) => {
       });
     }
 
+    // Nezaplacená pokuta za kontumaci brání dalšímu zápasu. Bez tohohle
+    // by vymáhání zůstalo na organizátorovi — takhle buď tým zaplatí,
+    // nebo nehraje. Supervisor to přes `force` pustí (dohoda o splátce).
+    const dluzi = [
+      ...(await pokuty.nezaplacene(match.homeTeamId)).map(p => ({ ...p, tym: match.homeTeam.abbr })),
+      ...(await pokuty.nezaplacene(match.awayTeamId)).map(p => ({ ...p, tym: match.awayTeam.abbr })),
+    ];
+    if (dluzi.length > 0 && !(isSup && req.body?.force === true)) {
+      const celkem = dluzi.reduce((s, p) => s + (p.amount - p.paidAmount), 0);
+      return res.status(400).json({
+        error: `Nelze zahájit zápas – ${[...new Set(dluzi.map(p => p.tym))].join(' a ')} `
+             + `má nezaplacenou pokutu za kontumaci (${celkem} Kč).`,
+        code:  'FINE_UNPAID',
+        fines: dluzi.map(p => ({ id: p.id, teamId: p.teamId, amount: p.amount, paidAmount: p.paidAmount })),
+      });
+    }
+
     // Zápasy platí hráči, ne týmy: podmínkou pro zahájení je, že každý
     // v sestavě má start z balíčku. Dřív se tu hlídalo, jestli domácí tým
     // poslal 2 200 Kč — ta platba od 9. 9. 2026 neexistuje.
@@ -259,6 +277,108 @@ router.post('/:id/start', requireAuth, async (req, res, next) => {
     } catch { /* push je nepovinný */ }
 
     res.json(updated);
+  } catch (err) { next(err); }
+});
+
+// POST /matches/:id/forfeit – kontumace (supervisor)
+//
+// Zápas zůstane ve stavu DONE se skóre 5:0, jen dostane značku
+// `forfeitTeamId`. Tabulka se tak dopočítá sama a nemusí o kontumaci vědět;
+// statistiky hráčů si ji naopak odfiltrují, protože se nehrálo.
+router.post('/:id/forfeit', requireSupervisor, async (req, res, next) => {
+  try {
+    const { teamId, reason } = req.body ?? {};
+    const match = await prisma.match.findUnique({
+      where:   { id: req.params.id },
+      include: { homeTeam: true, awayTeam: true },
+    });
+    if (!match) return res.status(404).json({ error: 'Zápas nenalezen' });
+    if (match.forfeitTeamId) {
+      return res.status(409).json({ error: 'Zápas už je kontumovaný', code: 'ALREADY_FORFEITED' });
+    }
+    if (match.status === 'DONE') {
+      return res.status(400).json({
+        error: 'Odehraný zápas nejde kontumovat. Nejdřív ho vrať do UPCOMING.',
+        code:  'ALREADY_PLAYED',
+      });
+    }
+    if (![match.homeTeamId, match.awayTeamId].includes(teamId)) {
+      return res.status(400).json({ error: 'teamId musí být jeden z týmů zápasu' });
+    }
+
+    const domaciVinen = teamId === match.homeTeamId;
+    const vinik  = domaciVinen ? match.homeTeam : match.awayTeam;
+    const souper = domaciVinen ? match.awayTeam : match.homeTeam;
+
+    // Skóre, starty i pokuta patří k sobě — buď projde všechno, nebo nic.
+    const { updated, kontumace, pokuta } = await prisma.$transaction(async (tx) => {
+      const updated = await tx.match.update({
+        where: { id: match.id },
+        data:  {
+          status:        'DONE',
+          homeScore:     domaciVinen ? 0 : 5,
+          awayScore:     domaciVinen ? 5 : 0,
+          forfeitTeamId: teamId,
+        },
+        include: { homeTeam: true, awayTeam: true },
+      });
+      const kontumace = await kredit.vyresKontumaci(match.id, teamId, tx);
+      const { pokuta } = await pokuty.predepis(match, teamId, tx);
+      return { updated, kontumace, pokuta };
+    });
+
+    // Hráčům viníka propadl start, soupeři se vrátil — obojí je potřeba říct.
+    const [hraciVinika, hraciSoupere] = await Promise.all([
+      prisma.matchEntry.findMany({
+        where:  { matchId: match.id, teamId },
+        select: { player: { select: { userId: true } } },
+      }),
+      prisma.matchEntry.findMany({
+        where:  { matchId: match.id, teamId: { not: teamId } },
+        select: { player: { select: { userId: true } } },
+      }),
+    ]);
+    const datum = new Date(match.date).toLocaleDateString('cs-CZ');
+    await createNotifications([
+      ...hraciVinika.filter(e => e.player?.userId).map(e => ({
+        userId: e.player.userId,
+        title:  'Kontumace — start propadl',
+        body:   `Zápas ${datum} proti ${souper.abbr} skončil kontumací 5:0. Start z balíčku propadl.`,
+        screen: `match/${match.id}`,
+      })),
+      ...hraciSoupere.filter(e => e.player?.userId).map(e => ({
+        userId: e.player.userId,
+        title:  'Kontumace — start se vrátil',
+        body:   `${vinik.abbr} se ${datum} nedostavil. Zápas končí 5:0 pro vás a start máte zpátky v balíčku.`,
+        screen: `match/${match.id}`,
+      })),
+    ]);
+
+    // Vedoucí viníka musí vědět o pokutě — bez zaplacení další zápas nerozehraje.
+    const vedouciVinika = await prisma.manager.findMany({
+      where:  { teamId },
+      select: { userId: true },
+    });
+    await createNotifications(vedouciVinika.map(m => ({
+      userId: m.userId,
+      title:  `Pokuta za kontumaci ${pokuta.amount} Kč`,
+      body:   `${reason?.trim() || pokuta.reason} Dokud není zaplacená, další zápas rozhodčí nespustí.`,
+      screen: 'payments',
+    })));
+
+    // Po třetí kontumaci tým ze soutěže končí — ale vyloučení je rozhodnutí
+    // s dopadem na rozlosování i na peníze ostatních, takže ho nedělá systém.
+    const kontumaciCelkem = await pokuty.pocetKontumaci(teamId, match.season);
+    if (kontumaciCelkem >= 3) {
+      const { ohlasSupervisorum } = require('../services/bankSync');
+      await ohlasSupervisorum(
+        `${vinik.name}: třetí kontumace`,
+        `Tým má v sezóně ${match.season} už ${kontumaciCelkem} kontumace. Podle pravidel `
+        + 'v tuhle chvíli ze soutěže končí — rozhodnutí je na tobě.',
+      );
+    }
+
+    res.json({ match: updated, kontumace, pokuta, kontumaciCelkem });
   } catch (err) { next(err); }
 });
 

@@ -1,9 +1,9 @@
 const express = require('express');
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
-const { requireAuth, requireSupervisor } = require('../middleware/auth');
+const { requireAuth, requireSupervisor, isSupervisorUser } = require('../middleware/auth');
 const {
-  bankSync, ensurePlayerVS, ensureTeamVS, ensurePackVS, getPaymentQR,
+  bankSync, ensurePlayerVS, ensureTeamVS, ensurePackVS, ensureFineVS, getPaymentQR,
   ohlasSupervisorum, jeZeStareSezony,
 } = require('../services/bankSync');
 const { overPlatbu } = require('../utils/opravneniPlatby');
@@ -134,9 +134,21 @@ router.get('/me', requireAuth, async (req, res, next) => {
 
     const sezona = await seasonSvc.currentSeason();
 
+    // Pokuty za kontumaci. Vedoucí je musí vidět hned na Platbách — dokud
+    // je nezaplatí, rozhodčí týmu další zápas nespustí.
+    const meTymy = (req.user.manager ?? []).map(m => m.teamId);
+    const fines = meTymy.length
+      ? await prisma.fine.findMany({
+          where:   { teamId: { in: meTymy }, status: { in: ['PENDING', 'OVERDUE'] } },
+          include: { team: { select: { id: true, name: true, abbr: true } } },
+          orderBy: { createdAt: 'asc' },
+        })
+      : [];
+
     res.json({
       playerPayment: player?.payment ?? null,
       teamPayment:   platbaTymuProSezonu(teamPayment, sezona),
+      fines,
       currentSeason: sezona,
     });
   } catch (err) { next(err); }
@@ -258,6 +270,46 @@ router.post('/pack', requireAuth, async (req, res, next) => {
     await prisma.matchPack.update({ where: { id: pack.id }, data: { sessionId: session.id } });
 
     res.json({ url: session.url, sessionId: session.id, packId: pack.id });
+  } catch (err) { next(err); }
+});
+
+// POST /payments/fine – pokuta za kontumaci (platí vedoucí týmu)
+router.post('/fine', requireAuth, async (req, res, next) => {
+  try {
+    if (!assertStripe(res)) return;
+    const { fineId } = req.body ?? {};
+    if (!fineId) return res.status(400).json({ error: 'Chybí fineId' });
+
+    const fine = await prisma.fine.findUnique({
+      where:   { id: fineId },
+      include: { team: { select: { id: true, name: true } } },
+    });
+    if (!fine) return res.status(404).json({ error: 'Pokuta nenalezena' });
+
+    const teamIds = (req.user.manager ?? []).map(m => m.teamId);
+    if (!teamIds.includes(fine.teamId) && !isSupervisorUser(req.user)) {
+      return res.status(403).json({ error: 'Tahle pokuta není tvého týmu' });
+    }
+    if (fine.status === 'PAID' || fine.status === 'WAIVED') {
+      return res.status(409).json({ error: 'Pokuta je už vyřízená' });
+    }
+
+    let session = await reuseOpenSession(fine.sessionId);
+    if (!session) {
+      session = await createCheckout({
+        name:      `FSL pokuta za kontumaci (${fine.team.name})`,
+        amountCzk: fine.amount,
+        type:      'fine',
+        email:     req.user.email,
+        metadata:  { fineId: fine.id, teamId: fine.teamId, type: 'FINE' },
+      });
+      await prisma.fine.update({
+        where: { id: fine.id },
+        data:  { sessionId: session.id },
+      });
+    }
+
+    res.json({ url: session.url, sessionId: session.id });
   } catch (err) { next(err); }
 });
 
@@ -391,6 +443,11 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           where: { stripeId: session.id },
         });
         if (existingPack) alreadyProcessed = true;
+      } else if (metadata.type === 'FINE' && metadata.fineId) {
+        const existingFine = await prisma.fine.findFirst({
+          where: { stripeId: session.id },
+        });
+        if (existingFine) alreadyProcessed = true;
       }
 
       if (alreadyProcessed) {
@@ -470,6 +527,15 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           const pack = await prisma.matchPack.findUnique({ where: { id: metadata.packId } });
           await kredit.odmenZaDoporuceni(pack.playerId, pack);
         }
+      } else if (metadata.type === 'FINE' && metadata.fineId) {
+        const updated = await prisma.fine.updateMany({
+          where: { id: metadata.fineId, status: { notIn: ['PAID', 'WAIVED'] } },
+          data:  {
+            status: 'PAID', paidAt: new Date(), method: 'stripe', stripeId: session.id,
+            ...(castka ? { paidAmount: castka } : {}),
+          },
+        });
+        if (updated.count === 0) await ohlasDvojiPlatbu('pokuta za kontumaci', session, castka);
       }
     } catch (dbErr) {
       // BUG-01 OPRAVA: vrať 500 při selhání DB, aby Stripe mohl webhook opakovat
@@ -524,6 +590,35 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
               status: 'PENDING', paidAt: null, method: null,
               paidAmount: 0, stripeId: null, sessionId: null,
             },
+          });
+        } else if (metadata.type === 'MATCH_PACK' && metadata.packId) {
+          // Tohle je ta půlka, která dosud chyběla: peníze se vrátily,
+          // ale kredit hráči zůstal, takže dál chodil hrát za cizí.
+          //
+          // Zbytek balíčku se ruší. Starty, které už hráč vypotřeboval,
+          // se nikam nevrací — odehrané zápasy jsou odehrané. Kdyby se
+          // vracely, kontroloval by kredit sestavu zpětně a zápasy
+          // odehrané „na dluh" by nešlo srovnat.
+          const pack = await prisma.matchPack.findUnique({ where: { id: metadata.packId } });
+          if (pack) {
+            await prisma.matchPack.update({
+              where: { id: pack.id },
+              data:  { status: 'REFUNDED', remaining: 0, paidAmount: 0 },
+            });
+            const vycerpano = pack.size - pack.remaining;
+            if (vycerpano > 0) {
+              await ohlasSupervisorum(
+                'Vrácený balíček měl odehrané zápasy',
+                `Vrácena platba za balíček ${pack.size} zápasů, ale ${vycerpano} `
+                + `${vycerpano === 1 ? 'z nich už byl odehraný' : 'z nich už bylo odehraných'}. `
+                + 'Vrácená částka by tomu měla odpovídat — zkontroluj to ve Stripu.',
+              );
+            }
+          }
+        } else if (metadata.type === 'FINE' && metadata.fineId) {
+          await prisma.fine.update({
+            where: { id: metadata.fineId },
+            data:  { status: 'PENDING', paidAt: null, method: null, paidAmount: 0, stripeId: null },
           });
         } else if (metadata.type === 'HOME_FEE') {
           // Poplatek za domácí zápas se od 9. 9. 2026 nevybírá a sloupce
@@ -597,8 +692,8 @@ router.put('/player/:playerId', requireSupervisor, async (req, res, next) => {
 // ==================== BANKOVNÍ PŘEVODY ====================
 
 // GET /payments/qr/:type/:id – QR kód pro platbu převodem (SPAYD)
-// type: player-license | super-license | team-reg | match-pack
-// id:   playerId (licence), teamId (registrace) nebo packId (balíček zápasů)
+// type: player-license | super-license | team-reg | match-pack | fine
+// id:   playerId (licence), teamId (registrace), packId (balíček) nebo fineId (pokuta)
 router.get('/qr/:type/:id', requireAuth, async (req, res, next) => {
   try {
     if (!transferConfigured()) {
@@ -640,6 +735,15 @@ router.get('/vs/pack/:packId', requireAuth, async (req, res, next) => {
   try {
     if (!await overPlatbu(req, res, 'match-pack', req.params.packId)) return;
     const vs = await ensurePackVS(req.params.packId);
+    res.json({ variableSymbol: vs });
+  } catch (err) { next(err); }
+});
+
+// GET /payments/vs/fine/:fineId – VS pokuty za kontumaci
+router.get('/vs/fine/:fineId', requireAuth, async (req, res, next) => {
+  try {
+    if (!await overPlatbu(req, res, 'fine', req.params.fineId)) return;
+    const vs = await ensureFineVS(req.params.fineId);
     res.json({ variableSymbol: vs });
   } catch (err) { next(err); }
 });

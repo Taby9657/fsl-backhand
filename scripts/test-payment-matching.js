@@ -65,6 +65,22 @@ function freshDb() {
         homeTeam: { id: 't1', name: 'Benavidez Eagles' },
       },
     ],
+    fines: [
+      {
+        id: 'f1',
+        teamId: 't1',
+        matchId: 'm1',
+        season: '2026/27',
+        amount: 2200,
+        reason: 'Kontumace zápasu 4. 10. 2026',
+        status: 'PENDING',
+        paidAmount: 0,
+        paidAt: null,
+        method: null,
+        variableSymbol: '5000001',
+        team: { id: 't1', name: 'Benavidez Eagles', abbr: 'BEN' },
+      },
+    ],
     matchPacks: [
       {
         id: 'mp1',
@@ -94,6 +110,8 @@ let db = freshDb();
 
 const whereMatch = (row, where) =>
   Object.entries(where).every(([k, v]) => {
+    if (v && typeof v === 'object' && 'notIn' in v) return !v.notIn.includes(row[k]);
+    if (v && typeof v === 'object' && 'in' in v) return v.in.includes(row[k]);
     if (v && typeof v === 'object' && 'not' in v) return row[k] !== v.not;
     return row[k] === v;
   });
@@ -124,6 +142,16 @@ const fakePrisma = {
       const row = db.matchPacks.find((r) => r.id === where.id);
       Object.assign(row, data);
       return row;
+    },
+  },
+  // Pokuty za kontumaci (prefix 5).
+  fine: {
+    findUnique: async ({ where }) => db.fines.find((r) => whereMatch(r, where)) ?? null,
+    findMany:   async ({ where }) => db.fines.filter((r) => whereMatch(r, where)),
+    updateMany: async ({ where, data }) => {
+      const rows = db.fines.filter((r) => whereMatch(r, where));
+      rows.forEach((r) => Object.assign(r, data));
+      return { count: rows.length };
     },
   },
   // Odměna za doporučení: v tomhle testu nikdo nikoho nepřivedl.
@@ -259,6 +287,33 @@ const tx = (vs, amount) => ({
     await matchTransaction(tx('7000001', 1600));
     assert(db.notifications.some((n) => n.userId === 'u1'), 'hráč nedostal oznámení');
     assert(!db.notifications.some((n) => n.userId === 'u9'), 'oznámení šlo vedoucímu týmu');
+  });
+
+  await test('pokuta: VS s prefixem 5 zaplatí pokutu, ne registraci', async () => {
+    const r = await matchTransaction(tx('5000001', 2200));
+    assert(r.matched, `nespárováno: ${r.reason}`);
+    assert(r.type === 'FINE', `typ ${r.type}`);
+    assert(db.fines[0].status === 'PAID', 'pokuta není PAID');
+    assert(db.teamPayments[0].status === 'PENDING', 'omylem zaplacena registrace týmu');
+  });
+
+  await test('pokuta: částečná platba tým hrát nepustí', async () => {
+    const r = await matchTransaction(tx('5000001', 1000));
+    assert(r.matched && r.partial, `částka se nepřipsala: ${r.reason}`);
+    assert(db.fines[0].status === 'PENDING', 'pokuta označena jako zaplacená');
+    assert(db.fines[0].paidAmount === 1000, `připsáno ${db.fines[0].paidAmount}`);
+    const n = db.notifications.find((x) => x.userId === 'u9');
+    assert(n && /1200/.test(n.body), `vedoucí nedostal zprávu, kolik chybí: ${n?.body}`);
+    const r2 = await matchTransaction({ ...tx('5000001', 1200), transactionId: 'tx-doplatek' });
+    assert(r2.matched && !r2.partial, `doplatek neprošel: ${r2.reason}`);
+    assert(db.fines[0].status === 'PAID', 'pokuta není zaplacená ani po doplacení');
+  });
+
+  await test('pokuta: odpuštěnou už převod nepřepíše', async () => {
+    db.fines[0].status = 'WAIVED';
+    const r = await matchTransaction(tx('5000001', 2200));
+    assert(!r.matched, 'odpuštěná pokuta se znovu zaplatila');
+    assert(db.fines[0].status === 'WAIVED', 'stav se přepsal');
   });
 
   // Poplatek za domácí zápas skončil 9. 9. 2026. Prefix 4 se nerecykluje,
@@ -472,6 +527,12 @@ const tx = (vs, amount) => ({
     assert(await smiKPlatbe(hrac, 'match-pack', 'mp1') === true, 'vlastník nemá přístup ke svému balíčku');
     assert(await smiKPlatbe(cizi, 'match-pack', 'mp1') === false, 'cizí hráč se dostal k balíčku');
     assert(await smiKPlatbe(vedouci, 'match-pack', 'mp1') === false, 'vedoucí se dostal k balíčku hráče');
+  });
+
+  await test('QR: pokutu vidí jen vedoucí potrestaného týmu', async () => {
+    assert(await smiKPlatbe(vedouci, 'fine', 'f1') === true, 'vedoucí nemá přístup ke své pokutě');
+    assert(await smiKPlatbe(ciziVed, 'fine', 'f1') === false, 'cizí vedoucí se dostal k pokutě');
+    assert(await smiKPlatbe(hrac, 'fine', 'f1') === false, 'hráč se dostal k pokutě týmu');
   });
 
   await test('QR: zrušený poplatek za zápas je neznámý typ', async () => {

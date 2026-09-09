@@ -16,7 +16,8 @@
     "test:roster": "node scripts/test-roster-slot.js",
     "test:kredit": "node scripts/test-kredit.js",
     "reset:data": "node scripts/reset-data.js",
-    "check:schema": "node scripts/check-schema.js"
+    "check:schema": "node scripts/check-schema.js",
+    "test:pokuty": "node scripts/test-pokuty.js"
   },
   "dependencies": {
     "@prisma/client": "^5.14.0",

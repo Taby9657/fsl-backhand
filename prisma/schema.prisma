@@ -65,6 +65,7 @@ model Team {
   playoffPrimaryFor   PlayoffChoice[] @relation("PlayoffPrimary")
   playoffSecondaryFor PlayoffChoice[] @relation("PlayoffSecondary")
   rosters             TeamRoster[]
+  fines               Fine[]
 }
 
 model Manager {
@@ -189,6 +190,12 @@ model Match {
   // 2 200 Kč. Zápasy dnes platí hráči z balíčku startů (MatchPack,
   // MatchEntry), takže poplatek zmizel i ze schématu — migrace
   // `20260909000003_zrusen_poplatek_domaci_zapas`.
+  /// Kontumace: id týmu, který se nedostavil nebo nesehnal sestavu.
+  /// Zápas zůstává ve stavu DONE se skóre 5:0, aby se tabulka dopočítala
+  /// sama; statistiky hráčů se z kontumovaného zápasu neberou.
+  /// Schválně bez relace na Team — je to jen značka na zápase a další
+  /// zpětná vazba na Team by kolidovala s HomeTeam/AwayTeam.
+  forfeitTeamId   String?
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 
@@ -202,6 +209,7 @@ model Match {
 
   events       MatchEvent[]
   entries      MatchEntry[]
+  fine         Fine?
   lineups      LineupSubmission[]
   postmatches  PostmatchData[]
   refRatings   RefRating[]
@@ -497,6 +505,9 @@ enum PaymentStatus {
   PAID
   OVERDUE
   WAIVED
+  /// Peníze šly zpátky plátci a plnění se zrušilo. Odlišené od WAIVED:
+  /// odpuštěná platba se nikdy nevybrala, vrácená ano.
+  REFUNDED
 }
 
 // ==================== NOTIFICATIONS ====================
@@ -797,4 +808,42 @@ model ReferralUse {
   rewardPack MatchPack?   @relation(fields: [rewardPackId], references: [id], onDelete: SetNull)
 
   @@index([codeId])
+}
+
+/// Pokuta za kontumaci — 2 200 Kč ve výši ušlého zápasného.
+///
+/// Předepisuje se týmu, který se nedostavil nebo nesehnal sestavu, a platí
+/// ji vedoucí. Hráčům toho týmu zároveň propadnou starty z balíčku
+/// (`kredit.vyresKontumaci`), takže trest má dvě části: hráči přijdou
+/// o zápas, tým o peníze za hřiště a rozhodčího, které nikdo neodehrál.
+///
+/// Plochá částka je tu schválně. Kdyby se pokuta počítala z propadlých
+/// startů, tým, kterému se do sestavy nikdo nepřihlásil, by nezaplatil nic —
+/// tedy přesně ten, kdo zápas zmařil nejvíc.
+///
+/// Dokud je nezaplacená, rozhodčí týmu další zápas nespustí.
+model Fine {
+  id      String @id @default(uuid())
+  teamId  String
+  /// Jedna kontumace = jedna pokuta.
+  matchId String @unique
+  season  String
+  amount  Int    @default(2200)
+  reason  String
+
+  status         PaymentStatus @default(PENDING)
+  paidAmount     Int           @default(0)
+  paidAt         DateTime?
+  method         String?
+  stripeId       String?
+  sessionId      String?
+  /// Variabilní symbol pro převod (prefix 5).
+  variableSymbol String?       @unique
+  createdAt      DateTime      @default(now())
+
+  team  Team  @relation(fields: [teamId],  references: [id], onDelete: Cascade)
+  match Match @relation(fields: [matchId], references: [id], onDelete: Cascade)
+
+  @@index([teamId, status])
+  @@index([season])
 }

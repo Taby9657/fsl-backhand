@@ -453,8 +453,12 @@ router.post('/referral', requireAuth, async (req, res, next) => {
     }
 
     // Kód patří novým hráčům. Kdo už za ligu nastoupil, není koho přivádět.
+    // Kontumace se nepočítá — hráč byl na papíře v sestavě, ale nehrál.
     const starty = await prisma.lineupPlayer.count({
-      where: { playerId: player.id, lineup: { match: { status: 'DONE' } } },
+      where: {
+        playerId: player.id,
+        lineup:   { match: { status: 'DONE', forfeitTeamId: null } },
+      },
     });
     if (starty > 0) {
       return res.status(409).json({

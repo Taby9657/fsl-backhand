@@ -42,6 +42,10 @@ function maZakladniLicenci(payment) {
 /**
  * Starty hráče podle týmů. Start = byl na soupisce odehraného zápasu.
  * `phase` omezí počítání na základní část nebo playoff.
+ *
+ * Kontumovaný zápas se nezapočítá. Rozhoduje se podle toho i nárok
+ * na playoff (tři zápasy za tým) — a kdo „odehrál" zápas, který se
+ * nekonal, si nárok vysedět nemá.
  */
 async function startyPodleTymu(playerId, season, phase = null) {
   const slots = await prisma.lineupPlayer.findMany({
@@ -50,6 +54,7 @@ async function startyPodleTymu(playerId, season, phase = null) {
       lineup: {
         match: {
           status: 'DONE',
+          forfeitTeamId: null,
           ...(season ? { season } : {}),
           ...(phase  ? { phase }  : {}),
         },
