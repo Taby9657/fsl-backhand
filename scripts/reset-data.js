@@ -33,6 +33,30 @@
  * ve Stripu, ne tady.
  */
 
+// `src/lib/prisma` si .env sám nenačítá — dělá to jen server.js. Bez tohohle
+// řádku by soubor .env ve složce backendu neplatil a skript by hlásil
+// „Environment variable not found", i když ji tam člověk má.
+require('dotenv').config();
+
+// Srozumitelná hláška místo prismí validační chyby o deset řádků níž.
+if (!process.env.DATABASE_URL) {
+  console.error(`
+Chybí DATABASE_URL — skript neví, ke které databázi se připojit.
+
+V Railway otevři službu Postgres → Variables a vezmi **DATABASE_PUBLIC_URL**
+(ta vnitřní, která končí .railway.internal, z notebooku nefunguje).
+
+Pak buď jednorázově:
+
+  DATABASE_URL="postgresql://postgres:...@neco.proxy.rlwy.net:PORT/railway" npm run reset:data
+
+nebo si ji ulož do souboru .env ve složce backendu a spusť jen:
+
+  npm run reset:data
+`);
+  process.exit(1);
+}
+
 const prisma = require('../src/lib/prisma');
 
 const SMAZAT       = process.argv.includes('--smazat');
