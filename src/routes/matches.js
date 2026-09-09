@@ -4,6 +4,8 @@ const { requireAuth, requireSupervisor, isSupervisorUser } = require('../middlew
 const { createNotifications } = require('./notifications');
 const { sendPush } = require('../services/push');
 const { VEREJNY_HRAC, VEREJNA_PLATBA } = require('../utils/verejneUdaje');
+const pocty  = require('../services/pocty');
+const kredit = require('../services/kredit');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -158,6 +160,10 @@ router.put('/:id', requireSupervisor, async (req, res, next) => {
         referee:  { select: { id: true, firstName: true, lastName: true } },
       },
     });
+
+    // Zrušený zápas nikdo neodehrál — rezervované starty se vrací do balíčků.
+    if (status === 'CANCELLED') await kredit.vratZapas(match.id);
+
     res.json(match);
   } catch (err) { next(err); }
 });
@@ -176,23 +182,33 @@ router.post('/:id/start', requireAuth, async (req, res, next) => {
     const isSup = isSupervisorUser(req.user);
     if (!isReferee && !isSup) return res.status(403).json({ error: 'Nemáte oprávnění' });
 
-    // Kontrola soupisek – obě musí mít min. 9 hráčů (8 hráčů v poli + 1 brankář)
-    const MIN_PLAYERS = 9;
+    // Kontrola sestav — 8 + 1 minimum, 12 + 2 maximum.
+    //
+    // Dřív se počítalo devět lidí celkem plus „někdo je brankář", takže
+    // sestava 7 do pole a 2 brankáři prošla. Pole a brankáři se proto
+    // počítají zvlášť, a kdo je brankář, rozhoduje soupiska (`TeamRoster.slot`),
+    // ne volný text `Player.position`.
     const lineups = await prisma.lineupSubmission.findMany({
       where:   { matchId: req.params.id },
-      include: { players: { select: { isGoalkeeper: true } } },
+      include: { players: { select: { playerId: true } } },
     });
-    const homeLineup = lineups.find(l => l.teamId === match.homeTeamId);
-    const awayLineup = lineups.find(l => l.teamId === match.awayTeamId);
-    const homeCnt    = homeLineup?.players?.length ?? 0;
-    const awayCnt    = awayLineup?.players?.length ?? 0;
-    const homeHasGK  = homeLineup?.players?.some(p => p.isGoalkeeper) ?? false;
-    const awayHasGK  = awayLineup?.players?.some(p => p.isGoalkeeper) ?? false;
-    const errors = [];
-    if (homeCnt < MIN_PLAYERS) errors.push(`${match.homeTeam.abbr}: min. ${MIN_PLAYERS} hráčů (má ${homeCnt})`);
-    if (awayCnt < MIN_PLAYERS) errors.push(`${match.awayTeam.abbr}: min. ${MIN_PLAYERS} hráčů (má ${awayCnt})`);
-    if (!homeHasGK) errors.push(`${match.homeTeam.abbr}: chybí brankář`);
-    if (!awayHasGK) errors.push(`${match.awayTeam.abbr}: chybí brankář`);
+    const sloty = await prisma.teamRoster.findMany({
+      where:  { teamId: { in: [match.homeTeamId, match.awayTeamId] }, season: match.season },
+      select: { playerId: true, teamId: true, slot: true },
+    });
+    const slotHrace = new Map(sloty.map(r => [`${r.teamId}:${r.playerId}`, r.slot]));
+    const spocitej = (lineup, teamId) => pocty.rozdel(
+      (lineup?.players ?? []).map(p => ({ slot: slotHrace.get(`${teamId}:${p.playerId}`) })),
+    );
+
+    const errors = [
+      ...pocty.zkontrolujSestavu(
+        spocitej(lineups.find(l => l.teamId === match.homeTeamId), match.homeTeamId),
+        match.homeTeam.abbr),
+      ...pocty.zkontrolujSestavu(
+        spocitej(lineups.find(l => l.teamId === match.awayTeamId), match.awayTeamId),
+        match.awayTeam.abbr),
+    ];
     if (errors.length > 0) {
       return res.status(400).json({
         error: `Nelze zahájit zápas – ${errors.join('; ')}.`,
@@ -253,6 +269,9 @@ router.post('/:id/end', requireAuth, async (req, res, next) => {
       data:  { status: 'DONE' },
       include: { homeTeam: true, awayTeam: true },
     });
+
+    // Odehraný zápas mění rezervace na skutečné odpočty z balíčků.
+    await kredit.zuctujZapas(req.params.id);
 
     // Notifikace oběma vedoucím
     const managerIds = await prisma.manager.findMany({
@@ -413,7 +432,10 @@ router.put('/:id/lineup/:teamId', requireAuth, async (req, res, next) => {
   try {
     const { players, force } = req.body; // force=true přeskočí kontrolu licencí
     const isManager = req.user.manager?.some(m => m.teamId === req.params.teamId);
-    if (!isManager) return res.status(403).json({ error: 'Nejste vedoucí tohoto týmu' });
+    const isSup     = isSupervisorUser(req.user);
+    // Supervisor sem musí, jinak by otevřenému týmu (bez živého vedoucího)
+    // sestavu nikdo neodeslal.
+    if (!isManager && !isSup) return res.status(403).json({ error: 'Nejste vedoucí tohoto týmu' });
 
     // BUG-02 OPRAVA: Validace pole players před dalším zpracováním
     if (!Array.isArray(players) || players.length === 0) {
@@ -423,7 +445,7 @@ router.put('/:id/lineup/:teamId', requireAuth, async (req, res, next) => {
     // ── Kontrola stavu zápasu ──
     const matchCheck = await prisma.match.findUnique({
       where: { id: req.params.id },
-      select: { status: true, homeTeamId: true, awayTeamId: true, season: true, phase: true },
+      select: { id: true, status: true, homeTeamId: true, awayTeamId: true, season: true, phase: true },
     });
     if (!matchCheck) return res.status(404).json({ error: 'Zápas nenalezen' });
     if (['LIVE', 'DONE'].includes(matchCheck.status)) {
@@ -475,23 +497,70 @@ router.put('/:id/lineup/:teamId', requireAuth, async (req, res, next) => {
       }
     }
 
-    const lineup = await prisma.lineupSubmission.upsert({
-      where: { matchId_teamId: { matchId: req.params.id, teamId: req.params.teamId } },
-      create: {
-        matchId: req.params.id,
-        teamId:  req.params.teamId,
-        players: { create: players },
-      },
-      update: {
-        confirmed: false,
-        players: {
-          deleteMany: {},
-          create: players,
-        },
-      },
-      include: { players: { include: { player: true } } },
+    // ── Počty v sestavě ──
+    // Maximum se hlídá tady, minimum až u výkopu — vedoucí si sestavu skládá
+    // postupně a nemá smysl mu bránit v uložení rozdělané práce.
+    const sloty = await prisma.teamRoster.findMany({
+      where:  { teamId: req.params.teamId, season: matchCheck.season },
+      select: { playerId: true, slot: true },
     });
-    res.json(lineup);
+    const slotHrace = new Map(sloty.map(r => [r.playerId, r.slot]));
+    const stav = pocty.rozdel(players.map(p => ({ slot: slotHrace.get(p.playerId) })));
+
+    if (stav.pole > pocty.SESTAVA.maxPole || stav.brankaru > pocty.SESTAVA.maxBrankaru) {
+      return res.status(422).json({
+        error: `Sestava smí mít nejvýš ${pocty.SESTAVA.maxPole} hráčů do pole `
+             + `a ${pocty.SESTAVA.maxBrankaru} brankáře (má ${stav.pole} + ${stav.brankaru})`,
+        code:  'LINEUP_TOO_BIG',
+        counts: stav,
+      });
+    }
+
+    // ── Balíčky zápasů a zápis sestavy ──
+    // Rezervace i sestava vznikají v jedné transakci: kdyby zápis sestavy
+    // spadl, nesmí hráčům zůstat stržené starty.
+    const vysledek = await prisma.$transaction(async (tx) => {
+      const bezKreditu = await kredit.srovnejRezervace(
+        matchCheck, req.params.teamId, players.map(p => p.playerId), tx);
+
+      if (bezKreditu.length > 0) return { bezKreditu };
+
+      const lineup = await tx.lineupSubmission.upsert({
+        where: { matchId_teamId: { matchId: req.params.id, teamId: req.params.teamId } },
+        create: {
+          matchId: req.params.id,
+          teamId:  req.params.teamId,
+          players: { create: players },
+        },
+        update: {
+          confirmed: false,
+          players: {
+            deleteMany: {},
+            create: players,
+          },
+        },
+        include: { players: { include: { player: true } } },
+      });
+      return { lineup };
+    });
+
+    if (vysledek.bezKreditu) {
+      const details = await prisma.player.findMany({
+        where:  { id: { in: vysledek.bezKreditu.map(p => p.playerId) } },
+        select: { id: true, firstName: true, lastName: true, jersey: true },
+      });
+      return res.status(422).json({
+        error: 'Někteří hráči nemají volný zápas v balíčku',
+        code:  'NO_CREDIT',
+        blocked: vysledek.bezKreditu.map(p => ({
+          ...(details.find(d => d.id === p.playerId) ?? { id: p.playerId }),
+          code:   p.code,
+          reason: p.error,
+        })),
+      });
+    }
+
+    res.json(vysledek.lineup);
   } catch (err) { next(err); }
 });
 
@@ -518,7 +587,7 @@ router.post('/:id/lineup/:teamId/add', requireAuth, async (req, res, next) => {
 
     const match = await prisma.match.findUnique({
       where:  { id: matchId },
-      select: { status: true, homeTeamId: true, awayTeamId: true },
+      select: { id: true, status: true, homeTeamId: true, awayTeamId: true, season: true, phase: true },
     });
     if (!match) return res.status(404).json({ error: 'Zápas nenalezen' });
     if (teamId !== match.homeTeamId && teamId !== match.awayTeamId) {
@@ -560,6 +629,30 @@ router.post('/:id/lineup/:teamId/add', requireAuth, async (req, res, next) => {
     });
     if (uz) return res.status(409).json({ error: 'Hráč už na soupisce je' });
 
+    // Doplněním se nesmí přeskočit ani strop sestavy, ani balíček —
+    // jinak by se tudy obešlo obojí.
+    const naSoupisceSloty = await prisma.teamRoster.findMany({
+      where:  { teamId, season: match.season },
+      select: { playerId: true, slot: true },
+    });
+    const slotHrace = new Map(naSoupisceSloty.map(r => [r.playerId, r.slot]));
+    const vSestave = await prisma.lineupPlayer.findMany({
+      where:  { lineupId: lineup.id },
+      select: { playerId: true },
+    });
+    const stav = pocty.rozdel(vSestave.map(p => ({ slot: slotHrace.get(p.playerId) })));
+    const vejdeSe = pocty.vejdeSeNaSoupisku(
+      stav, slotHrace.get(playerId) ?? 'FIELD',
+      { maxPole: pocty.SESTAVA.maxPole, maxBrankaru: pocty.SESTAVA.maxBrankaru });
+    if (!vejdeSe.ok) {
+      return res.status(422).json({ error: vejdeSe.error, code: 'LINEUP_TOO_BIG' });
+    }
+
+    const rezervace = await kredit.rezervuj(playerId, match, teamId);
+    if (!rezervace.ok) {
+      return res.status(422).json({ error: rezervace.error, code: rezervace.code });
+    }
+
     const slot = await prisma.lineupPlayer.create({
       data: {
         lineupId: lineup.id,
@@ -572,6 +665,55 @@ router.post('/:id/lineup/:teamId/add', requireAuth, async (req, res, next) => {
     });
 
     res.status(201).json(slot);
+  } catch (err) { next(err); }
+});
+
+/**
+ * POST /matches/:id/withdraw – hráč se odhlásí ze zápasu.
+ *
+ * Do 12 h před výkopem se mu start vrátí do balíčku. Potom už ne: zůstane
+ * zúčtovaný a vrátí se jen tehdy, když tým sestavu i tak sežene (a zápas
+ * se odehraje) — sankce má trefit toho, kdo zápas položil.
+ */
+router.post('/:id/withdraw', requireAuth, async (req, res, next) => {
+  try {
+    const player = await prisma.player.findUnique({ where: { userId: req.user.id } });
+    if (!player) return res.status(404).json({ error: 'Hráčský profil nenalezen' });
+
+    const match = await prisma.match.findUnique({
+      where:  { id: req.params.id },
+      select: { id: true, date: true, status: true, season: true },
+    });
+    if (!match) return res.status(404).json({ error: 'Zápas nenalezen' });
+    if (match.status !== 'UPCOMING') {
+      return res.status(400).json({ error: 'Z rozehraného ani odehraného zápasu se odhlásit nedá' });
+    }
+
+    const entry = await prisma.matchEntry.findUnique({
+      where: { playerId_matchId: { playerId: player.id, matchId: match.id } },
+    });
+    if (!entry || entry.status === 'RELEASED') {
+      return res.status(404).json({ error: 'Na tenhle zápas nejsi přihlášený' });
+    }
+
+    // Ze sestavy pryč vždycky — jinak by tým počítal s někým, kdo nepřijde.
+    const lineup = await prisma.lineupSubmission.findUnique({
+      where: { matchId_teamId: { matchId: match.id, teamId: entry.teamId } },
+    });
+    if (lineup) {
+      await prisma.lineupPlayer.deleteMany({
+        where: { lineupId: lineup.id, playerId: player.id },
+      });
+    }
+
+    const vysledek = await kredit.odhlas(player.id, match);
+    res.json({
+      ok: true,
+      refunded:  vysledek.vraceno,
+      hoursLeft: Math.round(kredit.hodinDoVykopu(match) * 10) / 10,
+      remaining: await kredit.zustatek(player.id, match.season),
+      ...(vysledek.error ? { note: vysledek.error, code: vysledek.code } : {}),
+    });
   } catch (err) { next(err); }
 });
 

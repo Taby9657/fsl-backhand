@@ -27,6 +27,7 @@ const FIO_TOKEN    = process.env.FIO_API_TOKEN;
  *   Hráč – superlicence: 2 + 7místné číslo (prefix 2)
  *   Tým  – registrace:  3 + 7místné číslo (prefix 3)
  *   Tým  – domácí zápas: 4 + 7místné číslo (prefix 4)
+ *   Hráč – balíček zápasů: 7 + 7místné číslo (prefix 7)
  */
 function generateVS(type, sequenceNumber) {
   // BUG-07 OPRAVA: Zamezení přetečení pořadového čísla VS
@@ -39,6 +40,7 @@ function generateVS(type, sequenceNumber) {
     SUPER_LICENSE:  2,
     TEAM_REG:       3,
     HOME_FEE:       4,
+    MATCH_PACK:     7,
   };
   const prefix = prefixes[type] ?? 9;
   const seq    = String(sequenceNumber).padStart(7, '0').slice(0, 7);
@@ -113,6 +115,28 @@ async function ensureMatchHomeFeeVS(matchId) {
     const vs    = generateVS('HOME_FEE', count + 1 + attempt);
     try {
       await prisma.match.update({ where: { id: matchId }, data: { homeFeeVS: vs } });
+      return vs;
+    } catch (err) {
+      if (err.code !== 'P2002' || attempt >= 4) throw err;
+    }
+  }
+}
+
+/**
+ * Přidělí VS konkrétnímu balíčku zápasů.
+ * VS je na balíčku, ne na hráči — jeden člověk si jich za sezónu koupí víc
+ * a každý převod musí jít spárovat se svým balíčkem.
+ */
+async function ensurePackVS(packId) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const pack = await prisma.matchPack.findUnique({ where: { id: packId } });
+    if (!pack) throw new Error('Balíček nenalezen');
+    if (pack.variableSymbol) return pack.variableSymbol;
+
+    const count = await prisma.matchPack.count({ where: { variableSymbol: { not: null } } });
+    const vs    = generateVS('MATCH_PACK', count + 1 + attempt);
+    try {
+      await prisma.matchPack.update({ where: { id: packId }, data: { variableSymbol: vs } });
       return vs;
     } catch (err) {
       if (err.code !== 'P2002' || attempt >= 4) throw err;
@@ -273,6 +297,13 @@ async function matchTransaction(tx) {
     include: { homeTeam: { select: { id: true, name: true } } },
   });
   if (match) return payHomeFee(match, tx);
+
+  // 5. Balíček zápasů (prefix 7)
+  const pack = await prisma.matchPack.findUnique({
+    where:   { variableSymbol: vs },
+    include: { player: { select: { id: true, firstName: true, lastName: true, userId: true } } },
+  });
+  if (pack) return payMatchPack(pack, tx);
 
   return { matched: false, reason: 'variabilní symbol nenalezen v databázi' };
 }
@@ -634,12 +665,74 @@ async function getPaymentQR(type, id) {
   return { spayd, vs, amount, iban: IBAN, bic: BIC || null, message };
 }
 
+/**
+ * Balíček zápasů zaplacený převodem.
+ *
+ * Kredit vzniká teprve při plné částce — částečná platba se připíše
+ * a čeká na doplatek, stejně jako u ostatních poplatků.
+ */
+async function payMatchPack(pack, tx) {
+  if (pack.status === 'PAID') {
+    return { matched: false, reason: 'balíček už evidujeme jako zaplacený' };
+  }
+
+  const zaplaceno = (pack.paidAmount ?? 0) + tx.amount;
+
+  if (zaplaceno < pack.price) {
+    const pripsano = await prisma.matchPack.updateMany({
+      where: { id: pack.id, status: { not: 'PAID' } },
+      data:  { paidAmount: zaplaceno, method: 'bank' },
+    });
+    if (pripsano.count === 0) {
+      return { matched: false, reason: 'platba právě zpracována jiným procesem (race condition)' };
+    }
+    const chybi = pack.price - zaplaceno;
+    await sendNotification(
+      pack.player?.userId,
+      'Balíček zápasů — chybí doplatek',
+      `Přijali jsme ${tx.amount} Kč. Do zaplacení balíčku (${pack.size} zápasů) chybí ${chybi} Kč.`,
+    );
+    return { matched: true, partial: true, missing: chybi, type: 'MATCH_PACK' };
+  }
+
+  const zaplacen = await prisma.matchPack.updateMany({
+    where: { id: pack.id, status: { not: 'PAID' } },
+    data:  {
+      status: 'PAID', paidAt: new Date(), method: 'bank', paidAmount: zaplaceno,
+    },
+  });
+  if (zaplacen.count === 0) {
+    return { matched: false, reason: 'platba právě zpracována jiným procesem (race condition)' };
+  }
+
+  await sendNotification(
+    pack.player?.userId,
+    'Balíček zápasů je zaplacený',
+    `${pack.size} ${pack.size === 1 ? 'zápas je' : 'zápasů je'} připraveno k použití.`,
+  );
+
+  // Kdo tohohle hráče přivedl do ligy, dostane zápas zdarma.
+  const { odmenZaDoporuceni } = require('./kredit');
+  await odmenZaDoporuceni(pack.playerId, pack);
+
+  if (zaplaceno > pack.price) {
+    await ohlasSupervisorum(
+      'Přeplatek u balíčku zápasů',
+      `${pack.player?.firstName ?? ''} ${pack.player?.lastName ?? ''} poslal `
+      + `${zaplaceno} Kč místo ${pack.price} Kč.`,
+    );
+  }
+
+  return { matched: true, type: 'MATCH_PACK' };
+}
+
 module.exports = {
   bankSync,
   HOME_FEE_AMOUNT,
   ensurePlayerVS,
   ensureTeamVS,
   ensureMatchHomeFeeVS,
+  ensurePackVS,
   getPaymentQR,
   ohlasSupervisorum, // dvojí platby hlásí i Stripe webhook
   jeZeStareSezony,   // sdílí ho webhook i endpoint registrace týmu

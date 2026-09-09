@@ -92,6 +92,11 @@ const fakePrisma = {
       return { count: rows.length };
     },
   },
+  // Párování od 9. 9. hledá i balíčky zápasů (prefix 7). Bez téhle tabulky
+  // by neznámý VS spadl na chybu místo na „nenalezeno".
+  matchPack: {
+    findUnique: async () => null,
+  },
   teamPayment: {
     findUnique: async ({ where }) =>
       db.teamPayments.find((r) => whereMatch(r, where)) ?? null,

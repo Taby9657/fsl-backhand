@@ -8,6 +8,7 @@ const {
 } = require('../services/bankSync');
 const { overPlatbu } = require('../utils/opravneniPlatby');
 const seasonSvc = require('../services/seasonTransition');
+const kredit    = require('../services/kredit');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -200,6 +201,66 @@ router.post('/player-license', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// GET /payments/packs – ceník balíčků a co z nich hráči zbývá
+router.get('/packs', requireAuth, async (req, res, next) => {
+  try {
+    const player = await prisma.player.findUnique({ where: { userId: req.user.id } });
+    const sezona = await seasonSvc.currentSeason();
+    res.json({
+      catalog: kredit.BALICKY,
+      ...(player ? await kredit.prehled(player.id, sezona) : { season: sezona, packs: [], remaining: 0 }),
+    });
+  } catch (err) { next(err); }
+});
+
+// POST /payments/pack – nákup balíčku zápasů
+//
+// Balíček vzniká rovnou, ale jako PENDING — kredit z něj hráč dostane teprve
+// ve chvíli, kdy platba doopravdy dorazí. Rozdělaná Checkout session hrát
+// nikoho nepustí.
+router.post('/pack', requireAuth, async (req, res, next) => {
+  try {
+    if (!assertStripe(res)) return;
+    const definice = kredit.balicek(req.body.size);
+    if (!definice) {
+      return res.status(400).json({
+        error: `Balíček musí být jeden z: ${kredit.BALICKY.map(b => b.size).join(', ')} zápasů`,
+        code:  'BAD_PACK',
+      });
+    }
+
+    const player = await prisma.player.findUnique({ where: { userId: req.user.id } });
+    if (!player) return res.status(404).json({ error: 'Hráčský profil nenalezen' });
+
+    const sezona = await seasonSvc.currentSeason();
+    if (!sezona) {
+      return res.status(409).json({ error: 'Liga nemá nastavenou aktuální sezónu', code: 'NO_CURRENT_SEASON' });
+    }
+
+    const pack = await prisma.matchPack.create({
+      data: {
+        playerId:     player.id,
+        season:       sezona,
+        size:         definice.size,
+        remaining:    definice.size,
+        playoffValid: definice.playoffValid,
+        price:        definice.price,
+      },
+    });
+
+    const session = await createCheckout({
+      name:      `FSL balíček ${definice.size} ${definice.size === 1 ? 'zápas' : definice.size < 5 ? 'zápasy' : 'zápasů'} ${sezona}`,
+      amountCzk: definice.price,
+      type:      'match-pack',
+      email:     req.user.email,
+      metadata:  { packId: pack.id, playerId: player.id, type: 'MATCH_PACK' },
+    });
+    await prisma.matchPack.update({ where: { id: pack.id }, data: { sessionId: session.id } });
+
+    res.json({ url: session.url, sessionId: session.id, packId: pack.id });
+  } catch (err) { next(err); }
+});
+
 // POST /payments/home-fee – poplatek za domácí zápas (2 200 Kč)
 router.post('/home-fee', requireAuth, async (req, res, next) => {
   try {
@@ -350,6 +411,11 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           where: { stripeId: session.id },
         });
         if (existingTeam) alreadyProcessed = true;
+      } else if (metadata.type === 'MATCH_PACK' && metadata.packId) {
+        const existingPack = await prisma.matchPack.findFirst({
+          where: { stripeId: session.id },
+        });
+        if (existingPack) alreadyProcessed = true;
       }
 
       if (alreadyProcessed) {
@@ -422,6 +488,22 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           },
         });
         if (updated.count === 0) await ohlasDvojiPlatbu('registrace týmu', session, castka);
+      } else if (metadata.type === 'MATCH_PACK' && metadata.packId) {
+        // Kredit vzniká až tady. `remaining` se nepřepisuje — kdyby se mezitím
+        // stihla rezervace, nesmí ji zaplacení vrátit zpátky nahoru.
+        const updated = await prisma.matchPack.updateMany({
+          where: { id: metadata.packId, status: { not: 'PAID' } },
+          data:  {
+            status: 'PAID', paidAt: new Date(), method: 'stripe', stripeId: session.id,
+            ...(castka ? { paidAmount: castka } : {}),
+          },
+        });
+        if (updated.count === 0) {
+          await ohlasDvojiPlatbu('balíček zápasů', session, castka);
+        } else {
+          const pack = await prisma.matchPack.findUnique({ where: { id: metadata.packId } });
+          await kredit.odmenZaDoporuceni(pack.playerId, pack);
+        }
       }
     } catch (dbErr) {
       // BUG-01 OPRAVA: vrať 500 při selhání DB, aby Stripe mohl webhook opakovat

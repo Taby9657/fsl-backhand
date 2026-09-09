@@ -16,6 +16,7 @@
 
 const prisma = require('../lib/prisma');
 const { slotZPostu } = require('../utils/posty');
+const pocty = require('./pocty');
 
 const MAX_TYMU_V_ZAKLADNI    = 3;
 const MIN_STARTU_PRO_PLAYOFF = 3;
@@ -133,12 +134,24 @@ async function pridatDoSoupisky(playerId, teamId, season, { isHome = false, slot
     };
   }
 
+  // Strop soupisky — pole a brankáři zvlášť, u otevřených týmů přísnější.
+  // Bez tohohle by se dvanácté místo v poli obsadilo dřív než druhý brankář
+  // a tým by pak zápas nezahájil.
+  const misto = jeSlot(slot) ? slot : slotZPostu(player.position);
+  const team = await prisma.team.findUnique({
+    where:  { id: teamId },
+    select: { isOpen: true },
+  });
+  const naSoupisce = await prisma.teamRoster.findMany({
+    where:  { teamId, season },
+    select: { slot: true },
+  });
+  const vejdeSe = pocty.vejdeSeNaSoupisku(
+    pocty.rozdel(naSoupisce), misto, pocty.limitySoupisky(team));
+  if (!vejdeSe.ok) return vejdeSe;
+
   const radek = await prisma.teamRoster.create({
-    data: {
-      playerId, teamId, season,
-      isHome: kmenovy,
-      slot:   jeSlot(slot) ? slot : slotZPostu(player.position),
-    },
+    data: { playerId, teamId, season, isHome: kmenovy, slot: misto },
   });
   return { ok: true, radek };
 }

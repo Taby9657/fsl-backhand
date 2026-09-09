@@ -260,6 +260,25 @@ if (process.env.FIO_API_TOKEN && process.env.NODE_ENV === 'production') {
   }, 2 * 60 * 1000);
 }
 
+// ============ ZAMYKÁNÍ SESTAV ============
+// Dvanáct hodin před výkopem se sestava zamkne a starty se zúčtují. Od té
+// chvíle hráč v přehledu vidí zápas jako utracený, ne jen zablokovaný,
+// a odhlášením ho zpátky nedostane.
+const LOCK_INTERVAL_MS = 15 * 60 * 1000;
+async function runLineupLock() {
+  try {
+    const { zamkniSestavy } = require('./src/services/kredit');
+    const vysledek = await zamkniSestavy();
+    if (vysledek.startu > 0) {
+      console.log(`[Sestavy] Zamčeno ${vysledek.startu} startů v ${vysledek.zapasu} zápasech.`);
+    }
+  } catch (err) {
+    console.error('[Sestavy] Chyba při zamykání:', err.message);
+  }
+}
+runLineupLock();
+setInterval(runLineupLock, LOCK_INTERVAL_MS);
+
 // ============ UPOMÍNKY NA POPLATEK ZA DOMÁCÍ ZÁPAS ============
 // Poplatek je splatný do 48 h před výkopem. Bez upomínky se na to zapomíná
 // a rozhodčí pak stojí na hale se zápasem, který nejde zahájit.

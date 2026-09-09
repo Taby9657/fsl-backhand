@@ -45,6 +45,9 @@ model Team {
   // ne při registraci ani při schvalování týmu.
   division   String?
   conference String?
+  /// Otevřený tým — skládá se z jednotlivců, nemá živého vedoucího a sestavu
+  /// si hráči tvoří sami přihlášením. Viz fsl-pravidla-souteze.md.
+  isOpen     Boolean  @default(false)
   regStatus   String   @default("APPROVED") // PENDING | APPROVED | REJECTED | APPEALING
   regNote     String?  // supervisor: důvod zamítnutí / poznámka ke schválení
   regAppeal   String?  // vedoucí: odvolání / zpětná reakce
@@ -117,6 +120,10 @@ model Player {
   draftProfile DraftProfile?
   playoffChoices PlayoffChoice[]
   rosters        TeamRoster[]
+  matchPacks     MatchPack[]
+  matchEntries   MatchEntry[]
+  referralCode   ReferralCode?
+  referredBy     ReferralUse?  @relation("PrivedenyHrac")
 }
 
 // ==================== REFEREES ====================
@@ -197,6 +204,7 @@ model Match {
   divisionRef Division?  @relation(fields: [divisionId],   references: [id], onDelete: SetNull)
 
   events       MatchEvent[]
+  entries      MatchEntry[]
   lineups      LineupSubmission[]
   postmatches  PostmatchData[]
   refRatings   RefRating[]
@@ -673,4 +681,123 @@ enum RequestStatus {
   IN_PROGRESS
   APPROVED
   REJECTED
+}
+
+
+// ==================== BALÍČKY ZÁPASŮ ====================
+//
+// Zápasy si platí hráč, ne tým. Kupuje si balíček startů a odehraný zápas
+// z něj jeden odečte. Balíček patří hráči, ne týmu — kdo hostuje ve třech
+// týmech, čerpá pořád z jednoho pytle.
+//
+// Odečítá se dvoufázově, jako u platební karty: zařazení do sestavy start
+// **rezervuje**, odehraný zápas ho **zúčtuje**, zrušený nebo kontumovaný
+// zápas ho **vrátí**. Bez rezervace by hráč s jedním zaplaceným zápasem
+// mohl být naráz v sestavě tří.
+
+/// Koupený balíček startů.
+///
+/// Kredit vzniká teprve při `status = PAID` — rozdělaná Checkout session
+/// ani částečná platba hráči hrát nedovolí.
+model MatchPack {
+  id        String   @id @default(uuid())
+  playerId  String
+  season    String
+  /// Kolik startů balíček obsahoval při koupi (1 / 3 / 7 / 12 / 16).
+  size      Int
+  /// Kolik z něj ještě zbývá. Rezervace snižuje, uvolnění vrací.
+  remaining Int
+  /// Do které sezóny balíček platí. `null` = bez omezení — nevyužité starty
+  /// se přenášejí do playoff i do dalších sezón. Sloupec tu je proto, aby
+  /// šlo platnost omezit bez migrace, kdyby se to ukázalo jako závazek,
+  /// který nikdy nezmizí z účetnictví.
+  validUntil String?
+  /// Cena včetně DPH, jak ji hráč zaplatil.
+  price     Int
+
+  status         PaymentStatus @default(PENDING)
+  paidAmount     Int           @default(0)
+  paidAt         DateTime?
+  method         String?
+  stripeId       String?
+  sessionId      String?
+  variableSymbol String?       @unique
+  createdAt      DateTime      @default(now())
+
+  /// Balíček zdarma za přivedení nového hráče.
+  isReward Boolean @default(false)
+
+  player  Player       @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  entries MatchEntry[]
+  reward  ReferralUse?
+
+  @@index([playerId, season])
+  @@index([playerId, season, status])
+}
+
+/// Jeden start hráče v jednom zápase — rezervovaný, zúčtovaný, nebo vrácený.
+///
+/// Unikát [playerId, matchId] hlídá, aby se za jeden zápas nestrhlo dvakrát.
+model MatchEntry {
+  id        String      @id @default(uuid())
+  playerId  String
+  matchId   String
+  teamId    String
+  packId    String?
+  status    EntryStatus @default(RESERVED)
+  createdAt DateTime    @default(now())
+  settledAt DateTime?
+
+  player Player     @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  match  Match      @relation(fields: [matchId],  references: [id], onDelete: Cascade)
+  pack   MatchPack? @relation(fields: [packId],   references: [id], onDelete: SetNull)
+
+  @@unique([playerId, matchId])
+  @@index([matchId, status])
+  @@index([playerId, status])
+}
+
+enum EntryStatus {
+  RESERVED
+  SPENT
+  RELEASED
+}
+
+
+// ==================== DOPORUČENÍ ====================
+//
+// Každý hráč si ve svém účtu vygeneruje kód. Když s ním do ligy přijde nový
+// hráč, zaplatí registraci a koupí si balíček od tří zápasů výš, dostane
+// ten, kdo ho přivedl, **jeden zápas zdarma**. Nový hráč může jít do
+// libovolného týmu — odměna není vázaná na to, že spolu budou hrát.
+
+/// Doporučovací kód hráče. Jeden na hráče, platí napořád.
+model ReferralCode {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  playerId  String   @unique
+  createdAt DateTime @default(now())
+
+  player Player        @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  uses   ReferralUse[]
+}
+
+/// Uplatnění kódu novým hráčem.
+///
+/// Vzniká ve chvíli, kdy nový hráč kód zadá, ale odměna se vyplácí teprve
+/// tehdy, když si koupí balíček od tří zápasů výš. Unikát na `newPlayerId`
+/// hlídá, že jeden člověk může být „přivedený" jen jednou.
+model ReferralUse {
+  id          String    @id @default(uuid())
+  codeId      String
+  newPlayerId String    @unique
+  rewardPackId String?  @unique
+  rewardedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  code       ReferralCode @relation(fields: [codeId], references: [id], onDelete: Cascade)
+  newPlayer  Player       @relation("PrivedenyHrac", fields: [newPlayerId], references: [id], onDelete: Cascade)
+  rewardPack MatchPack?   @relation(fields: [rewardPackId], references: [id], onDelete: SetNull)
+
+  @@index([codeId])
 }

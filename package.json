@@ -14,6 +14,7 @@
     "test:public": "node scripts/test-verejna-data.js",
     "test:onboarding": "node scripts/test-onboarding.js",
     "test:roster": "node scripts/test-roster-slot.js",
+    "test:kredit": "node scripts/test-kredit.js",
     "check:schema": "node scripts/check-schema.js"
   },
   "dependencies": {

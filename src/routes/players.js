@@ -8,6 +8,8 @@ const router = express.Router();
 const prisma = require('../lib/prisma');
 const licence = require('../services/licence');
 const seasonSvc = require('../services/seasonTransition');
+const kredit = require('../services/kredit');
+const { v4: uuidv4 } = require('uuid');
 
 /**
  * Ověření pozvánkového kódu na jednom místě — používá ho registrace hráče
@@ -383,6 +385,90 @@ router.post('/:id/photo', requireAuth, uploadPhoto.single('photo'), async (req, 
       data: { photoUrl: req.file.path },
     });
     res.json({ photoUrl: updated.photoUrl });
+  } catch (err) { next(err); }
+});
+
+// ==================== DOPORUČENÍ ====================
+//
+// Každý hráč má svůj kód. Kdo s ním přijde do ligy nový, zaplatí registraci
+// a koupí si balíček od tří zápasů výš, přinese tomu, kdo ho přivedl,
+// **jeden zápas zdarma**. Nový hráč může jít do libovolného týmu.
+
+// GET /players/me/referral – můj kód (vygeneruje se při prvním zobrazení)
+router.get('/me/referral', requireAuth, async (req, res, next) => {
+  try {
+    const player = await prisma.player.findUnique({ where: { userId: req.user.id } });
+    if (!player) return res.status(404).json({ error: 'Hráčský profil nenalezen' });
+
+    let kod = await prisma.referralCode.findUnique({ where: { playerId: player.id } });
+    if (!kod) {
+      const zkratka = (player.lastName || 'FSL').normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z]/g, '')
+        .toUpperCase().slice(0, 3).padEnd(3, 'X');
+      kod = await prisma.referralCode.create({
+        data: { playerId: player.id, code: `FSL-${zkratka}-${uuidv4().slice(0, 4).toUpperCase()}` },
+      });
+    }
+
+    const uziti = await prisma.referralUse.findMany({
+      where:   { codeId: kod.id },
+      include: { newPlayer: { select: { id: true, firstName: true, lastName: true } } },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json({
+      code:     kod.code,
+      invited:  uziti.length,
+      rewarded: uziti.filter(u => u.rewardedAt).length,
+      uses: uziti.map(u => ({
+        player:   u.newPlayer,
+        joinedAt: u.createdAt,
+        rewarded: !!u.rewardedAt,
+      })),
+      rule: `Odměna 1 zápas zdarma se připíše, jakmile si přivedený hráč koupí `
+          + `balíček od ${kredit.MIN_BALICEK_PRO_ODMENU} zápasů výš.`,
+    });
+  } catch (err) { next(err); }
+});
+
+// POST /players/referral – nový hráč zadá kód toho, kdo ho přivedl
+router.post('/referral', requireAuth, async (req, res, next) => {
+  try {
+    const kodText = String(req.body.code ?? '').trim().toUpperCase();
+    if (!kodText) return res.status(400).json({ error: 'Chybí kód' });
+
+    const player = await prisma.player.findUnique({ where: { userId: req.user.id } });
+    if (!player) return res.status(404).json({ error: 'Hráčský profil nenalezen' });
+
+    const kod = await prisma.referralCode.findUnique({ where: { code: kodText } });
+    if (!kod) return res.status(404).json({ error: 'Takový kód neexistuje', code: 'BAD_REFERRAL' });
+
+    // Vlastní kód si zadat nejde a přivedený může být člověk jen jednou.
+    if (kod.playerId === player.id) {
+      return res.status(409).json({ error: 'Vlastní kód použít nejde', code: 'SELF_REFERRAL' });
+    }
+    const uz = await prisma.referralUse.findUnique({ where: { newPlayerId: player.id } });
+    if (uz) {
+      return res.status(409).json({ error: 'Kód už jsi jednou uplatnil', code: 'ALREADY_REFERRED' });
+    }
+
+    // Kód patří novým hráčům. Kdo už za ligu nastoupil, není koho přivádět.
+    const starty = await prisma.lineupPlayer.count({
+      where: { playerId: player.id, lineup: { match: { status: 'DONE' } } },
+    });
+    if (starty > 0) {
+      return res.status(409).json({
+        error: 'Kód jde uplatnit jen před prvním odehraným zápasem',
+        code:  'NOT_NEW_PLAYER',
+      });
+    }
+
+    await prisma.referralUse.create({ data: { codeId: kod.id, newPlayerId: player.id } });
+    res.status(201).json({
+      ok: true,
+      note: `Kód je uplatněný. Odměna se tomu, kdo tě přivedl, připíše, `
+          + `až si koupíš balíček od ${kredit.MIN_BALICEK_PRO_ODMENU} zápasů výš.`,
+    });
   } catch (err) { next(err); }
 });
 
