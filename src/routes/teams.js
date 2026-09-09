@@ -4,6 +4,7 @@ const { requireAuth, requireManager, optionalAuth, isSupervisorUser } = require(
 const { createNotification } = require('./notifications');
 const { uploadLogo } = require('../utils/fileUpload');
 const { verejnyHrac, verejnyZaznamTymu, VEREJNY_TYM } = require('../utils/verejneUdaje');
+const { slotZPostu, porovnejNaSoupisce } = require('../utils/posty');
 const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
@@ -81,6 +82,21 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
       },
     });
     if (!team) return res.status(404).json({ error: 'Tým nenalezen' });
+
+    // Brankář vs. hráč do pole se drží na soupisce sezóny, ne na hráči.
+    // Detail týmu vrací kmenové hráče (`Player.teamId`), takže se sem
+    // příznak musí dotáhnout — jinak by klient musel hádat z `position`,
+    // což je volný text ve dvou různých slovnících.
+    const sezonaTymu = await licence.sezonaTymu(team.id, await seasonSvc.currentSeason());
+    const naSoupisce = await prisma.teamRoster.findMany({
+      where:  { teamId: team.id, season: sezonaTymu },
+      select: { playerId: true, slot: true },
+    });
+    const slotHrace = new Map(naSoupisce.map(r => [r.playerId, r.slot]));
+    team.players = (team.players ?? [])
+      .map(p => ({ ...p, slot: slotHrace.get(p.id) ?? slotZPostu(p.position) }))
+      .sort((a, b) => porovnejNaSoupisce({ ...a, isHome: true }, { ...b, isHome: true }));
+
     res.json(vidiDetaily(req.user, team.id) ? team : verejnyTym(team));
   } catch (err) { next(err); }
 });
@@ -278,13 +294,15 @@ router.get('/:id/roster', async (req, res, next) => {
     const hraci = radky.map(r => ({
       ...r.player,
       isHome:   r.isHome,
+      slot:     r.slot,
       addedAt:  r.createdAt,
       licensed: licence.maZakladniLicenci(r.player.payment),
       superLic: licence.maSuperlicenci(r.player.payment),
     }));
 
-    hraci.sort((a, b) =>
-      Number(b.isHome) - Number(a.isHome) || (a.jersey ?? 999) - (b.jersey ?? 999));
+    // Brankáři nahoru — na soupisce drží první místa, ať je na první pohled
+    // vidět, kdo chytá a jestli tým gólmana vůbec má.
+    hraci.sort(porovnejNaSoupisce);
 
     // Kmenoví hráči, kteří na soupisce téhle sezóny ještě nejsou.
     // Soupiska se s novou sezónou nepřenáší, takže tohle je seznam,
@@ -301,8 +319,10 @@ router.get('/:id/roster', async (req, res, next) => {
       players: hraci,
       missingHome: chybejici.map(p => ({
         ...p,
+        slot:     slotZPostu(p.position),
         licensed: licence.maZakladniLicenci(p.payment),
       })),
+      goalkeepers: hraci.filter(p => p.slot === 'GOALKEEPER').length,
     });
   } catch (err) { next(err); }
 });
@@ -330,7 +350,7 @@ router.post('/:id/roster/home', requireAuth, async (req, res, next) => {
 
     const kmenovi = await prisma.player.findMany({
       where:  { teamId: req.params.id, id: { notIn: [...naSoupisce] } },
-      select: { id: true },
+      select: { id: true, position: true },
     });
 
     // Jen vybraní, když je klient pošle; jinak všichni chybějící
@@ -340,7 +360,10 @@ router.post('/:id/roster/home', requireAuth, async (req, res, next) => {
 
     let pridano = 0;
     for (const p of vyber) {
-      const r = await licence.pridatDoSoupisky(p.id, req.params.id, season, { isHome: true });
+      const r = await licence.pridatDoSoupisky(p.id, req.params.id, season, {
+        isHome: true,
+        slot:   slotZPostu(p.position),
+      });
       if (r.ok) pridano += 1;
     }
 
@@ -351,7 +374,7 @@ router.post('/:id/roster/home', requireAuth, async (req, res, next) => {
 // POST /teams/:id/roster – vedoucí přidá hostujícího hráče
 router.post('/:id/roster', requireAuth, async (req, res, next) => {
   try {
-    const { playerId } = req.body;
+    const { playerId, slot } = req.body;
     const season = req.body.season
       || await licence.sezonaTymu(req.params.id, await seasonSvc.currentSeason());
 
@@ -359,7 +382,7 @@ router.post('/:id/roster', requireAuth, async (req, res, next) => {
     if (!jeVedouci) return res.status(403).json({ error: 'Nejsi vedoucí tohoto týmu' });
     if (!playerId)  return res.status(400).json({ error: 'Chybí playerId' });
 
-    const vysledek = await licence.pridatDoSoupisky(playerId, req.params.id, season);
+    const vysledek = await licence.pridatDoSoupisky(playerId, req.params.id, season, { slot });
     if (!vysledek.ok) {
       return res.status(vysledek.code === 'NO_PLAYER' ? 404 : 422)
         .json({ error: vysledek.error, code: vysledek.code });
@@ -373,6 +396,7 @@ router.post('/:id/roster', requireAuth, async (req, res, next) => {
     res.status(201).json({
       ...player,
       isHome:   vysledek.radek.isHome,
+      slot:     vysledek.radek.slot,
       licensed: licence.maZakladniLicenci(player.payment),
       superLic: licence.maSuperlicenci(player.payment),
     });
@@ -409,6 +433,47 @@ router.delete('/:id/roster/:playerId', requireAuth, async (req, res, next) => {
 
     await licence.odebratZeSoupisky(req.params.playerId, req.params.id, season);
     res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+/**
+ * PUT /teams/:id/roster/:playerId/slot – označení brankáře / hráče do pole.
+ *
+ * Jediné místo, kde se o postu na soupisce rozhoduje. `Player.position`
+ * slouží jen jako výchozí odhad při zapsání na soupisku; tohle ho přebije
+ * a platí pro danou sezónu a daný tým — tentýž člověk může být jinde
+ * hráč do pole.
+ *
+ * Smí to vedoucí týmu a supervisor. Odehrané zápasy to nijak nemění:
+ * kdo v jakém zápase chytal, drží `LineupPlayer.isGoalkeeper`.
+ */
+router.put('/:id/roster/:playerId/slot', requireAuth, async (req, res, next) => {
+  try {
+    const { slot } = req.body;
+    if (!licence.jeSlot(slot)) {
+      return res.status(400).json({
+        error: `slot musí být jedno z: ${licence.SLOTY.join(', ')}`,
+        code:  'BAD_SLOT',
+      });
+    }
+
+    const jeVedouci = req.user.manager?.some(m => m.teamId === req.params.id);
+    if (!jeVedouci && !isSupervisorUser(req.user)) {
+      return res.status(403).json({ error: 'Nejsi vedoucí tohoto týmu' });
+    }
+
+    const season = req.body.season
+      || await licence.sezonaTymu(req.params.id, await seasonSvc.currentSeason());
+
+    const radek = await licence.jeNaSoupisce(req.params.playerId, req.params.id, season);
+    if (!radek) return res.status(404).json({ error: 'Hráč na soupisce není' });
+
+    const upraveny = await prisma.teamRoster.update({
+      where: { id: radek.id },
+      data:  { slot },
+    });
+
+    res.json({ ok: true, playerId: req.params.playerId, slot: upraveny.slot, season });
   } catch (err) { next(err); }
 });
 

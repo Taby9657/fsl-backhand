@@ -549,6 +549,11 @@ model TeamRoster {
   teamId    String
   season    String
   isHome    Boolean  @default(false)
+  /// Brankář, nebo hráč do pole. Drží se na soupisce, ne na hráči —
+  /// `Player.position` je volný text (dva různé slovníky vedle sebe,
+  /// výchozí „Útočník") a tentýž člověk může být v jednom týmu gólman
+  /// a ve druhém hráč do pole. Rozhoduje tenhle sloupec.
+  slot      RosterSlot @default(FIELD)
   createdAt DateTime @default(now())
 
   player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
@@ -557,6 +562,14 @@ model TeamRoster {
   @@unique([playerId, teamId, season])
   @@index([teamId, season])
   @@index([playerId, season])
+  @@index([teamId, season, slot])
+}
+
+/// Místo na soupisce. Víc druhů nebude — sestava se skládá z 8 hráčů
+/// do pole a jednoho brankáře, na nic jemnějšího se systém neptá.
+enum RosterSlot {
+  GOALKEEPER
+  FIELD
 }
 
 /// Volba týmů pro playoff u hráče se superlicencí.

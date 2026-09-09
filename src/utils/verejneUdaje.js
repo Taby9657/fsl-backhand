@@ -68,8 +68,11 @@ function verejnyHrac(player) {
     if (klic in player) orezany[klic] = player[klic];
   }
 
-  // Vazby, které jsou samy o sobě veřejné (statistiky, tým, počty).
-  for (const klic of ['team', 'goals', 'assists', 'penalties', 'mvpVotes', '_count']) {
+  // Vazby a dopočítaná pole, která jsou sama o sobě veřejná (statistiky, tým,
+  // počty, místo na soupisce). `slot` schválně není ve VEREJNY_HRAC — ta se
+  // používá i jako prismí `select` a Player takový sloupec nemá; dotahuje se
+  // až v detailu týmu ze soupisky.
+  for (const klic of ['team', 'goals', 'assists', 'penalties', 'mvpVotes', '_count', 'slot']) {
     if (player[klic] !== undefined) orezany[klic] = player[klic];
   }
 

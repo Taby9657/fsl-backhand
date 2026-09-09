@@ -66,7 +66,14 @@ const fakePrisma = {
   player: { findUnique: async () => JSON.parse(JSON.stringify(PLAYER)) },
   user:   { findUnique: async ({ where }) => USERS[where.id] ?? null },
   league: { findMany: async () => [JSON.parse(JSON.stringify(LIGA))] },
+  // Detail týmu si od 9. 9. dotahuje ze soupisky označení brankářů, takže
+  // mock musí umět i tyhle dvě tabulky — jinak endpoint spadne dřív, než
+  // se vůbec dostane k ořezání veřejných polí.
+  teamRoster: {
+    findMany: async () => [{ playerId: 'P1', slot: 'GOALKEEPER' }],
+  },
   teamSeason: {
+    findFirst: async () => ({ season: '2025/26' }),
     groupBy:  async () => [{ leagueId: 'L1', conferenceId: 'K1', divisionId: 'D1', _count: { teamId: 7 } }],
     findMany: async ({ include }) => [{
       leagueId: 'L1', conferenceId: 'K1', divisionId: 'D1',

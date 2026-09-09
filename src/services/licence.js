@@ -15,9 +15,18 @@
  */
 
 const prisma = require('../lib/prisma');
+const { slotZPostu } = require('../utils/posty');
 
 const MAX_TYMU_V_ZAKLADNI    = 3;
 const MIN_STARTU_PRO_PLAYOFF = 3;
+
+/// Povolené hodnoty `TeamRoster.slot`. Víc druhů míst na soupisce nebude.
+const SLOTY = ['GOALKEEPER', 'FIELD'];
+
+/** Je to platná hodnota slotu? */
+function jeSlot(hodnota) {
+  return SLOTY.includes(hodnota);
+}
 
 /** Má hráč zaplacenou (nebo odpuštěnou) superlicenci? */
 function maSuperlicenci(payment) {
@@ -92,11 +101,15 @@ async function jeNaSoupisce(playerId, teamId, season) {
  * Přidání hráče na soupisku týmu.
  * Hostování (tedy jiný než kmenový tým) vyžaduje superlicenci
  * a dohromady smí být hráč nejvýš na MAX_TYMU_V_ZAKLADNI soupiskách.
+ *
+ * `slot` říká, jestli jde o brankáře, nebo hráče do pole. Když se nepošle,
+ * odvodí se z `Player.position` — ale jen jako výchozí hodnota, měnit se pak
+ * dá na soupisce (`PUT /teams/:id/roster/:playerId/slot`).
  */
-async function pridatDoSoupisky(playerId, teamId, season, { isHome = false } = {}) {
+async function pridatDoSoupisky(playerId, teamId, season, { isHome = false, slot = null } = {}) {
   const player = await prisma.player.findUnique({
     where:  { id: playerId },
-    select: { id: true, teamId: true, payment: true, firstName: true, lastName: true },
+    select: { id: true, teamId: true, position: true, payment: true, firstName: true, lastName: true },
   });
   if (!player) return { ok: false, code: 'NO_PLAYER', error: 'Hráč nenalezen' };
 
@@ -121,7 +134,11 @@ async function pridatDoSoupisky(playerId, teamId, season, { isHome = false } = {
   }
 
   const radek = await prisma.teamRoster.create({
-    data: { playerId, teamId, season, isHome: kmenovy },
+    data: {
+      playerId, teamId, season,
+      isHome: kmenovy,
+      slot:   jeSlot(slot) ? slot : slotZPostu(player.position),
+    },
   });
   return { ok: true, radek };
 }
@@ -304,6 +321,8 @@ async function prehledHrace(playerId, season) {
 module.exports = {
   MAX_TYMU_V_ZAKLADNI,
   MIN_STARTU_PRO_PLAYOFF,
+  SLOTY,
+  jeSlot,
   maSuperlicenci,
   maZakladniLicenci,
   startyPodleTymu,
