@@ -4,13 +4,17 @@
  *
  *   node scripts/test-payment-matching.js
  *
- * Ověřuje hlavně to, kvůli čemu vznikly sloupce superVariableSymbol a
- * Match.homeFeeVS: že se převod na superlicenci nezaúčtuje jako běžná licence
- * a že poplatek za domácí zápas nesníží dluh za registraci týmu.
+ * Ověřuje hlavně to, kvůli čemu vznikl sloupec superVariableSymbol: že se
+ * převod na superlicenci nezaúčtuje jako běžná licence a nesníží dluh
+ * za registraci týmu.
  *
  * Od 7. 9. navíc dvě věci, kvůli kterým se ztrácely peníze:
  *   - částečná platba se připíše a doplatek ji dorovná (dřív se obojí zahodilo)
  *   - registrace týmu zaplacená v minulé sezóně neplatí pro tu aktuální
+ *
+ * Od 9. 9. místo poplatku za domácí zápas (prefix 4, zrušen) balíčky
+ * zápasů (prefix 7). U nich na převodu záleží nejvíc: karta ukousne
+ * z každého balíčku 1,5 % + 6,50 Kč, převod nic.
  */
 
 const path = require('path');
@@ -58,10 +62,24 @@ function freshDb() {
         id: 'm1',
         homeTeamId: 't1',
         date: new Date('2026-09-10T18:00:00Z'),
-        homeFeePaid: false,
-        homeFeePaidAmount: 0,
-        homeFeeVS: '4000001',
         homeTeam: { id: 't1', name: 'Benavidez Eagles' },
+      },
+    ],
+    matchPacks: [
+      {
+        id: 'mp1',
+        playerId: 'p1',
+        season: '2026/27',
+        size: 7,
+        remaining: 7,
+        price: 1600,
+        status: 'PENDING',
+        paidAmount: 0,
+        paidAt: null,
+        method: null,
+        isReward: false,
+        variableSymbol: '7000001',
+        player: { id: 'p1', firstName: 'Tomáš', lastName: 'Novák', userId: 'u1' },
       },
     ],
     players: [{ id: 'p1', licensed: false }],
@@ -92,9 +110,24 @@ const fakePrisma = {
       return { count: rows.length };
     },
   },
-  // Párování od 9. 9. hledá i balíčky zápasů (prefix 7). Bez téhle tabulky
-  // by neznámý VS spadl na chybu místo na „nenalezeno".
+  // Balíčky zápasů (prefix 7). Kredit vzniká teprve při plné částce, stejně
+  // jako u licencí — proto tu musí být i updateMany, ne jen čtení.
   matchPack: {
+    findUnique: async ({ where }) => db.matchPacks.find((r) => whereMatch(r, where)) ?? null,
+    findFirst: async ({ where }) => db.matchPacks.find((r) => whereMatch(r, where)) ?? null,
+    updateMany: async ({ where, data }) => {
+      const rows = db.matchPacks.filter((r) => whereMatch(r, where));
+      rows.forEach((r) => Object.assign(r, data));
+      return { count: rows.length };
+    },
+    update: async ({ where, data }) => {
+      const row = db.matchPacks.find((r) => r.id === where.id);
+      Object.assign(row, data);
+      return row;
+    },
+  },
+  // Odměna za doporučení: v tomhle testu nikdo nikoho nepřivedl.
+  referralUse: {
     findUnique: async () => null,
   },
   teamPayment: {
@@ -211,20 +244,31 @@ const tx = (vs, amount) => ({
     assert(r.matched, `nespárováno: ${r.reason}`);
     assert(r.type === 'TEAM_REG', `typ ${r.type}`);
     assert(db.teamPayments[0].status === 'PAID', 'status není PAID');
-    assert(db.matches[0].homeFeePaid === false, 'omylem zaplacen domácí zápas');
+    assert(db.matchPacks[0].status === 'PENDING', 'omylem zaplacen balíček');
   });
 
-  await test('domácí zápas: VS s prefixem 4 označí zápas, ne registraci', async () => {
-    const r = await matchTransaction(tx('4000001', 2200));
+  await test('balíček zápasů: VS s prefixem 7 zaplatí balíček, ne registraci', async () => {
+    const r = await matchTransaction(tx('7000001', 1600));
     assert(r.matched, `nespárováno: ${r.reason}`);
-    assert(r.type === 'HOME_FEE', `typ ${r.type}`);
-    assert(db.matches[0].homeFeePaid === true, 'homeFeePaid není true');
+    assert(r.type === 'MATCH_PACK', `typ ${r.type}`);
+    assert(db.matchPacks[0].status === 'PAID', 'balíček není PAID');
     assert(db.teamPayments[0].status === 'PENDING', 'omylem zaplacena registrace týmu');
   });
 
-  await test('domácí zápas: notifikace jde vedoucímu týmu', async () => {
-    await matchTransaction(tx('4000001', 2200));
-    assert(db.notifications.some((n) => n.userId === 'u9'), 'vedoucí nedostal oznámení');
+  await test('balíček zápasů: notifikace jde hráči, ne vedoucímu', async () => {
+    await matchTransaction(tx('7000001', 1600));
+    assert(db.notifications.some((n) => n.userId === 'u1'), 'hráč nedostal oznámení');
+    assert(!db.notifications.some((n) => n.userId === 'u9'), 'oznámení šlo vedoucímu týmu');
+  });
+
+  // Poplatek za domácí zápas skončil 9. 9. 2026. Prefix 4 se nerecykluje,
+  // takže starý převod nesmí zaplatit nic jiného — jen spadnout mezi
+  // nespárované, kde se na něj podívá supervisor.
+  await test('zrušený poplatek: VS s prefixem 4 se už nespáruje', async () => {
+    const r = await matchTransaction(tx('4000001', 2200));
+    assert(!r.matched, 'prefix 4 se pořád páruje');
+    assert(db.teamPayments[0].status === 'PENDING', 'zaplatil omylem registraci');
+    assert(db.matchPacks[0].status === 'PENDING', 'zaplatil omylem balíček');
   });
 
   // ---------- částečné platby ----------
@@ -267,14 +311,15 @@ const tx = (vs, amount) => ({
     assert(db.teamPayments[0].paidAmount === 8000, `celkem ${db.teamPayments[0].paidAmount}`);
   });
 
-  await test('nízká částka na domácí zápas se připíše, ale zápas nezaplatí', async () => {
-    const r = await matchTransaction(tx('4000001', 500));
+  await test('nízká částka na balíček se připíše, ale kredit nedá', async () => {
+    const r = await matchTransaction(tx('7000001', 600));
     assert(r.matched && r.partial, `částka se nepřipsala: ${r.reason}`);
-    assert(db.matches[0].homeFeePaid === false, 'zápas označen jako zaplacený');
-    assert(db.matches[0].homeFeePaidAmount === 500, `připsáno ${db.matches[0].homeFeePaidAmount}`);
-    const r2 = await matchTransaction({ ...tx('4000001', 1700), transactionId: 'tx-doplatek' });
+    assert(db.matchPacks[0].status === 'PENDING', 'balíček označen jako zaplacený');
+    assert(db.matchPacks[0].paidAmount === 600, `připsáno ${db.matchPacks[0].paidAmount}`);
+    const r2 = await matchTransaction({ ...tx('7000001', 1000), transactionId: 'tx-doplatek' });
     assert(r2.matched && !r2.partial, `doplatek neprošel: ${r2.reason}`);
-    assert(db.matches[0].homeFeePaid === true, 'zápas není zaplacený ani po doplacení');
+    assert(db.matchPacks[0].status === 'PAID', 'balíček není zaplacený ani po doplacení');
+    assert(db.matchPacks[0].remaining === 7, 'doplacení sáhlo na zbývající starty');
   });
 
   await test('částečná platba pošle plátci oznámení, kolik chybí', async () => {
@@ -423,15 +468,20 @@ const tx = (vs, amount) => ({
     assert(await smiKPlatbe(hrac, 'team-reg', 't1') === false, 'hráč se dostal k registraci týmu');
   });
 
-  await test('QR: poplatek za zápas vidí jen vedoucí domácího týmu', async () => {
-    assert(await smiKPlatbe(vedouci, 'home-fee', 'm1') === true, 'domácí vedoucí nemá přístup');
-    assert(await smiKPlatbe(ciziVed, 'home-fee', 'm1') === false, 'cizí vedoucí se dostal k poplatku');
+  await test('QR: balíček vidí jen hráč, kterému patří', async () => {
+    assert(await smiKPlatbe(hrac, 'match-pack', 'mp1') === true, 'vlastník nemá přístup ke svému balíčku');
+    assert(await smiKPlatbe(cizi, 'match-pack', 'mp1') === false, 'cizí hráč se dostal k balíčku');
+    assert(await smiKPlatbe(vedouci, 'match-pack', 'mp1') === false, 'vedoucí se dostal k balíčku hráče');
+  });
+
+  await test('QR: zrušený poplatek za zápas je neznámý typ', async () => {
+    assert(await smiKPlatbe(vedouci, 'home-fee', 'm1') === null, 'home-fee se pořád tváří jako platný typ');
   });
 
   await test('QR: supervisor vidí všechno', async () => {
     assert(await smiKPlatbe(supervisor, 'player-license', 'p1') === true, 'supervisor nevidí licenci');
     assert(await smiKPlatbe(supervisor, 'team-reg', 't1') === true, 'supervisor nevidí registraci');
-    assert(await smiKPlatbe(supervisor, 'home-fee', 'm1') === true, 'supervisor nevidí poplatek');
+    assert(await smiKPlatbe(supervisor, 'match-pack', 'mp1') === true, 'supervisor nevidí balíček');
   });
 
   await test('QR: nepřihlášený a neznámý typ neprojdou', async () => {

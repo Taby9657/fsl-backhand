@@ -14,6 +14,8 @@
  *   6. Utrácí se nejdřív to, čemu dřív končí platnost.
  *   7. Odměna za doporučení se vyplácí jen u balíčku od tří zápasů výš
  *      a jen jednou.
+ *   8. Rozhodčí nespustí zápas, dokud má někdo v sestavě nezaplacený start.
+ *      Tohle nahradilo kontrolu poplatku za domácí zápas, zrušeného 9. 9. 2026.
  */
 const Module = require('module');
 
@@ -249,6 +251,29 @@ function zapas(id, { hodin = 48, season = '2026/27' } = {}) {
   const podruhe = await koupBalicek('P2', 12);
   ok(await kredit.odmenZaDoporuceni('P2', podruhe) === null,
     'druhý balíček už odměnu nevyplatí');
+
+  // --- 10. brána rozhodčího: kdo v sestavě nemá start ---
+  // Nahradilo kontrolu „domácí tým zaplatil 2 200 Kč". Zápas se nesmí
+  // rozjet s někým, kdo za něj nezaplatil.
+  reset();
+  await koupBalicek('P1', 1);
+  const zapasBrany = zapas('M9', { hodin: 30 });
+  await kredit.rezervuj('P1', zapasBrany, 'T1');
+
+  ok((await kredit.chybejiciStarty('M9', ['P1'])).length === 0,
+    'kdo má rezervaci, bránou projde');
+  ok((await kredit.chybejiciStarty('M9', ['P1', 'P2'])).join() === 'P2',
+    'kdo v sestavě je a start nemá, je vidět jménem');
+  ok((await kredit.chybejiciStarty('M9', [])).length === 0,
+    'prázdná sestava se na kredit neptá');
+
+  await kredit.zamkniSestavu('M9');
+  ok((await kredit.chybejiciStarty('M9', ['P1'])).length === 0,
+    'zúčtovaný start bránou projde stejně jako rezervace');
+
+  await kredit.odhlas('P1', zapasBrany);
+  ok((await kredit.chybejiciStarty('M9', ['P1'])).length === 0,
+    'kdo se po uzávěrce odhlásil a vrátil, platit znovu nemusí');
 
   console.log(fail === 0 ? '\nVŠE PROŠLO' : `\n${fail} SELHALO`);
   process.exit(fail === 0 ? 0 : 1);

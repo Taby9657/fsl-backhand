@@ -171,14 +171,14 @@ async function main() {
     refereeId: referee.id,
     season: SEASON, division: 'Divize A', round: 1,
     date: daysAgo(15), venue: 'Sportovní hala Praha 6',
-    homeScore: 5, awayScore: 3, status: 'DONE', homeFeePaid: true,
+    homeScore: 5, awayScore: 3, status: 'DONE',
   }});
   const matchDone2 = await prisma.match.create({ data: {
     homeTeamId: teamOhen.id, awayTeamId: teamSila.id,
     refereeId: referee.id,
     season: SEASON, division: 'Divize A', round: 2,
     date: daysAgo(8), venue: 'KV Arena Brno',
-    homeScore: 2, awayScore: 2, status: 'DONE', homeFeePaid: false,
+    homeScore: 2, awayScore: 2, status: 'DONE',
   }});
   const matchLive = await prisma.match.create({ data: {
     homeTeamId: teamSila.id, awayTeamId: teamBoure.id,

@@ -10,7 +10,11 @@
  * Pravidlo je jednoduché: k platbě se dostane její vlastník a supervisor.
  *   - licence a superlicence → vlastní hráčský profil
  *   - registrace týmu        → vedoucí toho týmu
- *   - poplatek za zápas      → vedoucí domácího týmu
+ *   - balíček zápasů         → hráč, kterému balíček patří
+ *
+ * Poplatek za domácí zápas (`home-fee`) tu byl do 9. 9. 2026. Zápasy dnes
+ * platí hráči v balíčku, takže ten typ zmizel — a `smiKPlatbe` ho vrací jako
+ * neznámý, což volajícímu skončí čistou čtyřstovkou místo pádu v QR kódu.
  */
 
 const prisma = require('../lib/prisma');
@@ -18,7 +22,7 @@ const { isSupervisorUser } = require('../middleware/auth');
 
 const TYPY_HRAC = ['player-license', 'super-license'];
 const TYPY_TYM  = ['team-reg'];
-const TYPY_ZAPAS = ['home-fee'];
+const TYPY_BALICEK = ['match-pack'];
 
 /**
  * @returns {Promise<boolean|null>} true = smí, false = nesmí, null = neznámý typ
@@ -35,15 +39,14 @@ async function smiKPlatbe(user, type, id) {
     return (user.manager ?? []).some(m => m.teamId === id);
   }
 
-  if (TYPY_ZAPAS.includes(type)) {
-    const teamIds = (user.manager ?? []).map(m => m.teamId);
-    if (teamIds.length === 0) return false;
-    const match = await prisma.match.findUnique({
+  if (TYPY_BALICEK.includes(type)) {
+    if (!user.player?.id) return false;
+    const pack = await prisma.matchPack.findUnique({
       where:  { id },
-      select: { homeTeamId: true },
+      select: { playerId: true },
     });
-    // Poplatek platí domácí tým. Hostům ho ukazovat nemá smysl.
-    return !!match && teamIds.includes(match.homeTeamId);
+    // Balíček patří hráči, ne týmu — cizí si ho nezobrazí ani vedoucí.
+    return !!pack && pack.playerId === user.player.id;
   }
 
   return null;
@@ -65,4 +68,4 @@ async function overPlatbu(req, res, type, id) {
   return true;
 }
 
-module.exports = { smiKPlatbe, overPlatbu, TYPY_HRAC, TYPY_TYM, TYPY_ZAPAS };
+module.exports = { smiKPlatbe, overPlatbu, TYPY_HRAC, TYPY_TYM, TYPY_BALICEK };

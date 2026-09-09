@@ -12,6 +12,7 @@
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const prisma = require('../lib/prisma');
+const kredit = require('./kredit');
 
 /**
  * Je session skutečně zaplacená – a nebyla mezitím vrácena?
@@ -127,20 +128,34 @@ async function reconcileStripePayments() {
     }
   }
 
-  // ── Poplatky za domácí zápasy ──
-  const matches = await prisma.match.findMany({
-    where: { homeFeePaid: false, homeFeeSessionId: { not: null } },
-    select: { id: true, homeFeeSessionId: true },
+  // ── Balíčky zápasů ──
+  // Nahradilo poplatky za domácí zápasy, které se od 9. 9. 2026 nevybírají.
+  // Tady je rekonciliace potřebnější než u čehokoli jiného: balíček se kupuje
+  // opakovaně během sezóny, takže ztracený webhook potká hráče dřív nebo
+  // později. Bez kreditu se přitom nedostane do sestavy.
+  const packs = await prisma.matchPack.findMany({
+    where:  { status: { not: 'PAID' }, sessionId: { not: null } },
+    select: { id: true, sessionId: true },
   });
 
-  for (const m of matches) {
+  for (const p of packs) {
     results.checked++;
-    if (await isPaid(m.homeFeeSessionId)) {
-      await prisma.match.update({
-        where: { id: m.id },
-        data:  { homeFeePaid: true, homeFeeStripeId: m.homeFeeSessionId },
+    if (await isPaid(p.sessionId)) {
+      // `remaining` se schválně nepřepisuje — kdyby se mezitím stihla
+      // rezervace, nesmí ji dodatečné zaplacení vrátit zpátky nahoru.
+      const updated = await prisma.matchPack.updateMany({
+        where: { id: p.id, status: { not: 'PAID' } },
+        data:  { status: 'PAID', paidAt: new Date(), method: 'stripe', stripeId: p.sessionId },
       });
-      results.fixed.push({ type: 'HOME_FEE', matchId: m.id });
+      if (updated.count === 0) continue;
+
+      // Odměnu za doporučení vyplácí jinak webhook. Když ten nedorazil,
+      // musí ji vyplatit tenhle doběh — jinak by o ni ten, kdo hráče
+      // přivedl, přišel jen kvůli výpadku spojení.
+      const pack = await prisma.matchPack.findUnique({ where: { id: p.id } });
+      await kredit.odmenZaDoporuceni(pack.playerId, pack);
+
+      results.fixed.push({ type: 'MATCH_PACK', packId: p.id, playerId: pack.playerId });
     }
   }
 

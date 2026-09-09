@@ -185,13 +185,10 @@ model Match {
   homeScore       Int         @default(0)
   awayScore       Int         @default(0)
   status          MatchStatus @default(UPCOMING)
-  homeFeePaid     Boolean     @default(false)
-  /// Kolik uz na poplatek za tento zapas prislo (viz PlayerPayment.licPaidAmount).
-  homeFeePaidAmount Int       @default(0)
-  homeFeeStripeId String?
-  homeFeeSessionId String?    // rozpracovaná Checkout session
-  homeFeeReminderAt DateTime?  // kdy odešla upomínka na neuhrazený poplatek
-  homeFeeVS       String?     @unique // variabilní symbol pro převod (prefix 4)
+  // Sloupce homeFee* tu byly do 9. 9. 2026, kdy domácí tým platil za zápas
+  // 2 200 Kč. Zápasy dnes platí hráči z balíčku startů (MatchPack,
+  // MatchEntry), takže poplatek zmizel i ze schématu — migrace
+  // `20260909000003_zrusen_poplatek_domaci_zapas`.
   createdAt       DateTime    @default(now())
   updatedAt       DateTime    @updatedAt
 

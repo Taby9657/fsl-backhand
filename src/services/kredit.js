@@ -283,6 +283,31 @@ async function zamkniSestavu(matchId, tx = prisma) {
 }
 
 /**
+ * Kdo je v sestavě, ale nemá za zápas zaplacený start.
+ *
+ * Tohle je podmínka, na které rozhodčí zápas spouští. Dřív se hlídalo, že
+ * domácí tým poslal 2 200 Kč; od chvíle, kdy zápasy platí hráči, musí sedět
+ * něco jiného — každý na hřišti má start z balíčku.
+ *
+ * Za normálních okolností je seznam prázdný: `srovnejRezervace` bez kreditu
+ * do sestavy nikoho nepustí. Vyplní se jen tehdy, když se sestava obešla
+ * (ruční zápis do databáze, chyba v pořadí zápisů), a to je přesně ten
+ * případ, kdy má rozhodčí zastavit.
+ *
+ * @param {string[]} playerIds hráči v sestavách obou týmů
+ * @returns {Promise<string[]>} id hráčů bez startu
+ */
+async function chybejiciStarty(matchId, playerIds, tx = prisma) {
+  if (playerIds.length === 0) return [];
+  const zaplacene = await tx.matchEntry.findMany({
+    where:  { matchId, playerId: { in: playerIds }, status: { in: ['RESERVED', 'SPENT'] } },
+    select: { playerId: true },
+  });
+  const maStart = new Set(zaplacene.map(e => e.playerId));
+  return playerIds.filter(id => !maStart.has(id));
+}
+
+/**
  * Projde zápasy, kterým do výkopu zbývá míň než 12 h, a zamkne jim sestavy.
  * Pouští se z plánovače v `server.js`.
  */
@@ -404,6 +429,6 @@ module.exports = {
   BALICKY, balicek, ZAPLACENO, LHUTA_ODHLASENI_H, MIN_BALICEK_PRO_ODMENU,
   maLicenciNaSezonu,
   zustatek, prehled, rezervuj, uvolni, odhlas, hodinDoVykopu,
-  srovnejRezervace, zamkniSestavu, zamkniSestavy, zuctujZapas,
+  srovnejRezervace, chybejiciStarty, zamkniSestavu, zamkniSestavy, zuctujZapas,
   vratZapas, vyresKontumaci, odmenZaDoporuceni,
 };

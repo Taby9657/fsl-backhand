@@ -216,17 +216,26 @@ router.post('/:id/start', requireAuth, async (req, res, next) => {
       });
     }
 
-    // Poplatek za domácí zápas je splatný do 48 h před výkopem. Dosud se
-    // nikde nevynucoval – zápas šlo odehrát, aniž by ho někdo zaplatil.
+    // Zápasy platí hráči, ne týmy: podmínkou pro zahájení je, že každý
+    // v sestavě má start z balíčku. Dřív se tu hlídalo, jestli domácí tým
+    // poslal 2 200 Kč — ta platba od 9. 9. 2026 neexistuje.
     // Supervisor může přes `force` pustit zápas i tak (dohoda, platba na místě).
-    if (!match.homeFeePaid) {
+    const vsichni = lineups.flatMap(l => (l.players ?? []).map(p => p.playerId));
+    const bezStartu = await kredit.chybejiciStarty(match.id, vsichni);
+    if (bezStartu.length > 0) {
       if (!(isSup && req.body?.force === true)) {
+        const jmena = await prisma.player.findMany({
+          where:  { id: { in: bezStartu } },
+          select: { id: true, firstName: true, lastName: true },
+        });
+        const vypis = jmena.map(p => `${p.firstName} ${p.lastName}`).join(', ');
         return res.status(400).json({
-          error: `Nelze zahájit zápas – ${match.homeTeam.abbr} nemá uhrazený poplatek za domácí zápas.`,
-          code:  'HOME_FEE_UNPAID',
+          error: `Nelze zahájit zápas – bez zaplaceného startu: ${vypis}.`,
+          code:  'NO_CREDIT_LINEUP',
+          players: jmena,
         });
       }
-      console.warn(`[Matches] Zápas ${match.id} zahájen supervizorem i s neuhrazeným poplatkem.`);
+      console.warn(`[Matches] Zápas ${match.id} zahájen supervizorem, ${bezStartu.length} hráčů bez startu.`);
     }
 
     const updated = await prisma.match.update({

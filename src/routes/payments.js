@@ -3,8 +3,8 @@ const express = require('express');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { requireAuth, requireSupervisor } = require('../middleware/auth');
 const {
-  bankSync, ensurePlayerVS, ensureTeamVS, ensureMatchHomeFeeVS, getPaymentQR,
-  HOME_FEE_AMOUNT, ohlasSupervisorum, jeZeStareSezony,
+  bankSync, ensurePlayerVS, ensureTeamVS, ensurePackVS, getPaymentQR,
+  ohlasSupervisorum, jeZeStareSezony,
 } = require('../services/bankSync');
 const { overPlatbu } = require('../utils/opravneniPlatby');
 const seasonSvc = require('../services/seasonTransition');
@@ -261,39 +261,19 @@ router.post('/pack', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// POST /payments/home-fee – poplatek za domácí zápas (2 200 Kč)
-router.post('/home-fee', requireAuth, async (req, res, next) => {
-  try {
-    if (!assertStripe(res)) return;
-    const { matchId } = req.body;
-    const managerTeamIds = (req.user.manager ?? []).map(m => m.teamId);
-    if (managerTeamIds.length === 0) return res.status(403).json({ error: 'Nejste vedoucí žádného týmu' });
-    if (!matchId) return res.status(400).json({ error: 'Chybí matchId' });
-
-    // Ověř zápas – musí být domácí a ještě nezaplacený
-    const match = await prisma.match.findUnique({ where: { id: matchId } });
-    if (!match) return res.status(404).json({ error: 'Zápas nenalezen' });
-    if (!managerTeamIds.includes(match.homeTeamId)) return res.status(403).json({ error: 'Tento zápas není váš domácí' });
-    if (match.homeFeePaid) return res.status(409).json({ error: 'Poplatek za tento zápas je již uhrazen' });
-
-    const dateStr = new Date(match.date).toLocaleDateString('cs-CZ');
-    let session = await reuseOpenSession(match.homeFeeSessionId);
-    if (!session) {
-      session = await createCheckout({
-        name:      `FSL poplatek za domácí zápas (${dateStr})`,
-        amountCzk: HOME_FEE_AMOUNT,
-        type:      'home-fee',
-        email:     req.user.email,
-        metadata:  { teamId: match.homeTeamId, matchId, type: 'HOME_FEE' },
-      });
-      await prisma.match.update({
-        where: { id: matchId },
-        data:  { homeFeeSessionId: session.id },
-      });
-    }
-
-    res.json({ url: session.url, sessionId: session.id });
-  } catch (err) { next(err); }
+// POST /payments/home-fee – zrušeno 9. 9. 2026.
+//
+// Poplatek 2 200 Kč za domácí zápas platil tým. Od přechodu na balíčky
+// zápasy platí hráči (`POST /payments/pack`), takže tahle cesta zmizela.
+// Endpoint tu zůstává jen proto, aby starší buildy aplikace dostaly
+// srozumitelnou odpověď místo 404 — v Terminálu ani v logu se pak nehádá,
+// kde je chyba.
+router.post('/home-fee', requireAuth, (req, res) => {
+  res.status(410).json({
+    error: 'Poplatek za domácí zápas se už neplatí. Zápasy si kupuje každý hráč '
+         + 'sám v balíčku startů.',
+    code:  'HOME_FEE_REMOVED',
+  });
 });
 
 // POST /payments/super-license – super licence hráče
@@ -401,11 +381,6 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           where: { stripeId: session.id },
         });
         if (existing) alreadyProcessed = true;
-      } else if (metadata.type === 'HOME_FEE' && metadata.matchId) {
-        const existingMatch = await prisma.match.findFirst({
-          where: { homeFeeStripeId: session.id },
-        });
-        if (existingMatch) alreadyProcessed = true;
       } else if (metadata.type === 'TEAM_REG' && metadata.teamId) {
         const existingTeam = await prisma.teamPayment.findFirst({
           where: { stripeId: session.id },
@@ -458,15 +433,6 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           },
         });
         if (updated.count === 0) await ohlasDvojiPlatbu('superlicence', session, castka);
-      } else if (metadata.type === 'HOME_FEE' && metadata.matchId) {
-        const updated = await prisma.match.updateMany({
-          where: { id: metadata.matchId, homeFeePaid: false },
-          data:  {
-            homeFeePaid: true, homeFeeStripeId: session.id,
-            ...(castka ? { homeFeePaidAmount: castka } : {}),
-          },
-        });
-        if (updated.count === 0) await ohlasDvojiPlatbu('poplatek za domácí zápas', session, castka);
       } else if (metadata.type === 'TEAM_REG' && metadata.teamId) {
         // Registrace se platí každou sezónu znovu. Když je uložený řádek
         // z minulého ročníku, přepisujeme ho na nový — a vážeme se na sezónu,
@@ -559,14 +525,15 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
               paidAmount: 0, stripeId: null, sessionId: null,
             },
           });
-        } else if (metadata.type === 'HOME_FEE' && metadata.matchId) {
-          await prisma.match.update({
-            where: { id: metadata.matchId },
-            data:  {
-              homeFeePaid: false, homeFeePaidAmount: 0,
-              homeFeeStripeId: null, homeFeeSessionId: null,
-            },
-          });
+        } else if (metadata.type === 'HOME_FEE') {
+          // Poplatek za domácí zápas se od 9. 9. 2026 nevybírá a sloupce
+          // po něm ve schématu nezůstaly. Kdyby dorazila refundace staré
+          // platby, není co přepsat — ať se o tom aspoň ví.
+          await ohlasSupervisorum(
+            'Refundace zrušeného poplatku',
+            `Vrácena platba za domácí zápas (session ${session.id}). Tenhle poplatek `
+            + 'se už nevybírá, v databázi po něm nic nezůstalo — zkontroluj to ve Stripu.',
+          );
         }
       } catch (err) {
         console.error('Zpracování refundace selhalo:', err);
@@ -630,8 +597,8 @@ router.put('/player/:playerId', requireSupervisor, async (req, res, next) => {
 // ==================== BANKOVNÍ PŘEVODY ====================
 
 // GET /payments/qr/:type/:id – QR kód pro platbu převodem (SPAYD)
-// type: player-license | super-license | team-reg | home-fee
-// id:   playerId (licence), teamId (registrace) nebo matchId (domácí zápas)
+// type: player-license | super-license | team-reg | match-pack
+// id:   playerId (licence), teamId (registrace) nebo packId (balíček zápasů)
 router.get('/qr/:type/:id', requireAuth, async (req, res, next) => {
   try {
     if (!transferConfigured()) {
@@ -668,11 +635,11 @@ router.get('/vs/team/:teamId', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// GET /payments/vs/match/:matchId – VS poplatku za konkrétní domácí zápas
-router.get('/vs/match/:matchId', requireAuth, async (req, res, next) => {
+// GET /payments/vs/pack/:packId – VS konkrétního balíčku zápasů
+router.get('/vs/pack/:packId', requireAuth, async (req, res, next) => {
   try {
-    if (!await overPlatbu(req, res, 'home-fee', req.params.matchId)) return;
-    const vs = await ensureMatchHomeFeeVS(req.params.matchId);
+    if (!await overPlatbu(req, res, 'match-pack', req.params.packId)) return;
+    const vs = await ensurePackVS(req.params.packId);
     res.json({ variableSymbol: vs });
   } catch (err) { next(err); }
 });

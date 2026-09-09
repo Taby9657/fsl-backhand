@@ -39,7 +39,9 @@ function generateVS(type, sequenceNumber) {
     PLAYER_LICENSE: 1,
     SUPER_LICENSE:  2,
     TEAM_REG:       3,
-    HOME_FEE:       4,
+    // Prefix 4 patřil poplatku za domácí zápas. Ten se od 9. 9. 2026
+    // nevybírá a číslo se schválně nerecykluje — kdyby dorazil starý
+    // převod, ať skončí mezi nespárovanými a někdo se na něj podívá.
     MATCH_PACK:     7,
   };
   const prefix = prefixes[type] ?? 9;
@@ -93,28 +95,6 @@ async function ensureTeamVS(teamId) {
     const vs    = generateVS('TEAM_REG', count + 1 + attempt);
     try {
       await prisma.teamPayment.update({ where: { teamId }, data: { variableSymbol: vs } });
-      return vs;
-    } catch (err) {
-      if (err.code !== 'P2002' || attempt >= 4) throw err;
-    }
-  }
-}
-
-/**
- * Přidělí VS konkrétnímu domácímu zápasu (poplatek 2 200 Kč).
- * VS je na úrovni zápasu, ne týmu – jeden tým hraje doma vícekrát za sezónu
- * a každá platba musí jít spárovat se svým zápasem.
- */
-async function ensureMatchHomeFeeVS(matchId) {
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const match = await prisma.match.findUnique({ where: { id: matchId } });
-    if (!match) throw new Error('Zápas nenalezen');
-    if (match.homeFeeVS) return match.homeFeeVS;
-
-    const count = await prisma.match.count({ where: { homeFeeVS: { not: null } } });
-    const vs    = generateVS('HOME_FEE', count + 1 + attempt);
-    try {
-      await prisma.match.update({ where: { id: matchId }, data: { homeFeeVS: vs } });
       return vs;
     } catch (err) {
       if (err.code !== 'P2002' || attempt >= 4) throw err;
@@ -291,14 +271,7 @@ async function matchTransaction(tx) {
   });
   if (teamPayment) return payTeamRegistration(teamPayment, tx);
 
-  // 4. Poplatek za domácí zápas (prefix 4) – VS je na konkrétním zápase
-  const match = await prisma.match.findFirst({
-    where:   { homeFeeVS: vs },
-    include: { homeTeam: { select: { id: true, name: true } } },
-  });
-  if (match) return payHomeFee(match, tx);
-
-  // 5. Balíček zápasů (prefix 7)
+  // 4. Balíček zápasů (prefix 7)
   const pack = await prisma.matchPack.findUnique({
     where:   { variableSymbol: vs },
     include: { player: { select: { id: true, firstName: true, lastName: true, userId: true } } },
@@ -471,53 +444,6 @@ async function payTeamRegistration(payment, tx) {
   };
 }
 
-const HOME_FEE_AMOUNT = 2200;
-
-async function payHomeFee(match, tx) {
-  if (match.homeFeePaid) {
-    return { matched: false, reason: 'poplatek za tento zápas je již uhrazen' };
-  }
-
-  const zaplaceno = (match.homeFeePaidAmount ?? 0) + tx.amount;
-  const dateStr   = new Date(match.date).toLocaleDateString('cs-CZ');
-
-  if (zaplaceno < HOME_FEE_AMOUNT) {
-    const pripsano = await prisma.match.updateMany({
-      where: { id: match.id, homeFeePaid: false },
-      data:  { homeFeePaidAmount: zaplaceno },
-    });
-    if (pripsano.count === 0) {
-      return { matched: false, reason: 'poplatek právě zpracován jiným procesem (race condition)' };
-    }
-    const chybi = HOME_FEE_AMOUNT - zaplaceno;
-    await notifyTeamManagers(
-      match.homeTeamId,
-      'Přijata částečná platba',
-      `Na poplatek za domácí zápas ${dateStr} přišlo ${tx.amount} Kč, celkem evidujeme ${zaplaceno} z ${HOME_FEE_AMOUNT} Kč. Chybí ${chybi} Kč.`,
-    );
-    return castecna('HOME_FEE', { matchId: match.id, teamId: match.homeTeamId }, tx, zaplaceno, HOME_FEE_AMOUNT);
-  }
-
-  const updated = await prisma.match.updateMany({
-    where: { id: match.id, homeFeePaid: false },
-    data:  { homeFeePaid: true, homeFeePaidAmount: zaplaceno },
-  });
-  if (updated.count === 0) {
-    return { matched: false, reason: 'poplatek právě zpracován jiným procesem (race condition)' };
-  }
-
-  await notifyTeamManagers(
-    match.homeTeamId,
-    'Platba přijata',
-    `Poplatek za domácí zápas ${dateStr} (${tx.amount} Kč) byl spárován.`,
-  );
-  await hlidejPreplatek(`domácí zápas ${dateStr}`, zaplaceno, HOME_FEE_AMOUNT, tx);
-  return {
-    matched: true, type: 'HOME_FEE', matchId: match.id, teamId: match.homeTeamId,
-    amount: tx.amount, paidTotal: zaplaceno,
-  };
-}
-
 // ---------- částečné platby a přeplatky ----------
 
 /**
@@ -638,16 +564,17 @@ async function getPaymentQR(type, id) {
     vs      = await ensureTeamVS(id, 'TEAM_REG');
     amount  = payment.amount;
     message = `FSL registrace ${payment.team.name}`;
-  } else if (type === 'home-fee') {
-    // id = matchId (každý domácí zápas má vlastní VS)
-    const match = await prisma.match.findUnique({
+  } else if (type === 'match-pack') {
+    // id = packId (každý koupený balíček má vlastní VS). Převodem je balíček
+    // bez poplatku — u dvacítky za 4 000 Kč to proti kartě dělá 66,50 Kč.
+    const pack = await prisma.matchPack.findUnique({
       where:   { id },
-      include: { homeTeam: { select: { name: true } } },
+      include: { player: { select: { firstName: true, lastName: true } } },
     });
-    if (!match) throw new Error('Zápas nenalezen');
-    vs      = await ensureMatchHomeFeeVS(id);
-    amount  = HOME_FEE_AMOUNT;
-    message = `FSL domaci zapas ${new Date(match.date).toLocaleDateString('cs-CZ')} ${match.homeTeam.name}`;
+    if (!pack) throw new Error('Balíček nenalezen');
+    vs      = await ensurePackVS(id);
+    amount  = pack.price;
+    message = `FSL balicek ${pack.size} zapasu ${pack.player.firstName} ${pack.player.lastName}`;
   } else {
     throw new Error('Neznámý typ platby');
   }
@@ -728,10 +655,8 @@ async function payMatchPack(pack, tx) {
 
 module.exports = {
   bankSync,
-  HOME_FEE_AMOUNT,
   ensurePlayerVS,
   ensureTeamVS,
-  ensureMatchHomeFeeVS,
   ensurePackVS,
   getPaymentQR,
   ohlasSupervisorum, // dvojí platby hlásí i Stripe webhook
