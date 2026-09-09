@@ -186,7 +186,7 @@ router.post('/player-license', requireAuth, async (req, res, next) => {
     if (!session) {
       session = await createCheckout({
         name:      `FSL hráčská licence ${player.payment?.season || '2025/26'}`,
-        amountCzk: player.payment?.licFee || 250,
+        amountCzk: player.payment?.licFee || 300,
         type:      'license',
         email:     req.user.email,
         metadata:  { playerId: player.id, type: 'PLAYER_LICENSE' },
@@ -293,7 +293,7 @@ router.post('/super-license', requireAuth, async (req, res, next) => {
     if (!session) {
       session = await createCheckout({
         name:      `FSL super licence hráče ${player.payment?.season || '2025/26'}`,
-        amountCzk: player.payment?.superFee || 250,
+        amountCzk: player.payment?.superFee || 300,
         type:      'super-license',
         email:     req.user.email,
         metadata:  { playerId: player.id, type: 'SUPER_LICENSE' },

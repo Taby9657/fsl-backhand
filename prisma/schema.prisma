@@ -404,7 +404,7 @@ model TeamPayment {
   id             String        @id @default(uuid())
   teamId         String        @unique
   season         String        @default("2025/26")
-  amount         Int           @default(8000)
+  amount         Int           @default(9700)
   status         PaymentStatus @default(PENDING)
   /// Kolik uz na registraci prislo v sezone `season` (viz PlayerPayment.licPaidAmount).
   paidAmount     Int           @default(0)
@@ -421,14 +421,14 @@ model PlayerPayment {
   id             String        @id @default(uuid())
   playerId       String        @unique
   season         String        @default("2025/26")
-  licFee         Int           @default(250)
+  licFee         Int           @default(300)
   licStatus      PaymentStatus @default(PENDING)
   licPaidAt      DateTime?
   licMethod      String?
   /// Kolik uz na licenci prislo. Castecna platba se pricita, PAID se nastavi az pri pokryti licFee.
   licPaidAmount  Int           @default(0)
   superLic       Boolean       @default(false)
-  superFee       Int           @default(250)
+  superFee       Int           @default(300)
   superStatus    PaymentStatus @default(PENDING)
   superPaidAt    DateTime?
   /// Kolik uz na superlicenci prislo (viz licPaidAmount).

@@ -28,12 +28,12 @@ function freshDb() {
         id: 'pp1',
         playerId: 'p1',
         season: '2026/27',
-        licFee: 250,
+        licFee: 300,
         licStatus: 'PENDING',
         licPaidAt: null,
         licMethod: null,
         licPaidAmount: 0,
-        superFee: 250,
+        superFee: 300,
         superStatus: 'PENDING',
         superPaidAt: null,
         superLic: false,
@@ -48,7 +48,7 @@ function freshDb() {
         id: 'tp1',
         teamId: 't1',
         season: '2026/27',
-        amount: 8000,
+        amount: 9700,
         status: 'PENDING',
         paidAmount: 0,
         paidAt: null,
@@ -222,7 +222,7 @@ const tx = (vs, amount) => ({
 
 (async () => {
   await test('licence: VS s prefixem 1 zaplatí licenci', async () => {
-    const r = await matchTransaction(tx('1000001', 250));
+    const r = await matchTransaction(tx('1000001', 300));
     assert(r.matched, `nespárováno: ${r.reason}`);
     assert(r.type === 'PLAYER_LICENSE', `typ ${r.type}`);
     assert(db.playerPayments[0].licStatus === 'PAID', 'licStatus není PAID');
@@ -231,7 +231,7 @@ const tx = (vs, amount) => ({
   });
 
   await test('superlicence: VS s prefixem 2 zaplatí superlicenci, ne licenci', async () => {
-    const r = await matchTransaction(tx('2000001', 250));
+    const r = await matchTransaction(tx('2000001', 300));
     assert(r.matched, `nespárováno: ${r.reason}`);
     assert(r.type === 'SUPER_LICENSE', `typ ${r.type}`);
     assert(db.playerPayments[0].superStatus === 'PAID', 'superStatus není PAID');
@@ -240,7 +240,7 @@ const tx = (vs, amount) => ({
   });
 
   await test('registrace týmu: VS s prefixem 3', async () => {
-    const r = await matchTransaction(tx('3000001', 8000));
+    const r = await matchTransaction(tx('3000001', 9700));
     assert(r.matched, `nespárováno: ${r.reason}`);
     assert(r.type === 'TEAM_REG', `typ ${r.type}`);
     assert(db.teamPayments[0].status === 'PAID', 'status není PAID');
@@ -280,7 +280,7 @@ const tx = (vs, amount) => ({
     const r = await matchTransaction(tx('1000001', 200));
     assert(r.matched, `částka se nepřipsala: ${r.reason}`);
     assert(r.partial === true, 'chybí příznak částečné platby');
-    assert(r.missing === 50, `chybí má být 50, je ${r.missing}`);
+    assert(r.missing === 100, `chybí má být 100, je ${r.missing}`);
     assert(db.playerPayments[0].licPaidAmount === 200, `připsáno ${db.playerPayments[0].licPaidAmount}`);
     assert(db.playerPayments[0].licStatus === 'PENDING', 'licence označena jako zaplacená');
     assert(db.players[0].licensed === false, 'hráč dostal licenci po částečné platbě');
@@ -288,10 +288,10 @@ const tx = (vs, amount) => ({
 
   await test('doplatek dorovná částečnou platbu licence', async () => {
     await matchTransaction(tx('1000001', 200));
-    const r = await matchTransaction({ ...tx('1000001', 50), transactionId: 'tx-doplatek' });
+    const r = await matchTransaction({ ...tx('1000001', 100), transactionId: 'tx-doplatek' });
     assert(r.matched && !r.partial, `doplatek neprošel: ${r.reason}`);
     assert(db.playerPayments[0].licStatus === 'PAID', 'licence není PAID ani po doplacení');
-    assert(db.playerPayments[0].licPaidAmount === 250, `celkem ${db.playerPayments[0].licPaidAmount}`);
+    assert(db.playerPayments[0].licPaidAmount === 300, `celkem ${db.playerPayments[0].licPaidAmount}`);
     assert(db.players[0].licensed === true, 'hráč nemá licensed=true');
   });
 
@@ -305,10 +305,10 @@ const tx = (vs, amount) => ({
     await matchTransaction(tx('3000001', 5000));
     assert(db.teamPayments[0].status === 'PENDING', 'registrace zaplacena z poloviny');
     assert(db.teamPayments[0].paidAmount === 5000, `připsáno ${db.teamPayments[0].paidAmount}`);
-    const r = await matchTransaction({ ...tx('3000001', 3000), transactionId: 'tx-doplatek' });
+    const r = await matchTransaction({ ...tx('3000001', 4700), transactionId: 'tx-doplatek' });
     assert(r.matched && !r.partial, `doplatek neprošel: ${r.reason}`);
     assert(db.teamPayments[0].status === 'PAID', 'registrace není PAID');
-    assert(db.teamPayments[0].paidAmount === 8000, `celkem ${db.teamPayments[0].paidAmount}`);
+    assert(db.teamPayments[0].paidAmount === 9700, `celkem ${db.teamPayments[0].paidAmount}`);
   });
 
   await test('nízká částka na balíček se připíše, ale kredit nedá', async () => {
@@ -326,7 +326,7 @@ const tx = (vs, amount) => ({
     await matchTransaction(tx('1000001', 200));
     const n = db.notifications.find((x) => x.userId === 'u1');
     assert(n, 'hráč nedostal oznámení');
-    assert(/chybí 50/.test(n.body), `oznámení neříká, kolik chybí: ${n.body}`);
+    assert(/chybí 100/.test(n.body), `oznámení neříká, kolik chybí: ${n.body}`);
   });
 
   await test('přeplatek zaplatí a upozorní supervisora', async () => {
@@ -345,19 +345,19 @@ const tx = (vs, amount) => ({
   await test('registrace zaplacená v minulé sezóně neplatí pro tu aktuální', async () => {
     db.teamPayments[0].status     = 'PAID';
     db.teamPayments[0].season     = '2025/26';
-    db.teamPayments[0].paidAmount = 8000;
+    db.teamPayments[0].paidAmount = 9700;
     db.teamPayments[0].paidAt     = new Date('2025-08-31T00:00:00Z');
 
-    const r = await matchTransaction(tx('3000001', 8000));
+    const r = await matchTransaction(tx('3000001', 9700));
     assert(r.matched, `platba za novou sezónu se nespárovala: ${r.reason}`);
     assert(db.teamPayments[0].season === '2026/27', `řádek zůstal v ${db.teamPayments[0].season}`);
-    assert(db.teamPayments[0].paidAmount === 8000, `částka se nesečetla správně: ${db.teamPayments[0].paidAmount}`);
+    assert(db.teamPayments[0].paidAmount === 9700, `částka se nesečetla správně: ${db.teamPayments[0].paidAmount}`);
   });
 
   await test('částečná platba za novou sezónu nesčítá loňskou částku', async () => {
     db.teamPayments[0].status     = 'PAID';
     db.teamPayments[0].season     = '2025/26';
-    db.teamPayments[0].paidAmount = 8000;
+    db.teamPayments[0].paidAmount = 9700;
 
     const r = await matchTransaction(tx('3000001', 3000));
     assert(r.partial === true, 'loňská částka se započítala do letoška');
@@ -368,33 +368,33 @@ const tx = (vs, amount) => ({
   await test('registrace zaplacená v aktuální sezóně se podruhé nezaplatí', async () => {
     db.teamPayments[0].status     = 'PAID';
     db.teamPayments[0].season     = '2026/27';
-    db.teamPayments[0].paidAmount = 8000;
+    db.teamPayments[0].paidAmount = 9700;
 
-    const r = await matchTransaction(tx('3000001', 8000));
+    const r = await matchTransaction(tx('3000001', 9700));
     assert(!r.matched, 'dvojí platba za stejnou sezónu prošla');
     assert(/již zaplacena/.test(r.reason), `nečekaný důvod: ${r.reason}`);
   });
 
   await test('odpuštěný poplatek se převodem nepřepíše', async () => {
     db.teamPayments[0].status = 'WAIVED';
-    const r = await matchTransaction(tx('3000001', 8000));
+    const r = await matchTransaction(tx('3000001', 9700));
     assert(!r.matched, 'platba přepsala odpuštěný poplatek');
   });
 
   await test('druhá platba se stejným VS se nezpracuje dvakrát', async () => {
-    await matchTransaction(tx('1000001', 250));
-    const r = await matchTransaction(tx('1000001', 250));
+    await matchTransaction(tx('1000001', 300));
+    const r = await matchTransaction(tx('1000001', 300));
     assert(!r.matched, 'duplicitní platba prošla');
   });
 
   await test('neznámý VS se nespáruje', async () => {
-    const r = await matchTransaction(tx('9999999', 250));
+    const r = await matchTransaction(tx('9999999', 300));
     assert(!r.matched, 'neznámý VS prošel');
     assert(/nenalezen/.test(r.reason), `nečekaný důvod: ${r.reason}`);
   });
 
   await test('chybějící VS se nespáruje', async () => {
-    const r = await matchTransaction(tx(null, 250));
+    const r = await matchTransaction(tx(null, 300));
     assert(!r.matched, 'platba bez VS prošla');
   });
 
