@@ -155,8 +155,10 @@ docker run -d \
 | POST | `/api/referees` | Onboarding rozhodčího |
 | PUT | `/api/referees/:id/approve` | Schválení (supervisor) |
 | POST | `/api/payments/player-license` | Platba licence (Stripe) |
-| POST | `/api/payments/home-fee` | Poplatek za domácí zápas |
+| POST | `/api/payments/pack` | Balíček zápasů (Stripe) |
+| POST | `/api/payments/fine` | Pokuta za kontumaci (Stripe) |
 | POST | `/api/payments/webhook` | Stripe webhook |
+| POST | `/api/matches/:id/forfeit` | Kontumace (supervisor) |
 | GET | `/api/stats/table` | Ligová tabulka |
 | GET | `/api/stats/scorers` | Střelci |
 | GET | `/api/stats/mvp` | MVP tabulka |
@@ -170,19 +172,26 @@ docker run -d \
 
 Každý typ platby má vlastní variabilní symbol s odlišným prefixem:
 
-| Platba | VS | Sloupec |
-|--------|-----|---------|
-| Hráčská licence | `1` + 7 číslic | `PlayerPayment.variableSymbol` |
-| Superlicence | `2` + 7 číslic | `PlayerPayment.superVariableSymbol` |
-| Registrace týmu | `3` + 7 číslic | `TeamPayment.variableSymbol` |
-| Poplatek za domácí zápas | `4` + 7 číslic | `Match.homeFeeVS` |
+| Platba | Částka | VS | Sloupec |
+|--------|-----|-----|---------|
+| Hráčská licence | 300 Kč | `1` + 7 číslic | `PlayerPayment.variableSymbol` |
+| Superlicence | 300 Kč | `2` + 7 číslic | `PlayerPayment.superVariableSymbol` |
+| Registrace týmu | 8 000 Kč | `3` + 7 číslic | `TeamPayment.variableSymbol` |
+| Pokuta za kontumaci | 2 200 Kč | `5` + 7 číslic | `Fine.variableSymbol` |
+| Balíček zápasů | 250–4 000 Kč | `7` + 7 číslic | `MatchPack.variableSymbol` |
 
-Superlicence i domácí zápas měly dřív VS sdílený s licencí, resp. s registrací týmu, takže
-je párovací logika nedokázala odlišit. Migrace `20260824000001_split_payment_vs` přidává
-oba sloupce a přesouvá historické symboly s prefixem `2` k superlicenci.
+**Prefix 4 patřil poplatku za domácí zápas, zrušenému 9. 9. 2026.** Nerecykluje se —
+kdyby dorazil starý převod, skončí mezi nespárovanými.
+
+Superlicence měla dřív VS sdílený s licencí, takže je párovací logika nedokázala
+odlišit. Migrace `20260824000001_split_payment_vs` přidává vlastní sloupec a přesouvá
+historické symboly s prefixem `2` k superlicenci.
 
 VS se přiděluje líně — až když si někdo vyžádá QR kód nebo údaje k převodu
-(`ensurePlayerVS`, `ensureTeamVS`, `ensureMatchHomeFeeVS`).
+(`ensurePlayerVS`, `ensureTeamVS`, `ensurePackVS`, `ensureFineVS`).
+
+> Ceny jsou konečné. **Liga není plátce DPH**, takže se daň nikde neúčtuje
+> ani neuvádí — ani na dokladech.
 
 ### Test párování
 
@@ -203,6 +212,10 @@ nezpracuje dvakrát a že neznámý VS skončí jako nespárovaný.
 | `player-license` | playerId |
 | `super-license` | playerId |
 | `team-reg` | teamId |
-| `home-fee` | **matchId** |
+| `fine` | **fineId** |
+| `match-pack` | **packId** |
+
+`home-fee` byl zrušen 9. 9. 2026 a `smiKPlatbe` ho vrací jako neznámý typ,
+takže volání skončí čistou čtyřstovkou.
 
 Vyžaduje nastavené `BANK_IBAN` a `BANK_BIC`.

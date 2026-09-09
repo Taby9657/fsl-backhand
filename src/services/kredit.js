@@ -31,7 +31,8 @@ const prisma = require('../lib/prisma');
 const LHUTA_ODHLASENI_H = 12;
 
 /**
- * Ceník balíčků — cena je konečná, včetně DPH.
+ * Ceník balíčků. Ceny jsou konečné; liga není plátce DPH, takže se k nim
+ * nic nepřipočítává a daň se nikde neuvádí.
  * Nejmenší balíček stojí 250 Kč a s velikostí cena za zápas klesá.
  */
 const BALICKY = [

@@ -720,7 +720,7 @@ model MatchPack {
   /// šlo platnost omezit bez migrace, kdyby se to ukázalo jako závazek,
   /// který nikdy nezmizí z účetnictví.
   validUntil String?
-  /// Cena včetně DPH, jak ji hráč zaplatil.
+  /// Konečná cena, jak ji hráč zaplatil. Liga není plátce DPH.
   price     Int
 
   status         PaymentStatus @default(PENDING)
