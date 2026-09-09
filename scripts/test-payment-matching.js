@@ -48,7 +48,7 @@ function freshDb() {
         id: 'tp1',
         teamId: 't1',
         season: '2026/27',
-        amount: 9700,
+        amount: 8000,
         status: 'PENDING',
         paidAmount: 0,
         paidAt: null,
@@ -268,7 +268,7 @@ const tx = (vs, amount) => ({
   });
 
   await test('registrace týmu: VS s prefixem 3', async () => {
-    const r = await matchTransaction(tx('3000001', 9700));
+    const r = await matchTransaction(tx('3000001', 8000));
     assert(r.matched, `nespárováno: ${r.reason}`);
     assert(r.type === 'TEAM_REG', `typ ${r.type}`);
     assert(db.teamPayments[0].status === 'PAID', 'status není PAID');
@@ -360,10 +360,10 @@ const tx = (vs, amount) => ({
     await matchTransaction(tx('3000001', 5000));
     assert(db.teamPayments[0].status === 'PENDING', 'registrace zaplacena z poloviny');
     assert(db.teamPayments[0].paidAmount === 5000, `připsáno ${db.teamPayments[0].paidAmount}`);
-    const r = await matchTransaction({ ...tx('3000001', 4700), transactionId: 'tx-doplatek' });
+    const r = await matchTransaction({ ...tx('3000001', 3000), transactionId: 'tx-doplatek' });
     assert(r.matched && !r.partial, `doplatek neprošel: ${r.reason}`);
     assert(db.teamPayments[0].status === 'PAID', 'registrace není PAID');
-    assert(db.teamPayments[0].paidAmount === 9700, `celkem ${db.teamPayments[0].paidAmount}`);
+    assert(db.teamPayments[0].paidAmount === 8000, `celkem ${db.teamPayments[0].paidAmount}`);
   });
 
   await test('nízká částka na balíček se připíše, ale kredit nedá', async () => {
@@ -400,19 +400,19 @@ const tx = (vs, amount) => ({
   await test('registrace zaplacená v minulé sezóně neplatí pro tu aktuální', async () => {
     db.teamPayments[0].status     = 'PAID';
     db.teamPayments[0].season     = '2025/26';
-    db.teamPayments[0].paidAmount = 9700;
+    db.teamPayments[0].paidAmount = 8000;
     db.teamPayments[0].paidAt     = new Date('2025-08-31T00:00:00Z');
 
-    const r = await matchTransaction(tx('3000001', 9700));
+    const r = await matchTransaction(tx('3000001', 8000));
     assert(r.matched, `platba za novou sezónu se nespárovala: ${r.reason}`);
     assert(db.teamPayments[0].season === '2026/27', `řádek zůstal v ${db.teamPayments[0].season}`);
-    assert(db.teamPayments[0].paidAmount === 9700, `částka se nesečetla správně: ${db.teamPayments[0].paidAmount}`);
+    assert(db.teamPayments[0].paidAmount === 8000, `částka se nesečetla správně: ${db.teamPayments[0].paidAmount}`);
   });
 
   await test('částečná platba za novou sezónu nesčítá loňskou částku', async () => {
     db.teamPayments[0].status     = 'PAID';
     db.teamPayments[0].season     = '2025/26';
-    db.teamPayments[0].paidAmount = 9700;
+    db.teamPayments[0].paidAmount = 8000;
 
     const r = await matchTransaction(tx('3000001', 3000));
     assert(r.partial === true, 'loňská částka se započítala do letoška');
@@ -423,16 +423,16 @@ const tx = (vs, amount) => ({
   await test('registrace zaplacená v aktuální sezóně se podruhé nezaplatí', async () => {
     db.teamPayments[0].status     = 'PAID';
     db.teamPayments[0].season     = '2026/27';
-    db.teamPayments[0].paidAmount = 9700;
+    db.teamPayments[0].paidAmount = 8000;
 
-    const r = await matchTransaction(tx('3000001', 9700));
+    const r = await matchTransaction(tx('3000001', 8000));
     assert(!r.matched, 'dvojí platba za stejnou sezónu prošla');
     assert(/již zaplacena/.test(r.reason), `nečekaný důvod: ${r.reason}`);
   });
 
   await test('odpuštěný poplatek se převodem nepřepíše', async () => {
     db.teamPayments[0].status = 'WAIVED';
-    const r = await matchTransaction(tx('3000001', 9700));
+    const r = await matchTransaction(tx('3000001', 8000));
     assert(!r.matched, 'platba přepsala odpuštěný poplatek');
   });
 

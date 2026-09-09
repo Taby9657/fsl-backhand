@@ -279,10 +279,10 @@ async function main() {
 
   // Platby týmů
   await prisma.teamPayment.createMany({ data: [
-    { teamId: teamOrli.id,  season: SEASON, amount: 9700, status: 'PAID',    paidAt: daysAgo(25), method: 'bank', variableSymbol: '900001' },
-    { teamId: teamOhen.id,  season: SEASON, amount: 9700, status: 'PENDING', variableSymbol: '900002' },
-    { teamId: teamSila.id,  season: SEASON, amount: 9700, status: 'OVERDUE', variableSymbol: '900003' },
-    { teamId: teamBoure.id, season: SEASON, amount: 9700, status: 'PENDING', variableSymbol: '900004' },
+    { teamId: teamOrli.id,  season: SEASON, amount: 8000, status: 'PAID',    paidAt: daysAgo(25), method: 'bank', variableSymbol: '900001' },
+    { teamId: teamOhen.id,  season: SEASON, amount: 8000, status: 'PENDING', variableSymbol: '900002' },
+    { teamId: teamSila.id,  season: SEASON, amount: 8000, status: 'OVERDUE', variableSymbol: '900003' },
+    { teamId: teamBoure.id, season: SEASON, amount: 8000, status: 'PENDING', variableSymbol: '900004' },
   ]});
 
   console.log('  ✓ Platby hráčů (PAID/PENDING/OVERDUE/WAIVED) + týmové platby');

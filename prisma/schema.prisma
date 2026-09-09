@@ -412,7 +412,7 @@ model TeamPayment {
   id             String        @id @default(uuid())
   teamId         String        @unique
   season         String        @default("2025/26")
-  amount         Int           @default(9700)
+  amount         Int           @default(8000)
   status         PaymentStatus @default(PENDING)
   /// Kolik uz na registraci prislo v sezone `season` (viz PlayerPayment.licPaidAmount).
   paidAmount     Int           @default(0)
