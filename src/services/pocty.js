@@ -15,8 +15,18 @@ const SOUPISKA = { minPole: 9, minBrankaru: 1, maxPole: 15, maxBrankaru: 2 };
 /** Otevřený tým má soupisku přísnější: 12 + 2. */
 const SOUPISKA_OTEVRENY = { ...SOUPISKA, maxPole: 12 };
 
-/** Sestava na zápas — 8 + 1 minimum, 12 + 2 maximum. */
-const SESTAVA = { minPole: 8, minBrankaru: 1, maxPole: 12, maxBrankaru: 2 };
+/**
+ * Sestava na zápas — **8 + 1 minimum, 15 + 2 maximum**.
+ *
+ * Strop se 10. 9. 2026 zvedl z 12 na 15, tedy na stejné číslo jako obecná
+ * soupiska: kdo je na soupisce, může nastoupit. Nižší strop v sestavě
+ * znamenal, že vedoucí musel někoho ze soupisky nechat doma, i když měl
+ * zaplacený start — a nikde nebylo napsané, podle čeho vybírat.
+ *
+ * U otevřených týmů se to neprojeví: jejich soupiska je 12 + 2, takže
+ * strop drží ta.
+ */
+const SESTAVA = { minPole: 8, minBrankaru: 1, maxPole: 15, maxBrankaru: 2 };
 
 /** Limity soupisky podle typu týmu. */
 function limitySoupisky(team) {

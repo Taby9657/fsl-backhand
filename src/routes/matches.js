@@ -183,7 +183,7 @@ router.post('/:id/start', requireAuth, async (req, res, next) => {
     const isSup = isSupervisorUser(req.user);
     if (!isReferee && !isSup) return res.status(403).json({ error: 'Nemáte oprávnění' });
 
-    // Kontrola sestav — 8 + 1 minimum, 12 + 2 maximum.
+    // Kontrola sestav — 8 + 1 minimum, 15 + 2 maximum (limity v pocty.js).
     //
     // Dřív se počítalo devět lidí celkem plus „někdo je brankář", takže
     // sestava 7 do pole a 2 brankáři prošla. Pole a brankáři se proto
