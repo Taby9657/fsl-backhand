@@ -825,7 +825,9 @@ model ReferralUse {
   @@index([codeId])
 }
 
-/// Pokuta za kontumaci — 2 200 Kč ve výši ušlého zápasného.
+/// Pokuta za kontumaci. Plochá částka daná ceníkem — nezávisí na tom, kolik
+/// hráčů se do sestavy přihlásilo, jinak by tým, kterému se nepřihlásil nikdo,
+/// nezaplatil nic, přestože zápas zmařil nejvíc.
 ///
 /// Předepisuje se týmu, který se nedostavil nebo nesehnal sestavu, a platí
 /// ji vedoucí. Hráčům toho týmu zároveň propadnou starty z balíčku

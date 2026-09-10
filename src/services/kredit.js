@@ -34,11 +34,12 @@ const LHUTA_ODHLASENI_H = 12;
  * Ceník balíčků. Ceny jsou konečné; liga není plátce DPH, takže se k nim
  * nic nepřipočítává a daň se nikde neuvádí.
  *
- * Ze startů se platí hala, rozhodčí a zdravotník. Sazby jsou postavené tak,
- * že i nejtenčí sestava zápas pokryje: 9 hráčů na každé straně po 162,50 Kč
- * (šestnáctka) dá 2 925 Kč proti nákladu 2 200 Kč na zápas.
+ * Ze startů liga platí organizaci soutěže. Nejmenší balíček stojí 200 Kč
+ * a s velikostí cena za zápas klesá na 150.
  *
- * Nejmenší balíček stojí 200 Kč a s velikostí cena za zápas klesá na 150.
+ * **Náklady ligy na zápas do kódu nepatří** a nejsou tu schválně. Je to
+ * obchodní údaj: kdo ho zná, dopočítá si marži. Kontrola, že ceník náklady
+ * pokryje, se dělá mimo systém.
  */
 const BALICKY = [
   { size: 1,  price: 200  },
@@ -463,9 +464,8 @@ async function vyresKontumaci(matchId, vinikTeamId, tx = prisma) {
  * a kód se vyplatil sám.
  *
  * **Kolik lidí kdo přivede, omezené není.** Kdo přivede deset hráčů, dostane
- * deset zápasů zdarma. Strop by šel proti smyslu odměny: náklad na zápas
- * zaplatí ti přivedení hráči svými balíčky, takže každý další je pro ligu
- * plusový, ne minusový.
+ * deset zápasů zdarma. Strop by šel proti smyslu odměny: každý přivedený si
+ * své starty platí sám, takže je pro ligu vždycky plusový, ne minusový.
  */
 async function odmenZaDoporuceni(playerId, pack, tx = prisma) {
   if (!pack || pack.size < MIN_BALICEK_PRO_ODMENU || pack.isReward) return null;

@@ -1,12 +1,12 @@
 /**
  * Pokuty za kontumaci.
  *
- * Když se tým nedostaví nebo nesehná sestavu, hřiště a rozhodčí jsou
- * zaplacení a nikdo nehrál. Trest má proto dvě části:
+ * Když se tým nedostaví nebo nesehná sestavu, zápas je zmařený a liga za něj
+ * stejně zaplatila. Trest má proto dvě části:
  *
  *   1. hráčům viníka propadnou starty z balíčku (`kredit.vyresKontumaci`),
  *      soupeři se vrátí — ten za nic nemůže,
- *   2. tým dostane pokutu ve výši ušlého zápasného a platí ji vedoucí.
+ *   2. tým dostane pokutu podle ceníku a platí ji vedoucí.
  *
  * Proč obojí a ne jen jedno: samotné propadlé starty trestají tým tím víc,
  * čím víc lidí se přihlásilo — a tým, kterému se nepřihlásil nikdo, by
@@ -19,7 +19,13 @@
 
 const prisma = require('../lib/prisma');
 
-/** Ušlé zápasné za hřiště a rozhodčího. Plochá částka, viz komentář výš. */
+/**
+ * Pokuta za kontumaci podle ceníku. **Plochá částka** — schválně nezávisí
+ * na tom, kolik hráčů se do sestavy přihlásilo (viz komentář výš).
+ *
+ * Náklady ligy na zápas tu nejsou a být nemají: je to obchodní údaj, ze
+ * kterého se dá dopočítat marže, a systém ho k ničemu nepotřebuje.
+ */
 const POKUTA_KONTUMACE = 2200;
 
 /** Stavy, ve kterých pokuta pořád visí. */
@@ -42,7 +48,10 @@ async function predepis(match, vinikTeamId, tx = prisma) {
       matchId: match.id,
       season: match.season,
       amount: POKUTA_KONTUMACE,
-      reason: `Kontumace zápasu ${datum} — ušlé zápasné za hřiště a rozhodčího.`,
+      // Text jde do databáze a **vidí ho vedoucí na Platbách**. Nesmí proto
+      // popisovat, z čeho se náklad ligy skládá — z toho by se dala dopočítat
+      // marže. Stačí, za co pokuta je.
+      reason: `Kontumace zápasu ${datum} — tým se nedostavil nebo nesehnal sestavu.`,
     },
   });
   return { pokuta, uzBylo: false };

@@ -11,7 +11,7 @@
 --
 -- Trest má dvě části:
 --   1. hráčům viníka propadnou starty (MatchEntry → SPENT), soupeři se vrátí
---   2. tým dostane pokutu 2 200 Kč ve výši ušlého zápasného
+--   2. tým dostane pokutu 2 200 Kč podle ceníku
 --
 -- Plochá pokuta je tu schválně. Kdyby se počítala z propadlých startů,
 -- tým, kterému se do sestavy nikdo nepřihlásil, by nezaplatil nic — tedy
