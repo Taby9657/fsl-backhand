@@ -155,10 +155,21 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
 // Vyžaduje: jméno, příjmení, číslo dresu, pozici, teamId
 router.post('/', requireAuth, async (req, res, next) => {
   try {
-    const { firstName, lastName, jersey, position, birthdate, phone, teamId, inviteCode } = req.body;
-    // Dres 0 je platné číslo, proto se ptáme na prázdnou hodnotu, ne na falsy
+    const {
+      firstName, lastName, jersey, position, birthdate, phone, teamId, inviteCode,
+      // Hráč bez týmu: chce do draft poolu, kód od vedoucího nemá a mít
+      // nemůže. Je to výslovný příznak, ne mlčky povolený stav — klient,
+      // kterému se jen ztratil kód, nemá nechtěně skončit bez týmu.
+      bezTymu,
+    } = req.body;
+
+    const doDraftu = bezTymu === true && !inviteCode && !teamId;
+
+    // Dres 0 je platné číslo, proto se ptáme na prázdnou hodnotu, ne na falsy.
+    // Hráč bez týmu dres nepotřebuje — čísla se hlídají v rámci týmu a on
+    // v žádném není. Vybere si ho, až ho někdo draftuje.
     const dresChybi = jersey === undefined || jersey === null || jersey === '';
-    if (!firstName || !lastName || dresChybi) {
+    if (!firstName || !lastName || (dresChybi && !doDraftu)) {
       return res.status(400).json({ error: 'Chybí povinné údaje (jméno, příjmení, číslo dresu)' });
     }
 
@@ -174,14 +185,54 @@ router.post('/', requireAuth, async (req, res, next) => {
       cilovyTeamId = invite.teamId;
     }
 
-    if (!cilovyTeamId) {
-      return res.status(400).json({ error: 'Chybí pozvánkový kód' });
+    if (!cilovyTeamId && !doDraftu) {
+      return res.status(400).json({
+        error: 'Chybí pozvánkový kód. Pokud tým nemáš, dá se profil založit i bez něj '
+             + 'a nabídnout se v draftu.',
+        code:  'NO_INVITE_CODE',
+      });
     }
 
     // BUG-09 OPRAVA: Validace čísla dresu (zabraňuje NaN z parseInt)
-    const jerseyNum = parseInt(jersey, 10);
+    const jerseyNum = dresChybi ? 0 : parseInt(jersey, 10);
     if (isNaN(jerseyNum) || jerseyNum < 0 || jerseyNum > 99) {
       return res.status(400).json({ error: 'Číslo dresu musí být číslo v rozsahu 0–99' });
+    }
+
+    // ── Hráč bez týmu ────────────────────────────────────────────────────
+    // Draft pool je jediná cesta do ligy pro toho, kdo nikoho nezná. Bez
+    // téhle větve se do něj nedalo dostat vůbec: `POST /draft/profile` chce
+    // hráčský profil bez týmu, ale profil šel založit jen pozvánkovým kódem,
+    // který hráče rovnou do týmu zapsal.
+    if (doDraftu) {
+      const existujici = await prisma.player.findUnique({ where: { userId: req.user.id } });
+      if (existujici) {
+        // Profil už má. S týmem je to chyba, bez týmu je to zopakovaný
+        // požadavek — vrátíme, co existuje, ať onboarding doběhne.
+        if (existujici.teamId) {
+          return res.status(409).json({
+            error: 'Hráčský profil už máš a jsi v týmu. Nejdřív ho opusť v nastavení profilu.',
+            code:  'ALREADY_IN_TEAM',
+          });
+        }
+        return res.status(200).json(existujici);
+      }
+
+      const sezonaLigy = await seasonSvc.currentSeason();
+      const volny = await prisma.player.create({
+        data: {
+          userId:    req.user.id,
+          teamId:    null,
+          firstName,
+          lastName,
+          jersey:    jerseyNum,
+          position:  position || 'Útočník',
+          birthdate: birthdate ? new Date(birthdate) : null,
+          phone,
+          payment:   { create: sezonaLigy ? { season: sezonaLigy } : {} },
+        },
+      });
+      return res.status(201).json(volny);
     }
 
     // Uživatel už hráče má. Není to nutně chyba — může to být zopakovaný

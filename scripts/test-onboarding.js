@@ -219,6 +219,31 @@ const server = app.listen(0, async () => {
   const doZamitnuteho = await volej('/players/join', { inviteCode: 'FSL-ZAM-BBBB' }, 'U9');
   ok(doZamitnuteho.status === 404, 'bez profilu nejde použít join (404, ne pád)');
 
+  // --- hráč bez týmu (draft pool) ---
+  // Do draftu se jinak nedalo dostat vůbec: `POST /draft/profile` chce
+  // hráčský profil bez týmu, ale profil šel založit jen pozvánkovým kódem,
+  // který hráče rovnou do týmu zapsal.
+  const bezKodu = await volej('/players', { firstName: 'Pavel', lastName: 'Volny', jersey: 8 }, 'U7');
+  ok(bezKodu.status === 400 && bezKodu.telo.code === 'NO_INVITE_CODE',
+    'bez kódu a bez příznaku profil nevznikne');
+  ok(/nabídnout se v draftu/.test(bezKodu.telo.error ?? ''),
+    'a chybová hláška rovnou nabídne draft');
+
+  const volny = await volej('/players', { firstName: 'Pavel', lastName: 'Volny', bezTymu: true }, 'U7');
+  ok(volny.status === 201, 'hráč bez týmu si profil založí');
+  ok(volny.telo.teamId === null, 'a zůstane bez týmu');
+  ok(volny.telo.jersey === 0, 'dres se nevynucuje — vybere si ho, až ho někdo draftuje');
+  ok(volny.telo.payment?.season === '2026/27', 'licence vznikne na aktuální sezónu');
+  ok(db.zapisyNaSoupisku.every(z => z.playerId !== volny.telo.id),
+    'na žádnou soupisku se nezapíše');
+
+  const znovuVolny = await volej('/players', { firstName: 'Pavel', lastName: 'Volny', bezTymu: true }, 'U7');
+  ok(znovuVolny.status === 200, 'zopakovaný požadavek vrátí 200, ne druhý profil');
+
+  const vTymuDoDraftu = await volej('/players', { firstName: 'Jan', lastName: 'Novak', bezTymu: true }, 'U1');
+  ok(vTymuDoDraftu.status === 409 && vTymuDoDraftu.telo.code === 'ALREADY_IN_TEAM',
+    'kdo je v týmu, do draftu takhle nespadne');
+
   // --- registrace týmu ---
   // Sezóna z těla se schválně ignoruje — proto se posílá jiná než aktuální
   // ('2026/27' z mocku) a čeká se, že tým stejně skončí v té aktuální.
