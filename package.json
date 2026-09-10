@@ -19,6 +19,7 @@
     "check:schema": "node scripts/check-schema.js",
     "test:pokuty": "node scripts/test-pokuty.js",
     "test:profil": "node scripts/test-profil-vedouciho.js",
+    "test:kosik": "node scripts/test-kosik.js",
     "fix:profily": "node scripts/doplnit-profily-vedoucich.js"
   },
   "dependencies": {

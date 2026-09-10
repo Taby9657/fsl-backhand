@@ -70,6 +70,11 @@ const fakePrisma = {
     deleteMany: async () => ({ count: 0 }),
   },
   lineupPlayer: { findMany: async () => [] },
+  // Soupiska vrací u každého hráče důvody, proč ho nejde postavit do sestavy.
+  // Bez těchhle tabulek by ten dotaz spadl a test by dostal HTML chybovku.
+  matchPack:     { findMany: async () => db.balicky ?? [] },
+  matchEntry:    { findMany: async () => [] },
+  playerPayment: { findMany: async () => [] },
   teamSeason:   { findFirst: async () => ({ season: '2026/27' }) },
   inviteCode:   { findUnique: async () => null },
   notification: { create: async () => ({}) },

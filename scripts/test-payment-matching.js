@@ -145,6 +145,12 @@ const fakePrisma = {
     },
   },
   // Pokuty za kontumaci (prefix 5).
+  // Košík (VS s prefixem 8). V těchhle testech žádný není — ale párování se
+  // na něj ptá, takže tabulka musí existovat, jinak spadne dotaz, ne test.
+  cart: {
+    findUnique: async ({ where }) => db.carts?.find((r) => whereMatch(r, where)) ?? null,
+    updateMany: async () => ({ count: 0 }),
+  },
   fine: {
     findUnique: async ({ where }) => db.fines.find((r) => whereMatch(r, where)) ?? null,
     findMany:   async ({ where }) => db.fines.filter((r) => whereMatch(r, where)),

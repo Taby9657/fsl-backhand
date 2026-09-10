@@ -28,6 +28,7 @@ const FIO_TOKEN    = process.env.FIO_API_TOKEN;
  *   Tým  – registrace:  3 + 7místné číslo (prefix 3)
  *   Tým  – pokuta za kontumaci: 5 + 7místné číslo (prefix 5)
  *   Hráč – balíček zápasů: 7 + 7místné číslo (prefix 7)
+ *   Košík (víc poplatků naráz): 8 + 7místné číslo (prefix 8)
  *
  * Prefix 4 patřil poplatku za domácí zápas, zrušenému 9. 9. 2026.
  * Nerecykluje se.
@@ -47,6 +48,9 @@ function generateVS(type, sequenceNumber) {
     // převod, ať skončí mezi nespárovanými a někdo se na něj podívá.
     FINE:           5,
     MATCH_PACK:     7,
+    // Košík: víc poplatků v jedné platbě. Jeden VS, jedno spárování,
+    // nulový poplatek — proto košík vůbec vznikl.
+    CART:           8,
   };
   const prefix = prefixes[type] ?? 9;
   const seq    = String(sequenceNumber).padStart(7, '0').slice(0, 7);
@@ -141,6 +145,26 @@ async function ensureFineVS(fineId) {
     const vs    = generateVS('FINE', count + 1 + attempt);
     try {
       await prisma.fine.update({ where: { id: fineId }, data: { variableSymbol: vs } });
+      return vs;
+    } catch (err) {
+      if (err.code !== 'P2002' || attempt >= 4) throw err;
+    }
+  }
+}
+
+/**
+ * Přidělí VS košíku. Prefix 8 — jedna platba za víc poplatků naráz.
+ */
+async function ensureCartVS(cartId) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const cart = await prisma.cart.findUnique({ where: { id: cartId } });
+    if (!cart) throw new Error('Košík nenalezen');
+    if (cart.variableSymbol) return cart.variableSymbol;
+
+    const count = await prisma.cart.count({ where: { variableSymbol: { not: null } } });
+    const vs    = generateVS('CART', count + 1 + attempt);
+    try {
+      await prisma.cart.update({ where: { id: cartId }, data: { variableSymbol: vs } });
       return vs;
     } catch (err) {
       if (err.code !== 'P2002' || attempt >= 4) throw err;
@@ -308,6 +332,13 @@ async function matchTransaction(tx) {
     include: { player: { select: { id: true, firstName: true, lastName: true, userId: true } } },
   });
   if (pack) return payMatchPack(pack, tx);
+
+  // 6. Košík (prefix 8) — víc poplatků v jedné platbě
+  const cart = await prisma.cart.findUnique({
+    where:   { variableSymbol: vs },
+    include: { items: true, user: { select: { id: true } } },
+  });
+  if (cart) return payCart(cart, tx);
 
   return { matched: false, reason: 'variabilní symbol nenalezen v databázi' };
 }
@@ -616,6 +647,19 @@ async function getPaymentQR(type, id) {
     vs      = await ensurePackVS(id);
     amount  = pack.price;
     message = `FSL balicek ${pack.size} zapasu ${pack.player.firstName} ${pack.player.lastName}`;
+  } else if (type === 'cart') {
+    // id = cartId. Celý košík má jeden VS a jednu částku — tohle je nejlevnější
+    // cesta, jakou liga má: převod nestojí nic, a jde jich přes jeden příkaz víc.
+    const cart = await prisma.cart.findUnique({
+      where:   { id },
+      include: { items: true },
+    });
+    if (!cart) throw new Error('Košík nenalezen');
+    if (cart.items.length === 0) throw new Error('Košík je prázdný');
+    const kosik = require('./kosik');
+    vs      = await ensureCartVS(id);
+    amount  = kosik.soucet(cart.items);
+    message = `FSL platba ${cart.items.length} polozek`;
   } else {
     throw new Error('Neznámý typ platby');
   }
@@ -744,8 +788,66 @@ async function payMatchPack(pack, tx) {
   return { matched: true, type: 'MATCH_PACK' };
 }
 
+/**
+ * Převod na košík.
+ *
+ * Košík je nedělitelný: dokud nepřijde celá částka, **nezaúčtuje se nic**.
+ * Rozpouštět částečnou platbu po položkách by znamenalo rozhodovat za
+ * plátce, co chtěl zaplatit dřív — a u licence a balíčku to není jedno,
+ * protože bez licence hráč stejně nenastoupí.
+ */
+async function payCart(cart, tx) {
+  if (cart.status === 'PAID') {
+    return { matched: false, reason: 'košík už evidujeme jako zaplacený' };
+  }
+
+  const kosik   = require('./kosik');
+  const potreba = kosik.soucet(cart.items);
+  const zaplaceno = (cart.paidAmount ?? 0) + tx.amount;
+
+  if (zaplaceno < potreba) {
+    const pripsano = await prisma.cart.updateMany({
+      where: { id: cart.id, status: { not: 'PAID' } },
+      data:  { paidAmount: zaplaceno, method: 'bank' },
+    });
+    if (pripsano.count === 0) {
+      return { matched: false, reason: 'platba právě zpracována jiným procesem (race condition)' };
+    }
+    await sendNotification(
+      cart.userId,
+      'Platba — chybí doplatek',
+      `Přijali jsme ${tx.amount} Kč. Do zaplacení celé objednávky chybí ${potreba - zaplaceno} Kč. `
+      + 'Položky se aktivují, až dorazí celá částka.',
+    );
+    return castecna('CART', { cartId: cart.id }, tx, zaplaceno, potreba);
+  }
+
+  const vysledek = await kosik.zauctuj(cart.id, { method: 'bank', castka: zaplaceno });
+  if (!vysledek.ok || vysledek.uzBylo) {
+    return { matched: false, reason: 'platba právě zpracována jiným procesem (race condition)' };
+  }
+
+  await sendNotification(
+    cart.userId,
+    'Platba je zaplacená',
+    `Přijali jsme ${zaplaceno} Kč. ${cart.items.length} ${cart.items.length === 1 ? 'položka je' : 'položky jsou'} vyřízené.`,
+  );
+
+  for (const item of vysledek.dvoji ?? []) {
+    await ohlasSupervisorum(
+      'Dvojí platba',
+      `V zaplaceném košíku ${cart.id} byla položka „${kosik.nazev(item)}" (${item.amount} Kč), `
+      + 'která už byla zaplacená jinak. Peníze je potřeba vrátit.',
+    );
+  }
+
+  await hlidejPreplatek(`košík ${cart.id}`, zaplaceno, potreba, tx);
+  return { matched: true, type: 'CART', cartId: cart.id };
+}
+
 module.exports = {
   bankSync,
+  ensureCartVS,
   ensurePlayerVS,
   ensureTeamVS,
   ensurePackVS,

@@ -179,6 +179,12 @@ Každý typ platby má vlastní variabilní symbol s odlišným prefixem:
 | Registrace týmu | 3 000 Kč | `3` + 7 číslic | `TeamPayment.variableSymbol` |
 | Pokuta za kontumaci | 2 200 Kč | `5` + 7 číslic | `Fine.variableSymbol` |
 | Balíček zápasů | 200–3 000 Kč | `7` + 7 číslic | `MatchPack.variableSymbol` |
+| **Košík (víc poplatků naráz)** | součet položek | `8` + 7 číslic | `Cart.variableSymbol` |
+
+**Košík je nedělitelný.** Dokud nepřijde celá částka, nezaúčtuje se ani jedna
+položka — rozpouštět částečnou platbu po položkách by znamenalo rozhodovat za
+plátce, co chtěl zaplatit dřív. Částečná platba se připíše do `Cart.paidAmount`
+a plátci odejde upozornění, kolik chybí.
 
 **Prefix 4 patřil poplatku za domácí zápas, zrušenému 9. 9. 2026.** Nerecykluje se —
 kdyby dorazil starý převod, skončí mezi nespárovanými.

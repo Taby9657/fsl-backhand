@@ -12,6 +12,7 @@
  *   - registrace týmu        → vedoucí toho týmu
  *   - balíček zápasů         → hráč, kterému balíček patří
  *   - pokuta za kontumaci    → vedoucí potrestaného týmu
+ *   - košík                  → ten, kdo si ho složil
  *
  * Poplatek za domácí zápas (`home-fee`) tu byl do 9. 9. 2026. Zápasy dnes
  * platí hráči v balíčku, takže ten typ zmizel — a `smiKPlatbe` ho vrací jako
@@ -25,6 +26,7 @@ const TYPY_HRAC = ['player-license', 'super-license'];
 const TYPY_TYM  = ['team-reg'];
 const TYPY_BALICEK = ['match-pack'];
 const TYPY_POKUTA  = ['fine'];
+const TYPY_KOSIK   = ['cart'];
 
 /**
  * @returns {Promise<boolean|null>} true = smí, false = nesmí, null = neznámý typ
@@ -50,6 +52,13 @@ async function smiKPlatbe(user, type, id) {
     });
     // Pokutu platí vedoucí potrestaného týmu. Soupeři do ní nic není.
     return !!pokuta && teamIds.includes(pokuta.teamId);
+  }
+
+  if (TYPY_KOSIK.includes(type)) {
+    // Košík patří tomu, kdo ho složil. I když jsou v něm položky za jiné
+    // hráče, platí ho on — a jen on k němu smí dostat VS a QR kód.
+    const cart = await prisma.cart.findUnique({ where: { id }, select: { userId: true } });
+    return !!cart && cart.userId === user.id;
   }
 
   if (TYPY_BALICEK.includes(type)) {
@@ -81,4 +90,7 @@ async function overPlatbu(req, res, type, id) {
   return true;
 }
 
-module.exports = { smiKPlatbe, overPlatbu, TYPY_HRAC, TYPY_TYM, TYPY_BALICEK, TYPY_POKUTA };
+module.exports = {
+  smiKPlatbe, overPlatbu,
+  TYPY_HRAC, TYPY_TYM, TYPY_BALICEK, TYPY_POKUTA, TYPY_KOSIK,
+};

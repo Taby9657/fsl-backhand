@@ -12,6 +12,7 @@ const prisma = require('../lib/prisma');
 const licence = require('../services/licence');
 const seasonSvc = require('../services/seasonTransition');
 const hracskyProfil = require('../services/hracskyProfil');
+const kredit = require('../services/kredit');
 
 // GET /teams – seznam všech týmů
 //
@@ -319,6 +320,35 @@ router.get('/:id/roster', async (req, res, next) => {
       },
     });
 
+    // Proč hráče nejde postavit do sestavy, se musí vědět **dopředu**.
+    // Dřív to vedoucí zjistil až z chyby při odeslání celé sestavy, tedy
+    // po tom, co ji poskládal — a nezjistil, že mu chybí náhradník, dokud
+    // nebylo pozdě. Pravidla jsou stejná jako v bráně v `matches.js`.
+    const idHracu = radky.map(r => r.playerId);
+    const [starty, jizPrihlaseni] = await Promise.all([
+      kredit.zustatky(idHracu, season),
+      // Kdo na tenhle zápas start už má (rezervovaný i zúčtovaný), platit
+      // znovu nemusí — nulový zůstatek ho tedy neblokuje.
+      req.query.matchId
+        ? prisma.matchEntry.findMany({
+            where:  { matchId: req.query.matchId, playerId: { in: idHracu }, status: { in: ['RESERVED', 'SPENT'] } },
+            select: { playerId: true },
+          })
+        : [],
+    ]);
+    const maStart = new Set(jizPrihlaseni.map(e => e.playerId));
+
+    function duvody(player, payment) {
+      const seznam = [];
+      if (!licence.maZakladniLicenci(payment)) {
+        seznam.push({ code: 'NO_LICENSE', text: 'Nemá zaplacenou licenci na tuhle sezónu.' });
+      }
+      if ((starty.get(player.id) ?? 0) === 0 && !maStart.has(player.id)) {
+        seznam.push({ code: 'NO_CREDIT', text: 'Nezbývá mu žádný start v balíčku zápasů.' });
+      }
+      return seznam;
+    }
+
     const hraci = radky.map(r => ({
       ...r.player,
       isHome:   r.isHome,
@@ -326,6 +356,8 @@ router.get('/:id/roster', async (req, res, next) => {
       addedAt:  r.createdAt,
       licensed: licence.maZakladniLicenci(r.player.payment),
       superLic: licence.maSuperlicenci(r.player.payment),
+      credits:  starty.get(r.playerId) ?? 0,
+      blockers: duvody(r.player, r.player.payment),
     }));
 
     // Brankáři nahoru — na soupisce drží první místa, ať je na první pohled
@@ -349,6 +381,10 @@ router.get('/:id/roster', async (req, res, next) => {
         ...p,
         slot:     slotZPostu(p.position),
         licensed: licence.maZakladniLicenci(p.payment),
+        // Kmenový hráč mimo soupisku sezóny. Do sestavy se nedostane, dokud
+        // ho vedoucí nedoplní — proto to má vlastní důvod, ne jen chybějící
+        // řádek v jiném seznamu.
+        blockers: [{ code: 'NOT_ON_ROSTER', text: 'Není na soupisce téhle sezóny.' }],
       })),
       goalkeepers: hraci.filter(p => p.slot === 'GOALKEEPER').length,
     });

@@ -114,6 +114,43 @@ async function zustatek(playerId, season) {
 }
 
 /**
+ * Zůstatky celé soupisky naráz — `Map(playerId → počet startů)`.
+ *
+ * Existuje kvůli soupisce: vedoucí musí vidět **dopředu**, koho do sestavy
+ * postavit nejde, ne se to dozvědět až z chyby při odeslání. Sekvenční
+ * `zustatek()` po hráčích by na patnáctičlenné soupisce znamenal patnáct
+ * dotazů; tohle je jeden.
+ */
+async function zustatky(playerIds, season, tx = prisma) {
+  const prazdno = new Map((playerIds ?? []).map(id => [id, 0]));
+  if (!playerIds?.length) return prazdno;
+
+  const balicky = await tx.matchPack.findMany({
+    where: { playerId: { in: playerIds }, status: { in: ZAPLACENO }, remaining: { gt: 0 } },
+  });
+  if (balicky.length === 0) return prazdno;
+
+  // Přenos z minulé sezóny se potvrzuje zaplacenou licencí na tu novou.
+  // Ptáme se jen na hráče, kterých se to doopravdy týká.
+  const seStarym = [...new Set(balicky.filter(b => b.season !== season).map(b => b.playerId))];
+  const potvrzeno = new Set();
+  if (seStarym.length) {
+    const platby = await tx.playerPayment.findMany({
+      where:  { playerId: { in: seStarym }, season, licStatus: { in: ZAPLACENO } },
+      select: { playerId: true },
+    });
+    for (const p of platby) potvrzeno.add(p.playerId);
+  }
+
+  for (const b of balicky) {
+    if (b.validUntil && season && b.validUntil < season) continue;
+    if (b.season !== season && !potvrzeno.has(b.playerId)) continue;
+    prazdno.set(b.playerId, (prazdno.get(b.playerId) ?? 0) + b.remaining);
+  }
+  return prazdno;
+}
+
+/**
  * Přehled pro obrazovku plateb — co má hráč koupené, co mu zbývá a na které
  * zápasy je přihlášený. Klient si tím vystačí s jedním voláním.
  */
@@ -464,7 +501,7 @@ async function odmenZaDoporuceni(playerId, pack, tx = prisma) {
 module.exports = {
   BALICKY, balicek, ZAPLACENO, LHUTA_ODHLASENI_H, MIN_BALICEK_PRO_ODMENU,
   maLicenciNaSezonu,
-  zustatek, prehled, rezervuj, uvolni, odhlas, hodinDoVykopu, odehranychZapasu,
+  zustatek, zustatky, prehled, rezervuj, uvolni, odhlas, hodinDoVykopu, odehranychZapasu,
   srovnejRezervace, chybejiciStarty, zamkniSestavu, zamkniSestavy, zuctujZapas,
   vratZapas, vyresKontumaci, odmenZaDoporuceni,
 };

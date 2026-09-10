@@ -3,12 +3,13 @@ const express = require('express');
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { requireAuth, requireSupervisor, isSupervisorUser } = require('../middleware/auth');
 const {
-  bankSync, ensurePlayerVS, ensureTeamVS, ensurePackVS, ensureFineVS, getPaymentQR,
+  bankSync, ensurePlayerVS, ensureTeamVS, ensurePackVS, ensureFineVS, ensureCartVS, getPaymentQR,
   ohlasSupervisorum, jeZeStareSezony,
 } = require('../services/bankSync');
 const { overPlatbu } = require('../utils/opravneniPlatby');
 const seasonSvc = require('../services/seasonTransition');
 const kredit    = require('../services/kredit');
+const kosik     = require('../services/kosik');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -48,18 +49,31 @@ function assertStripe(res) {
 // Jednotná Checkout session.
 // Záměrně BEZ payment_method_types – Stripe pak nabídne všechny metody zapnuté
 // v dashboardu, tedy kartu i Apple Pay / Google Pay / Link podle zařízení.
-async function createCheckout({ name, amountCzk, type, metadata, email }) {
+async function createCheckout({ name, amountCzk, polozky, type, metadata, email }) {
   const web = webUrl();
+  // Košík posílá `polozky` — víc řádků v jedné session. Stripe si strhne
+  // pevný poplatek jen jednou, což je celý důvod, proč košík existuje.
+  const radky = polozky?.length
+    ? polozky.map(p => ({
+        price_data: {
+          currency: 'czk',
+          product_data: { name: p.name },
+          unit_amount: Math.round(Number(p.amountCzk) * 100),
+        },
+        quantity: 1,
+      }))
+    : [{
+        price_data: {
+          currency: 'czk',
+          product_data: { name },
+          unit_amount: Math.round(Number(amountCzk) * 100), // haléře
+        },
+        quantity: 1,
+      }];
+
   return stripe.checkout.sessions.create({
     mode: 'payment',
-    line_items: [{
-      price_data: {
-        currency: 'czk',
-        product_data: { name },
-        unit_amount: Math.round(Number(amountCzk) * 100), // haléře
-      },
-      quantity: 1,
-    }],
+    line_items: radky,
     locale: 'cs',
     // Session drzime hodinu. Delsi platnost jen zvysuje sanci, ze nekdo
     // dokonci starou platbu, kterou uz mezitim uhradil jinak.
@@ -424,6 +438,222 @@ router.post('/team-registration', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+// ==================== KOŠÍK ====================
+//
+// Víc poplatků, jedna platba. Stripe si u české karty bere 1,5 % + 6,50 Kč
+// a ta pevná část se platí za každou transakci zvlášť — licence a balíček
+// koupené odděleně stojí ligu o 6,50 Kč víc než totéž najednou. U převodu
+// je úspora ještě větší, protože jeden variabilní symbol nestojí nic.
+//
+// Pokuta za kontumaci do košíku nepatří: blokuje týmu další zápas, takže
+// se platí hned a zvlášť.
+
+/** Smí přihlášený platit za tohohle hráče? Sebe, nebo hráče svého týmu. */
+async function smiZaHrace(user, playerId) {
+  if (isSupervisorUser(user)) return true;
+  if (user.player?.id === playerId) return true;
+  const teamIds = (user.manager ?? []).map(m => m.teamId);
+  if (teamIds.length === 0) return false;
+  const player = await prisma.player.findUnique({
+    where:  { id: playerId },
+    select: { teamId: true },
+  });
+  // Vedoucí platí za hráče na soupisce svého týmu — kmenové i hostující.
+  if (player?.teamId && teamIds.includes(player.teamId)) return true;
+  const naSoupisce = await prisma.teamRoster.findFirst({
+    where:  { playerId, teamId: { in: teamIds } },
+    select: { id: true },
+  });
+  return !!naSoupisce;
+}
+
+/**
+ * Spočítá cenu položky a ověří, že se ještě dá koupit.
+ * Vrací `{ error, code }`, nebo hotová data pro `kosik.pridej`.
+ */
+async function pripravPolozku(req, sezona) {
+  const { kind, playerId, teamId, size } = req.body ?? {};
+
+  if (kind === 'PLAYER_LICENSE' || kind === 'SUPER_LICENSE' || kind === 'MATCH_PACK') {
+    const cilovy = playerId || req.user.player?.id;
+    if (!cilovy) return { error: 'Hráčský profil nenalezen', code: 'NO_PLAYER', status: 404 };
+    if (!await smiZaHrace(req.user, cilovy)) {
+      return { error: 'Za tohohle hráče platit nemůžeš', code: 'FORBIDDEN', status: 403 };
+    }
+
+    const platba = await prisma.playerPayment.findUnique({ where: { playerId: cilovy } });
+
+    if (kind === 'MATCH_PACK') {
+      const definice = kredit.balicek(size);
+      if (!definice) {
+        return {
+          error:  `Balíček musí být jeden z: ${kredit.BALICKY.map(b => b.size).join(', ')} zápasů`,
+          code:   'BAD_PACK', status: 400,
+        };
+      }
+      return {
+        kind, playerId: cilovy, packSize: definice.size,
+        amount: definice.price, season: sezona,
+      };
+    }
+
+    const jeLic = kind === 'PLAYER_LICENSE';
+    if (platba?.[jeLic ? 'licStatus' : 'superStatus'] === 'PAID') {
+      return { error: 'Tahle položka je už zaplacená', code: 'ALREADY_PAID', status: 409 };
+    }
+    return {
+      kind, playerId: cilovy,
+      amount: platba?.[jeLic ? 'licFee' : 'superFee'] ?? 300,
+      season: platba?.season ?? sezona,
+    };
+  }
+
+  if (kind === 'TEAM_REG') {
+    const teamIds = (req.user.manager ?? []).map(m => m.teamId);
+    const cilovy  = teamId || teamIds[0];
+    if (!cilovy) return { error: 'Nevedeš žádný tým', code: 'NOT_MANAGER', status: 403 };
+    if (!teamIds.includes(cilovy) && !isSupervisorUser(req.user)) {
+      return { error: 'Tenhle tým nevedeš', code: 'FORBIDDEN', status: 403 };
+    }
+    const platba = await prisma.teamPayment.findUnique({ where: { teamId: cilovy } });
+    if (platba && platba.status === 'PAID' && !jeZeStareSezony(platba, sezona)) {
+      return { error: 'Registrace je už zaplacená', code: 'ALREADY_PAID', status: 409 };
+    }
+    return { kind, teamId: cilovy, amount: platba?.amount ?? 3000, season: sezona };
+  }
+
+  if (kind === 'FINE') {
+    // Vědomé odmítnutí, ne opomenutí: nezaplacená pokuta blokuje týmu další
+    // zápas, takže čekat v košíku na to, až si někdo vybere balíček, nesmí.
+    return {
+      error: 'Pokuta za kontumaci se do košíku nedává — blokuje týmu další zápas, '
+           + 'takže se platí zvlášť a hned.',
+      code:  'FINE_NOT_IN_CART', status: 400,
+    };
+  }
+
+  return { error: 'Neznámý typ položky', code: 'BAD_KIND', status: 400 };
+}
+
+/** Košík doplněný o jména, ať klient nemusí dotahovat hráče a týmy zvlášť. */
+async function popisKosik(cart, jaPlayerId = null) {
+  if (!cart) return null;
+  const items = cart.items ?? [];
+  const hraci = items.filter(i => i.playerId).map(i => i.playerId);
+  const tymy  = items.filter(i => i.teamId).map(i => i.teamId);
+
+  const [jmena, nazvy] = await Promise.all([
+    hraci.length
+      ? prisma.player.findMany({
+          where:  { id: { in: hraci } },
+          select: { id: true, firstName: true, lastName: true, jersey: true },
+        })
+      : [],
+    tymy.length
+      ? prisma.team.findMany({ where: { id: { in: tymy } }, select: { id: true, name: true } })
+      : [],
+  ]);
+  const hrac = new Map(jmena.map(p => [p.id, p]));
+  const tym  = new Map(nazvy.map(t => [t.id, t]));
+
+  return {
+    id:     cart.id,
+    season: cart.season,
+    status: cart.status,
+    total:  kosik.soucet(items),
+    items:  items.map(i => ({
+      id:       i.id,
+      kind:     i.kind,
+      label:    kosik.nazev(i),
+      amount:   i.amount,
+      packSize: i.packSize,
+      season:   i.season,
+      player:   i.playerId ? hrac.get(i.playerId) ?? null : null,
+      team:     i.teamId ? tym.get(i.teamId) ?? null : null,
+      /// Platím to za někoho jiného? Klient to ukáže jako „za <jméno>".
+      zaJineho: !!i.playerId && i.playerId !== jaPlayerId,
+    })),
+  };
+}
+
+// GET /payments/cart – co mám v košíku
+router.get('/cart', requireAuth, async (req, res, next) => {
+  try {
+    const cart = await kosik.otevreny(req.user.id);
+    res.json(await popisKosik(cart, req.user.player?.id ?? null) ?? {
+      id: null, season: await seasonSvc.currentSeason(), status: 'PENDING', total: 0, items: [],
+    });
+  } catch (err) { next(err); }
+});
+
+// POST /payments/cart/items – vložení položky
+router.post('/cart/items', requireAuth, async (req, res, next) => {
+  try {
+    const sezona = await seasonSvc.currentSeason();
+    if (!sezona) {
+      return res.status(409).json({ error: 'Liga nemá nastavenou aktuální sezónu', code: 'NO_CURRENT_SEASON' });
+    }
+
+    const pripravena = await pripravPolozku(req, sezona);
+    if (pripravena.error) {
+      return res.status(pripravena.status).json({ error: pripravena.error, code: pripravena.code });
+    }
+
+    const vysledek = await kosik.pridej(req.user.id, sezona, pripravena);
+    if (!vysledek.ok) {
+      return res.status(409).json({ error: 'Tuhle položku už v košíku máš', code: vysledek.code });
+    }
+
+    res.status(201).json(await popisKosik(await kosik.otevreny(req.user.id), req.user.player?.id ?? null));
+  } catch (err) { next(err); }
+});
+
+// DELETE /payments/cart/items/:id – vyhození položky
+router.delete('/cart/items/:id', requireAuth, async (req, res, next) => {
+  try {
+    const vysledek = await kosik.odeber(req.user.id, req.params.id);
+    if (!vysledek.ok) {
+      const stavy = { NOT_FOUND: 404, FORBIDDEN: 403, ALREADY_PAID: 409 };
+      return res.status(stavy[vysledek.code] ?? 400).json({
+        error: vysledek.code === 'ALREADY_PAID'
+          ? 'Košík je už zaplacený, měnit ho nejde'
+          : 'Položka nenalezena',
+        code: vysledek.code,
+      });
+    }
+    res.json(await popisKosik(await kosik.otevreny(req.user.id), req.user.player?.id ?? null)
+      ?? { items: [], total: 0 });
+  } catch (err) { next(err); }
+});
+
+// POST /payments/cart/checkout – zaplacení celého košíku kartou
+router.post('/cart/checkout', requireAuth, async (req, res, next) => {
+  try {
+    if (!assertStripe(res)) return;
+
+    const cart = await kosik.otevreny(req.user.id);
+    if (!cart || cart.items.length === 0) {
+      return res.status(400).json({ error: 'Košík je prázdný', code: 'EMPTY_CART' });
+    }
+
+    let session = await reuseOpenSession(cart.sessionId);
+    if (!session) {
+      session = await createCheckout({
+        polozky: cart.items.map(i => ({ name: `FSL ${kosik.nazev(i)}`, amountCzk: i.amount })),
+        type:     'cart',
+        email:    req.user.email,
+        metadata: { cartId: cart.id, type: 'CART' },
+      });
+      await prisma.cart.update({
+        where: { id: cart.id },
+        data:  { sessionId: session.id, amount: kosik.soucet(cart.items) },
+      });
+    }
+
+    res.json({ url: session.url, sessionId: session.id, cartId: cart.id });
+  } catch (err) { next(err); }
+});
+
 // ==================== STRIPE WEBHOOK ====================
 
 // POST /payments/webhook – Stripe webhook (raw body vyžadován!)
@@ -466,6 +696,12 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           where: { stripeId: session.id },
         });
         if (existingFine) alreadyProcessed = true;
+      } else if (metadata.type === 'CART' && metadata.cartId) {
+        const hotovy = await prisma.cart.findUnique({
+          where:  { id: metadata.cartId },
+          select: { status: true },
+        });
+        if (hotovy?.status === 'PAID') alreadyProcessed = true;
       }
 
       if (alreadyProcessed) {
@@ -554,6 +790,16 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
           },
         });
         if (updated.count === 0) await ohlasDvojiPlatbu('pokuta za kontumaci', session, castka);
+      } else if (metadata.type === 'CART' && metadata.cartId) {
+        // Košík se zaúčtovává po položkách v jedné transakci. Položka, která
+        // už zaplacená byla, se přeskočí a ohlásí — stejné pravidlo jako
+        // u jednotlivých plateb, jen se jich řeší víc naráz.
+        const vysledek = await kosik.zauctuj(metadata.cartId, {
+          method: 'stripe', stripeId: session.id, castka,
+        });
+        for (const item of vysledek.dvoji ?? []) {
+          await ohlasDvojiPlatbu(`${kosik.nazev(item)} (košík ${metadata.cartId})`, session, item.amount);
+        }
       }
     } catch (dbErr) {
       // BUG-01 OPRAVA: vrať 500 při selhání DB, aby Stripe mohl webhook opakovat
@@ -638,6 +884,18 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
             where: { id: metadata.fineId },
             data:  { status: 'PENDING', paidAt: null, method: null, paidAmount: 0, stripeId: null },
           });
+        } else if (metadata.type === 'CART' && metadata.cartId) {
+          // Košík je jedna charge, takže se vrací celý — Stripe neumí vrátit
+          // jeden řádek. Každá položka jde zpátky do nezaplaceného stavu.
+          const vysledek = await kosik.vrat(metadata.cartId);
+          for (const p of vysledek.vycerpane ?? []) {
+            await ohlasSupervisorum(
+              'Vrácený balíček měl odehrané zápasy',
+              `Z vráceného košíku ${metadata.cartId} se stihlo odehrát ${p.vycerpano} `
+              + `zápasů (balíček ${p.packId}). Odehrané starty se nevracejí — `
+              + 'zkontroluj, jestli se za ně někdo nedostal do sestavy zadarmo.',
+            );
+          }
         } else if (metadata.type === 'HOME_FEE') {
           // Poplatek za domácí zápas se od 9. 9. 2026 nevybírá a sloupce
           // po něm ve schématu nezůstaly. Kdyby dorazila refundace staré
@@ -744,6 +1002,15 @@ router.get('/vs/team/:teamId', requireAuth, async (req, res, next) => {
   try {
     if (!await overPlatbu(req, res, 'team-reg', req.params.teamId)) return;
     const vs = await ensureTeamVS(req.params.teamId);
+    res.json({ variableSymbol: vs });
+  } catch (err) { next(err); }
+});
+
+// GET /payments/vs/cart/:cartId – VS celého košíku (prefix 8)
+router.get('/vs/cart/:cartId', requireAuth, async (req, res, next) => {
+  try {
+    if (!await overPlatbu(req, res, 'cart', req.params.cartId)) return;
+    const vs = await ensureCartVS(req.params.cartId);
     res.json({ variableSymbol: vs });
   } catch (err) { next(err); }
 });

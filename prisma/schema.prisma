@@ -28,6 +28,7 @@ model User {
   manager   Manager[]
   notifications Notification[]
   supervisorRequests SupervisorRequest[]
+  carts     Cart[]
 }
 
 // ==================== TEAMS ====================
@@ -60,6 +61,7 @@ model Team {
   awayMatches Match[]   @relation("AwayTeam")
   inviteCodes InviteCode[]
   payments    TeamPayment?
+  cartItems   CartItem[]
   draftOffers DraftOffer[]
   seasons     TeamSeason[]
   playoffPrimaryFor   PlayoffChoice[] @relation("PlayoffPrimary")
@@ -125,6 +127,7 @@ model Player {
   matchEntries   MatchEntry[]
   referralCode   ReferralCode?
   referredBy     ReferralUse?  @relation("PrivedenyHrac")
+  cartItems      CartItem[]
 }
 
 // ==================== REFEREES ====================
@@ -846,4 +849,81 @@ model Fine {
 
   @@index([teamId, status])
   @@index([season])
+}
+
+// ==================== KOŠÍK ====================
+
+/// Co všechno jde koupit v jedné platbě.
+///
+/// Pokuta za kontumaci tu schválně **není**. Blokuje týmu další zápas, takže
+/// se musí zaplatit hned a zvlášť — kdyby čekala v košíku na to, až si někdo
+/// vybere balíček, stála by liga zápas.
+enum CartItemKind {
+  PLAYER_LICENSE
+  SUPER_LICENSE
+  MATCH_PACK
+  TEAM_REG
+}
+
+/// Košík: víc poplatků, jedna platba.
+///
+/// Důvod jsou peníze. Stripe si u každé transakce bere **1,5 % + 6,50 Kč**;
+/// ta pevná část se platí za každou platbu zvlášť, takže licence a balíček
+/// koupené odděleně stojí ligu o 6,50 Kč víc než totéž v jedné platbě.
+/// U převodu je úspora ještě větší — jeden variabilní symbol se spáruje
+/// jednou a stojí nulu.
+///
+/// Otevřený košík je vždycky nejvýš jeden na uživatele (`status = PENDING`).
+/// Zaplacené košíky zůstávají jako doklad, co v té platbě bylo.
+model Cart {
+  id       String        @id @default(uuid())
+  userId   String
+  season   String
+  status   PaymentStatus @default(PENDING)
+  /// Součet položek v okamžiku odeslání platby. Do té doby se dopočítává.
+  amount   Int           @default(0)
+
+  paidAmount Int       @default(0)
+  paidAt     DateTime?
+  method     String?
+  stripeId   String?
+  sessionId  String?
+  /// Prefix 8. Prefixy 1–7 patří jednotlivým poplatkům, 4 je vysloužilá.
+  variableSymbol String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user  User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items CartItem[]
+
+  @@index([userId, status])
+}
+
+/// Jedna položka košíku.
+///
+/// Cena se ukládá při vložení, ne až při placení: kdyby liga mezitím změnila
+/// ceník, člověk zaplatí to, co viděl. Kdo za položku platí, je vlastník
+/// košíku; koho se týká, říká `playerId` / `teamId` — vedoucí tak může
+/// zaplatit licenci svému hráči.
+model CartItem {
+  id       String       @id @default(uuid())
+  cartId   String
+  kind     CartItemKind
+  playerId String?
+  teamId   String?
+  /// Jen u MATCH_PACK — velikost balíčku (1 / 3 / 7 / 12 / 16 / 20).
+  packSize Int?
+  amount   Int
+  /// Do jaké sezóny položka patří. Nese ji položka, ne košík, protože tým
+  /// a hráč můžou mít rozjetou jinou sezónu.
+  season   String?
+
+  createdAt DateTime @default(now())
+
+  cart   Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  player Player? @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  team   Team?   @relation(fields: [teamId], references: [id], onDelete: Cascade)
+
+  @@index([cartId])
 }
