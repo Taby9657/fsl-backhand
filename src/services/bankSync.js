@@ -30,8 +30,7 @@ const FIO_TOKEN    = process.env.FIO_API_TOKEN;
  *   Hráč – balíček zápasů: 7 + 7místné číslo (prefix 7)
  *   Košík (víc poplatků naráz): 8 + 7místné číslo (prefix 8)
  *
- * Prefix 4 patřil poplatku za domácí zápas, zrušenému 9. 9. 2026.
- * Nerecykluje se.
+ * Prefix 4 je vysloužilý a nerecykluje se.
  */
 function generateVS(type, sequenceNumber) {
   // BUG-07 OPRAVA: Zamezení přetečení pořadového čísla VS
@@ -43,9 +42,8 @@ function generateVS(type, sequenceNumber) {
     PLAYER_LICENSE: 1,
     SUPER_LICENSE:  2,
     TEAM_REG:       3,
-    // Prefix 4 patřil poplatku za domácí zápas. Ten se od 9. 9. 2026
-    // nevybírá a číslo se schválně nerecykluje — kdyby dorazil starý
-    // převod, ať skončí mezi nespárovanými a někdo se na něj podívá.
+    // Prefix 4 je vysloužilý a schválně se nerecykluje — kdyby dorazil
+    // starý převod, ať skončí mezi nespárovanými a někdo se na něj podívá.
     FINE:           5,
     MATCH_PACK:     7,
     // Košík: víc poplatků v jedné platbě. Jeden VS, jedno spárování,

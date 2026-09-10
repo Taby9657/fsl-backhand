@@ -186,8 +186,8 @@ položka — rozpouštět částečnou platbu po položkách by znamenalo rozhod
 plátce, co chtěl zaplatit dřív. Částečná platba se připíše do `Cart.paidAmount`
 a plátci odejde upozornění, kolik chybí.
 
-**Prefix 4 patřil poplatku za domácí zápas, zrušenému 9. 9. 2026.** Nerecykluje se —
-kdyby dorazil starý převod, skončí mezi nespárovanými.
+**Prefix 4 je vysloužilý a nerecykluje se** — kdyby dorazil starý převod, skončí
+mezi nespárovanými a podívá se na něj supervisor.
 
 Superlicence měla dřív VS sdílený s licencí, takže je párovací logika nedokázala
 odlišit. Migrace `20260824000001_split_payment_vs` přidává vlastní sloupec a přesouvá
@@ -221,7 +221,7 @@ nezpracuje dvakrát a že neznámý VS skončí jako nespárovaný.
 | `fine` | **fineId** |
 | `match-pack` | **packId** |
 
-`home-fee` byl zrušen 9. 9. 2026 a `smiKPlatbe` ho vrací jako neznámý typ,
-takže volání skončí čistou čtyřstovkou.
+`smiKPlatbe` vrací vysloužilý typ `home-fee` jako neznámý, takže volání skončí
+čistou čtyřstovkou.
 
 Vyžaduje nastavené `BANK_IBAN` a `BANK_BIC`.

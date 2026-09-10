@@ -14,9 +14,9 @@
  *   - pokuta za kontumaci    → vedoucí potrestaného týmu
  *   - košík                  → ten, kdo si ho složil
  *
- * Poplatek za domácí zápas (`home-fee`) tu byl do 9. 9. 2026. Zápasy dnes
- * platí hráči v balíčku, takže ten typ zmizel — a `smiKPlatbe` ho vrací jako
- * neznámý, což volajícímu skončí čistou čtyřstovkou místo pádu v QR kódu.
+ * Typ `home-fee` z dřívějšího platebního modelu tu záměrně není: `smiKPlatbe`
+ * ho vrací jako neznámý, což volajícímu skončí čistou čtyřstovkou místo pádu
+ * v QR kódu.
  */
 
 const prisma = require('../lib/prisma');

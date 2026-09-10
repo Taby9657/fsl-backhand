@@ -136,7 +136,6 @@ async function reconcileStripePayments() {
   }
 
   // ── Balíčky zápasů ──
-  // Nahradilo poplatky za domácí zápasy, které se od 9. 9. 2026 nevybírají.
   // Tady je rekonciliace potřebnější než u čehokoli jiného: balíček se kupuje
   // opakovaně během sezóny, takže ztracený webhook potká hráče dřív nebo
   // později. Bez kreditu se přitom nedostane do sestavy.

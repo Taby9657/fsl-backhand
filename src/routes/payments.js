@@ -345,18 +345,16 @@ router.post('/fine', requireAuth, async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// POST /payments/home-fee – zrušeno 9. 9. 2026.
-//
-// Poplatek 2 200 Kč za domácí zápas platil tým. Od přechodu na balíčky
-// zápasy platí hráči (`POST /payments/pack`), takže tahle cesta zmizela.
-// Endpoint tu zůstává jen proto, aby starší buildy aplikace dostaly
-// srozumitelnou odpověď místo 404 — v Terminálu ani v logu se pak nehádá,
-// kde je chyba.
+// Vysloužilá cesta z dřívějšího platebního modelu, zrušená 9. 9. 2026.
+// Zůstává tu jen proto, aby ji starší buildy aplikace nedostaly jako 404
+// a bylo z odpovědi poznat, co mají dělat. Cesta se nepřejmenovává —
+// staré buildy volají přesně tuhle. Nová logika je `POST /payments/pack`
+// a košík.
 router.post('/home-fee', requireAuth, (req, res) => {
   res.status(410).json({
-    error: 'Poplatek za domácí zápas se už neplatí. Zápasy si kupuje každý hráč '
-         + 'sám v balíčku startů.',
-    code:  'HOME_FEE_REMOVED',
+    error: 'Tenhle způsob platby se už nepoužívá. Aktualizuj aplikaci — zápasy '
+         + 'si kupuje každý hráč sám v balíčku startů.',
+    code:  'PLATBA_ZRUSENA',
   });
 });
 
@@ -897,13 +895,13 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
             );
           }
         } else if (metadata.type === 'HOME_FEE') {
-          // Poplatek za domácí zápas se od 9. 9. 2026 nevybírá a sloupce
-          // po něm ve schématu nezůstaly. Kdyby dorazila refundace staré
-          // platby, není co přepsat — ať se o tom aspoň ví.
+          // Typ z dřívějšího platebního modelu. Sloupce po něm ve schématu
+          // nezůstaly, takže u refundace staré platby není co přepsat —
+          // ať se o tom aspoň ví.
           await ohlasSupervisorum(
-            'Refundace zrušeného poplatku',
-            `Vrácena platba za domácí zápas (session ${session.id}). Tenhle poplatek `
-            + 'se už nevybírá, v databázi po něm nic nezůstalo — zkontroluj to ve Stripu.',
+            'Refundace vysloužilé platby',
+            `Ve Stripu se vrátila platba typu, který se už nevybírá (session ${session.id}). `
+            + 'V databázi po ní nic nezůstalo — zkontroluj to ve Stripu.',
           );
         }
       } catch (err) {

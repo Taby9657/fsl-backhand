@@ -12,8 +12,7 @@
  *   - částečná platba se připíše a doplatek ji dorovná (dřív se obojí zahodilo)
  *   - registrace týmu zaplacená v minulé sezóně neplatí pro tu aktuální
  *
- * Od 9. 9. místo poplatku za domácí zápas (prefix 4, zrušen) balíčky
- * zápasů (prefix 7). U nich na převodu záleží nejvíc: karta ukousne
+ * U balíčků zápasů (prefix 7) záleží na převodu nejvíc: karta ukousne
  * z každého balíčku 1,5 % + 6,50 Kč, převod nic.
  */
 
@@ -343,10 +342,10 @@ const tx = (vs, amount) => ({
     assert(db.fines[0].status === 'WAIVED', 'stav se přepsal');
   });
 
-  // Poplatek za domácí zápas skončil 9. 9. 2026. Prefix 4 se nerecykluje,
-  // takže starý převod nesmí zaplatit nic jiného — jen spadnout mezi
-  // nespárované, kde se na něj podívá supervisor.
-  await test('zrušený poplatek: VS s prefixem 4 se už nespáruje', async () => {
+  // Prefix 4 je vysloužilý a nerecykluje se, takže starý převod nesmí
+  // zaplatit nic jiného — jen spadnout mezi nespárované, kde se na něj
+  // podívá supervisor.
+  await test('vysloužilý VS s prefixem 4 se už nespáruje', async () => {
     const r = await matchTransaction(tx('4000001', 3000));
     assert(!r.matched, 'prefix 4 se pořád páruje');
     assert(db.teamPayments[0].status === 'PENDING', 'zaplatil omylem registraci');
@@ -569,7 +568,7 @@ const tx = (vs, amount) => ({
   });
 
   await test('QR: zrušený poplatek za zápas je neznámý typ', async () => {
-    assert(await smiKPlatbe(vedouci, 'home-fee', 'm1') === null, 'home-fee se pořád tváří jako platný typ');
+    assert(await smiKPlatbe(vedouci, 'home-fee', 'm1') === null, 'vysloužilý typ se pořád tváří jako platný');
   });
 
   await test('QR: supervisor vidí všechno', async () => {

@@ -15,7 +15,6 @@
  *   7. Odměna za doporučení se vyplácí jen u balíčku od tří zápasů výš
  *      a jen jednou.
  *   8. Rozhodčí nespustí zápas, dokud má někdo v sestavě nezaplacený start.
- *      Tohle nahradilo kontrolu poplatku za domácí zápas, zrušeného 9. 9. 2026.
  */
 const Module = require('module');
 
