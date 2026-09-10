@@ -1,6 +1,6 @@
 const express = require('express');
 
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, optionalAuth } = require('../middleware/auth');
 const { uploadDraftVideo, cloudinary } = require('../utils/fileUpload');
 const { createNotification, createNotifications } = require('./notifications');
 
@@ -61,10 +61,16 @@ async function processExpiredWindows() {
 
 // ────────────────────────────────────────────────────────────
 // GET /draft – seznam všech aktivních profilů
+//
+// **Veřejný.** Pro hráče bez týmu je draft jediná vstupní brána do ligy,
+// takže seznam musí být vidět i bez přihlášení — jinak se o něm nikdo
+// nedozví. Kontaktní údaje veřejné nejsou: `phone` se do selectu vůbec
+// nedostane, pokud volající není vedoucí. Nepřihlášený `req.user` je
+// `undefined`, proto všude `req.user?.`.
 // ────────────────────────────────────────────────────────────
-router.get('/', requireAuth, async (req, res, next) => {
+router.get('/', optionalAuth, async (req, res, next) => {
   try {
-    const isManager = (req.user.manager ?? []).length > 0;
+    const isManager = (req.user?.manager ?? []).length > 0;
 
     const profiles = await prisma.draftProfile.findMany({
       where: { isActive: true },
@@ -271,11 +277,15 @@ router.delete('/video/:videoId', requireAuth, async (req, res, next) => {
 // ────────────────────────────────────────────────────────────
 // GET /draft/:playerId – detail profilu hráče
 // ────────────────────────────────────────────────────────────
-router.get('/:playerId', requireAuth, async (req, res, next) => {
+// **Veřejný, stejně jako seznam.** Telefon dostane jen vedoucí, nabídky
+// jen vlastník profilu — obojí se řeší níž, ne přihlášením.
+router.get('/:playerId', optionalAuth, async (req, res, next) => {
   try {
-    const isManager     = (req.user.manager ?? []).length > 0;
-    const myPlayer      = await prisma.player.findUnique({ where: { userId: req.user.id } });
-    const isOwnProfile  = myPlayer?.id === req.params.playerId;
+    const isManager     = (req.user?.manager ?? []).length > 0;
+    const myPlayer      = req.user
+      ? await prisma.player.findUnique({ where: { userId: req.user.id } })
+      : null;
+    const isOwnProfile  = !!myPlayer && myPlayer.id === req.params.playerId;
 
     const profile = await prisma.draftProfile.findUnique({
       where: { playerId: req.params.playerId },
@@ -316,7 +326,7 @@ router.get('/:playerId', requireAuth, async (req, res, next) => {
 
     // Nabídka mého týmu (manager pohled) – jen PENDING, jinak banner zmátne po rejected nabídce
     let myTeamOffer = null;
-    if (isManager && req.user.manager?.[0]?.teamId) {
+    if (isManager && req.user?.manager?.[0]?.teamId) {
       myTeamOffer = await prisma.draftOffer.findFirst({
         where: { profileId: profile.id, teamId: req.user.manager[0].teamId, status: 'PENDING' },
       });
