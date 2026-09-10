@@ -555,6 +555,18 @@ model Settings {
   id            String   @id @default("singleton")
   currentSeason String?
   updatedAt     DateTime @updatedAt
+
+  /// Zdraví párování bankovních převodů.
+  ///
+  /// Do 10. 9. 2026 se selhání jen zalogovalo do konzole Railway. Když
+  /// `FIO_API_TOKEN` chyběl, převody se od 28. 8. nepárovaly **jedenáct dní**
+  /// a nikdo se to nedozvěděl — lidem peníze odešly a licence zůstaly
+  /// nezaplacené. Tyhle čtyři sloupce jsou proto, aby ticho nebylo možné.
+  bankSyncLastOkAt    DateTime?
+  bankSyncLastErrorAt DateTime?
+  bankSyncLastError   String?
+  /// Kolikrát po sobě párování selhalo. Nula = poslední běh prošel.
+  bankSyncFailStreak  Int       @default(0)
 }
 
 /// Soupiska týmu na sezónu — kdo za tým smí nastupovat.

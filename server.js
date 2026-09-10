@@ -239,7 +239,34 @@ runSeasonTransitions();
 setInterval(runSeasonTransitions, SEASON_CRON_INTERVAL);
 
 // ==================== AUTOMATICKÉ PÁROVÁNÍ PLATEB ====================
-// Spustí se každou noc ve 2:00 (pokud je FIO_API_TOKEN nastaven)
+//
+// Běží jen s nastaveným `FIO_API_TOKEN`. To je rozumné, ale do 10. 9. 2026
+// se o chybějícím tokenu nikde nic neobjevilo: lidem se nabízela platba
+// převodem (stačí `BANK_IBAN`), peníze chodily, párování nikdy neběželo
+// a **jedenáct dní to nikdo nevěděl**. Proto se ten stav teď ohlásí nahlas.
+if (!process.env.FIO_API_TOKEN && process.env.BANK_IBAN && process.env.NODE_ENV === 'production') {
+  console.error(
+    '[BankSync] FIO_API_TOKEN NENÍ nastaven, ale BANK_IBAN ano — lidem se nabízí '
+    + 'platba převodem a nic se nepáruje.',
+  );
+  // Oznámení se posílá při startu, tedy po každém nasazení. Otravné to být má:
+  // dokud token chybí, chodí lidem peníze, které nikdo nepřiřadí.
+  setTimeout(async () => {
+    try {
+      const { ohlasSupervisorum } = require('./src/services/bankSync');
+      await ohlasSupervisorum(
+        'Párování převodů neběží',
+        'Backend nemá FIO_API_TOKEN, ale platba převodem se lidem nabízí. '
+        + 'Peníze dorazí na účet a nikdo je nepřiřadí — licence a balíčky '
+        + 'zůstanou nezaplacené. Doplň token v Railway do proměnné FIO_API_TOKEN.',
+      );
+    } catch (err) {
+      console.error('[BankSync] Oznámení o chybějícím tokenu selhalo:', err.message);
+    }
+  }, 60 * 1000);
+}
+
+// Spustí se 2 minuty po startu a pak každých 24 hodin
 if (process.env.FIO_API_TOKEN && process.env.NODE_ENV === 'production') {
   const SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hodin
 

@@ -245,11 +245,111 @@ function parseTransaction(raw) {
 // ==================== PÁROVÁNÍ ====================
 
 /**
+ * Vypadá chyba na problém s tokenem?
+ *
+ * Fio na neplatný nebo vypršelý token odpovídá 401/403; chybějící token
+ * zachytáváme sami dřív, než se kamkoli sáhne. Rozlišujeme to proto, aby
+ * oznámení supervisorovi rovnou řeklo, co s tím — „obnov token ve Fiu" je
+ * něco jiného než „Fio je dole".
+ */
+function jeChybaTokenu(err) {
+  const t = String(err?.message ?? '');
+  return /FIO_API_TOKEN není nastaven/.test(t) || /Fio API chyba (401|403)/.test(t);
+}
+
+/**
+ * Zapíše, jak dopadl běh párování, a při selhání se ozve supervisorovi.
+ *
+ * **Tichý výpadek je u peněz horší než hlasitá chyba.** Když `FIO_API_TOKEN`
+ * chyběl, převody se od 28. 8. do 10. 9. 2026 nepárovaly jedenáct dní a jediná
+ * stopa byla řádka v logu Railway, kam se nikdo nedívá. Lidem přitom peníze
+ * odešly a licence zůstaly nezaplacené.
+ *
+ * Oznámení chodí při **každém** selhání. Když párování běží jednou denně, je
+ * to nejvýš jedna zpráva za den — a dokud je rozbité, má se o tom vědět.
+ */
+async function zapisZdravi(chyba) {
+  const ted = new Date();
+  try {
+    if (!chyba) {
+      await prisma.settings.upsert({
+        where:  { id: 'singleton' },
+        create: { id: 'singleton', bankSyncLastOkAt: ted, bankSyncFailStreak: 0, bankSyncLastError: null },
+        update: { bankSyncLastOkAt: ted, bankSyncFailStreak: 0, bankSyncLastError: null },
+      });
+      return;
+    }
+
+    const stav = await prisma.settings.upsert({
+      where:  { id: 'singleton' },
+      create: {
+        id: 'singleton', bankSyncLastErrorAt: ted,
+        bankSyncLastError: String(chyba.message ?? chyba).slice(0, 500),
+        bankSyncFailStreak: 1,
+      },
+      update: {
+        bankSyncLastErrorAt: ted,
+        bankSyncLastError: String(chyba.message ?? chyba).slice(0, 500),
+        bankSyncFailStreak: { increment: 1 },
+      },
+    });
+
+    const kolikrat = stav?.bankSyncFailStreak ?? 1;
+    const posledniOk = stav?.bankSyncLastOkAt
+      ? `Naposledy to prošlo ${new Date(stav.bankSyncLastOkAt).toLocaleString('cs-CZ')}.`
+      : 'Od nasazení to neprošlo ani jednou.';
+
+    await ohlasSupervisorum(
+      'Párování převodů nefunguje',
+      (jeChybaTokenu(chyba)
+        ? 'Fio nepustilo backend k výpisu — token nejspíš vypršel, byl smazaný, '
+          + 'nebo chybí. Založ nový ve Fiu (Nastavení → API, práva „Pouze sledovat '
+          + 'účet") a přepiš ho v Railway do proměnné FIO_API_TOKEN. '
+        : 'Párování bankovních převodů selhalo. ')
+      + `Selhalo ${kolikrat}× po sobě. ${posledniOk} `
+      + `Chyba: ${String(chyba.message ?? chyba).slice(0, 200)}. `
+      + 'Do opravy se převody nespárují — platby dorazí na účet, ale licence '
+      + 'a balíčky zůstanou nezaplacené.',
+    );
+  } catch (err) {
+    // Zápis zdraví nesmí shodit samotné párování.
+    console.error('[BankSync] Stav párování se nepodařilo zapsat:', err.message);
+  }
+}
+
+/**
+ * Poslední známý stav párování — pro nástěnku supervisora.
+ *
+ * `zdrave: false` znamená, že poslední běh selhal. `lastOkAt: null` s nulovou
+ * sérií znamená, že párování ještě nikdy neběželo.
+ */
+async function stavParovani() {
+  const s = await prisma.settings.findUnique({ where: { id: 'singleton' } });
+  const selhani = s?.bankSyncFailStreak ?? 0;
+  return {
+    zdrave:      selhani === 0,
+    lastOkAt:    s?.bankSyncLastOkAt ?? null,
+    lastErrorAt: s?.bankSyncLastErrorAt ?? null,
+    lastError:   s?.bankSyncLastError ?? null,
+    failStreak:  selhani,
+    tokenSet:    !!FIO_TOKEN,
+  };
+}
+
+/**
  * Hlavní funkce – stáhne transakce a spáruje je s platbami.
  * Vrací přehled výsledků.
  */
 async function bankSync(days = 30) {
-  const transactions = await fetchFioTransactions(days);
+  let transactions;
+  try {
+    transactions = await fetchFioTransactions(days);
+  } catch (err) {
+    // Zapiš a ohlas, ale chybu nepolykej — ruční spuštění musí vidět, co se
+    // stalo, a noční úloha ji zaloguje.
+    await zapisZdravi(err);
+    throw err;
+  }
   const results = { matched: [], skipped: [], errors: [] };
 
   for (const tx of transactions) {
@@ -288,6 +388,9 @@ async function bankSync(days = 30) {
     }
   }
 
+  // Doběhlo to. Sérii selhání tím nulujeme a supervisor přestane dostávat
+  // oznámení — tichý úspěch je v pořádku, tichý výpadek ne.
+  await zapisZdravi(null);
   return results;
 }
 
@@ -847,6 +950,8 @@ async function payCart(cart, tx) {
 
 module.exports = {
   bankSync,
+  stavParovani,   // nástěnka supervisora — aby tichý výpadek nebyl možný
+  jeChybaTokenu,  // exportováno kvůli testům
   ensureCartVS,
   ensurePlayerVS,
   ensureTeamVS,

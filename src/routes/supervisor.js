@@ -4,6 +4,7 @@ const { requireSupervisor } = require('../middleware/auth');
 const { createNotification, createNotifications } = require('./notifications');
 const seasonSvc = require('../services/seasonTransition');
 const standings = require('../services/standings');
+const { stavParovani } = require('../services/bankSync');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -35,7 +36,15 @@ router.get('/dashboard', async (req, res, next) => {
       prisma.team.count({ where: { regStatus: 'APPEALING' } }),
     ]);
 
-    res.json({ pendingReferees, pendingRequests, upcomingMatches, totalTeams, totalPlayers, unpaidLicenses, pendingTeams, appealingTeams });
+    // Zdraví párování převodů. Musí být vidět na nástěnce, ne jen v logu:
+    // když FIO_API_TOKEN chyběl, převody se od 28. 8. do 10. 9. 2026
+    // nepárovaly jedenáct dní a nikdo se to nedozvěděl.
+    const bankSync = await stavParovani();
+
+    res.json({
+      pendingReferees, pendingRequests, upcomingMatches, totalTeams, totalPlayers,
+      unpaidLicenses, pendingTeams, appealingTeams, bankSync,
+    });
   } catch (err) { next(err); }
 });
 

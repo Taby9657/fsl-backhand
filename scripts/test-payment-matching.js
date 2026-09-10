@@ -201,6 +201,20 @@ const fakePrisma = {
   // za jaký ročník se zrovna platí.
   settings: {
     findUnique: async () => db.settings,
+    // Zdraví párování se zapisuje do Settings. Bez upsertu by `bankSync`
+    // spadl na neexistující metodě dřív, než by cokoli spároval.
+    upsert: async ({ create, update }) => {
+      if (!db.settings) {
+        db.settings = { ...create };
+        return db.settings;
+      }
+      for (const [k, v] of Object.entries(update)) {
+        db.settings[k] = v && typeof v === 'object' && 'increment' in v
+          ? (db.settings[k] ?? 0) + v.increment
+          : v;
+      }
+      return db.settings;
+    },
   },
 };
 
@@ -221,7 +235,8 @@ require.cache[notifPath] = {
   },
 };
 
-const { matchTransaction, parseTransaction } = require('../src/services/bankSync');
+const { matchTransaction, parseTransaction, bankSync, stavParovani, jeChybaTokenu } =
+  require('../src/services/bankSync');
 const { smiKPlatbe } = require('../src/utils/opravneniPlatby');
 
 /* ---------- testovací runner ---------- */
@@ -560,6 +575,63 @@ const tx = (vs, amount) => ({
   await test('QR: nepřihlášený a neznámý typ neprojdou', async () => {
     assert(await smiKPlatbe(null, 'player-license', 'p1') === false, 'anonym prošel');
     assert(await smiKPlatbe(hrac, 'neco-jineho', 'p1') === null, 'neznámý typ neohlášen');
+  });
+
+  // ---------- zdraví párování ----------
+  // Tichý výpadek je u peněz horší než hlasitá chyba. Když FIO_API_TOKEN
+  // chyběl, převody se od 28. 8. do 10. 9. 2026 nepárovaly jedenáct dní
+  // a jediná stopa byla řádka v logu Railway.
+
+  await test('bez tokenu párování selže, ohlásí se a zapíše do stavu', async () => {
+    db.notifications.length = 0;
+    let chyba = null;
+    try {
+      await bankSync(2);
+    } catch (err) {
+      chyba = err;
+    }
+    assert(chyba, 'bankSync bez tokenu neselhal');
+    assert(/FIO_API_TOKEN/.test(chyba.message), `nečekaná chyba: ${chyba.message}`);
+
+    const stav = await stavParovani();
+    assert(stav.zdrave === false, 'stav se tváří jako zdravý');
+    assert(stav.failStreak === 1, `série selhání je ${stav.failStreak}`);
+    assert(/FIO_API_TOKEN/.test(stav.lastError ?? ''), 'chyba se nezapsala');
+    assert(stav.tokenSet === false, 'stav tvrdí, že token je nastavený');
+
+    const zprava = db.notifications.find(n => /Párování převodů nefunguje/.test(n.title));
+    assert(zprava, 'supervisorovi nic nepřišlo');
+    assert(/token/i.test(zprava.body), 'zpráva neřekne, že jde o token');
+    assert(/Railway/.test(zprava.body), 'zpráva neřekne, kam token doplnit');
+  });
+
+  // Runner před každým testem sype čerstvou databázi, takže série se musí
+  // nasčítat uvnitř jednoho testu.
+  await test('opakované selhání zvyšuje sérii, úspěch ji vynuluje', async () => {
+    for (let i = 0; i < 3; i++) {
+      try { await bankSync(2); } catch { /* čekaná chyba */ }
+    }
+    const poSelhanich = await stavParovani();
+    assert(poSelhanich.failStreak === 3, `série je ${poSelhanich.failStreak}, čekáno 3`);
+
+    // Simulace úspěšného běhu: to, co bankSync udělá na konci.
+    await fakePrisma.settings.upsert({
+      where:  { id: 'singleton' },
+      create: { id: 'singleton' },
+      update: { bankSyncLastOkAt: new Date(), bankSyncFailStreak: 0, bankSyncLastError: null },
+    });
+    const poUspechu = await stavParovani();
+    assert(poUspechu.zdrave === true, 'po úspěchu se stav netváří zdravě');
+    assert(poUspechu.failStreak === 0, 'série se nevynulovala');
+    assert(poUspechu.lastError === null, 'zůstala stará chyba');
+  });
+
+  await test('chyba tokenu se pozná od výpadku Fia', async () => {
+    assert(jeChybaTokenu(new Error('FIO_API_TOKEN není nastaven')) === true, 'chybějící token nepoznán');
+    assert(jeChybaTokenu(new Error('Fio API chyba 401: neplatny token')) === true, '401 nepoznána');
+    assert(jeChybaTokenu(new Error('Fio API chyba 403: zakazano')) === true, '403 nepoznána');
+    assert(jeChybaTokenu(new Error('Fio API chyba 500: server error')) === false, '500 označena jako chyba tokenu');
+    assert(jeChybaTokenu(new Error('fetch failed')) === false, 'výpadek sítě označen jako chyba tokenu');
   });
 
   console.log(`\n${passed} prošlo, ${failed} selhalo`);
