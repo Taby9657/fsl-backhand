@@ -845,7 +845,7 @@ model Fine {
   /// Jedna kontumace = jedna pokuta.
   matchId String @unique
   season  String
-  amount  Int    @default(2200)
+  amount  Int    @default(3000)
   reason  String
 
   status         PaymentStatus @default(PENDING)

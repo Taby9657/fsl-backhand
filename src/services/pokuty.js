@@ -26,7 +26,7 @@ const prisma = require('../lib/prisma');
  * Náklady ligy na zápas tu nejsou a být nemají: je to obchodní údaj, ze
  * kterého se dá dopočítat marže, a systém ho k ničemu nepotřebuje.
  */
-const POKUTA_KONTUMACE = 2200;
+const POKUTA_KONTUMACE = 3000;
 
 /** Stavy, ve kterých pokuta pořád visí. */
 const NEZAPLACENO = ['PENDING', 'OVERDUE'];

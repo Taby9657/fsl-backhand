@@ -177,7 +177,7 @@ Každý typ platby má vlastní variabilní symbol s odlišným prefixem:
 | Hráčská licence | 300 Kč | `1` + 7 číslic | `PlayerPayment.variableSymbol` |
 | Superlicence | 300 Kč | `2` + 7 číslic | `PlayerPayment.superVariableSymbol` |
 | Registrace týmu | 3 000 Kč | `3` + 7 číslic | `TeamPayment.variableSymbol` |
-| Pokuta za kontumaci | 2 200 Kč | `5` + 7 číslic | `Fine.variableSymbol` |
+| Pokuta za kontumaci | 3 000 Kč | `5` + 7 číslic | `Fine.variableSymbol` |
 | Balíček zápasů | 200–3 000 Kč | `7` + 7 číslic | `MatchPack.variableSymbol` |
 | **Košík (víc poplatků naráz)** | součet položek | `8` + 7 číslic | `Cart.variableSymbol` |
 

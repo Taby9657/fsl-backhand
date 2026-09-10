@@ -81,7 +81,7 @@ const zapas = (id, season = '2026/27') => ({
   const m1 = zapas('M1');
   const prvni = await pokuty.predepis(m1, 'VINIK');
   ok(prvni.uzBylo === false, 'první kontumace pokutu předepíše');
-  ok(prvni.pokuta.amount === 2200, `pokuta je 2 200 Kč, je ${prvni.pokuta.amount}`);
+  ok(prvni.pokuta.amount === 3000, `pokuta je 3 000 Kč, je ${prvni.pokuta.amount}`);
   ok(prvni.pokuta.teamId === 'VINIK', 'pokutu platí ten, kdo se nedostavil');
   ok(prvni.pokuta.status === 'PENDING', 'nová pokuta je nezaplacená');
   ok(/04\.10\.2026|4\. 10\. 2026/.test(prvni.pokuta.reason.replace(/\s/g, ' ')),
@@ -95,7 +95,7 @@ const zapas = (id, season = '2026/27') => ({
   // Kdyby se pokuta počítala z propadlých startů, tenhle případ by stál nulu.
   reset();
   const bezSestavy = await pokuty.predepis(zapas('M2'), 'NIKDO_SE_NEPRIHLASIL');
-  ok(bezSestavy.pokuta.amount === 2200,
+  ok(bezSestavy.pokuta.amount === 3000,
     'tým, kterému se do sestavy nikdo nepřihlásil, platí stejně jako ostatní');
 
   // --- 3. brána: co drží a co pustí ---

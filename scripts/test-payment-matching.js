@@ -71,7 +71,7 @@ function freshDb() {
         teamId: 't1',
         matchId: 'm1',
         season: '2026/27',
-        amount: 2200,
+        amount: 3000,
         reason: 'Kontumace zápasu 4. 10. 2026',
         status: 'PENDING',
         paidAmount: 0,
@@ -311,7 +311,7 @@ const tx = (vs, amount) => ({
   });
 
   await test('pokuta: VS s prefixem 5 zaplatí pokutu, ne registraci', async () => {
-    const r = await matchTransaction(tx('5000001', 2200));
+    const r = await matchTransaction(tx('5000001', 3000));
     assert(r.matched, `nespárováno: ${r.reason}`);
     assert(r.type === 'FINE', `typ ${r.type}`);
     assert(db.fines[0].status === 'PAID', 'pokuta není PAID');
@@ -319,20 +319,26 @@ const tx = (vs, amount) => ({
   });
 
   await test('pokuta: částečná platba tým hrát nepustí', async () => {
-    const r = await matchTransaction(tx('5000001', 1000));
+    // Zbytek se dopočítává z fixture, ne natvrdo: ceník se mění a tenhle
+    // test už kvůli tomu spadl několikrát.
+    const celkem   = db.fines[0].amount;
+    const zaloha   = 1000;
+    const zbyva    = celkem - zaloha;
+    const r = await matchTransaction(tx('5000001', zaloha));
     assert(r.matched && r.partial, `částka se nepřipsala: ${r.reason}`);
     assert(db.fines[0].status === 'PENDING', 'pokuta označena jako zaplacená');
-    assert(db.fines[0].paidAmount === 1000, `připsáno ${db.fines[0].paidAmount}`);
+    assert(db.fines[0].paidAmount === zaloha, `připsáno ${db.fines[0].paidAmount}`);
     const n = db.notifications.find((x) => x.userId === 'u9');
-    assert(n && /1200/.test(n.body), `vedoucí nedostal zprávu, kolik chybí: ${n?.body}`);
-    const r2 = await matchTransaction({ ...tx('5000001', 1200), transactionId: 'tx-doplatek' });
+    assert(n && new RegExp(String(zbyva)).test(n.body),
+      `vedoucí nedostal zprávu, kolik chybí: ${n?.body}`);
+    const r2 = await matchTransaction({ ...tx('5000001', zbyva), transactionId: 'tx-doplatek' });
     assert(r2.matched && !r2.partial, `doplatek neprošel: ${r2.reason}`);
     assert(db.fines[0].status === 'PAID', 'pokuta není zaplacená ani po doplacení');
   });
 
   await test('pokuta: odpuštěnou už převod nepřepíše', async () => {
     db.fines[0].status = 'WAIVED';
-    const r = await matchTransaction(tx('5000001', 2200));
+    const r = await matchTransaction(tx('5000001', 3000));
     assert(!r.matched, 'odpuštěná pokuta se znovu zaplatila');
     assert(db.fines[0].status === 'WAIVED', 'stav se přepsal');
   });
@@ -341,7 +347,7 @@ const tx = (vs, amount) => ({
   // takže starý převod nesmí zaplatit nic jiného — jen spadnout mezi
   // nespárované, kde se na něj podívá supervisor.
   await test('zrušený poplatek: VS s prefixem 4 se už nespáruje', async () => {
-    const r = await matchTransaction(tx('4000001', 2200));
+    const r = await matchTransaction(tx('4000001', 3000));
     assert(!r.matched, 'prefix 4 se pořád páruje');
     assert(db.teamPayments[0].status === 'PENDING', 'zaplatil omylem registraci');
     assert(db.matchPacks[0].status === 'PENDING', 'zaplatil omylem balíček');
