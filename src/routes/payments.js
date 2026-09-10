@@ -214,13 +214,31 @@ router.post('/player-license', requireAuth, async (req, res, next) => {
 });
 
 // GET /payments/packs – ceník balíčků a co z nich hráči zbývá
+//
+// Kdo hráčský profil nemá, dostane ceník taky — ať vidí, co ho čeká — ale
+// s `hasProfile: false`. Bez toho pole si klient nemůže všimnout rozdílu
+// a nabídne tlačítko „Koupit", které skončí na „Hráčský profil nenalezen".
+// Zbytek odpovědi má v takovém případě nulové hodnoty, ne chybějící klíče:
+// dřív mizely `withdrawalHours`, `upcoming` i `canRefer` a klient si je
+// musel domýšlet.
 router.get('/packs', requireAuth, async (req, res, next) => {
   try {
     const player = await prisma.player.findUnique({ where: { userId: req.user.id } });
     const sezona = await seasonSvc.currentSeason();
+    const prazdny = {
+      season:    sezona,
+      packs:     [],
+      remaining: 0,
+      spent:     0,
+      withdrawalHours: kredit.LHUTA_ODHLASENI_H,
+      played:    0,
+      canRefer:  false,
+      upcoming:  [],
+    };
     res.json({
-      catalog: kredit.BALICKY,
-      ...(player ? await kredit.prehled(player.id, sezona) : { season: sezona, packs: [], remaining: 0 }),
+      catalog:    kredit.BALICKY,
+      hasProfile: !!player,
+      ...(player ? await kredit.prehled(player.id, sezona) : prazdny),
     });
   } catch (err) { next(err); }
 });
