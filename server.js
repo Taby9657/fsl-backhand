@@ -288,7 +288,7 @@ if (process.env.FIO_API_TOKEN && process.env.NODE_ENV === 'production') {
 }
 
 // ============ ZAMYKÁNÍ SESTAV ============
-// Dvanáct hodin před výkopem se sestava zamkne a starty se zúčtují. Od té
+// Dvanáct hodin před začátkem zápasu se sestava zamkne a starty se zúčtují. Od té
 // chvíle hráč v přehledu vidí zápas jako utracený, ne jen zablokovaný,
 // a odhlášením ho zpátky nedostane.
 const LOCK_INTERVAL_MS = 15 * 60 * 1000;

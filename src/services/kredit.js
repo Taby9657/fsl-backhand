@@ -8,7 +8,7 @@
  *
  *   REZERVACE   zařazení do sestavy. `remaining` klesne hned, takže hráč
  *               vidí správný zůstatek od té chvíle, ne až po zápase.
- *   ZÚČTOVÁNÍ   **12 hodin před výkopem** se sestava zamkne a starty se
+ *   ZÚČTOVÁNÍ   **12 hodin před začátkem zápasu** se sestava zamkne a starty se
  *               zúčtují (SPENT). Do té doby se dá odhlásit bez ztráty.
  *   VRÁCENÍ     jen zrušený zápas nebo kontumace ve prospěch týmu.
  *
@@ -282,7 +282,7 @@ async function uvolni(playerId, matchId, tx = prisma) {
   return { ok: true, entry };
 }
 
-/** Kolik hodin zbývá do výkopu. */
+/** Kolik hodin zbývá do začátku zápasu. */
 function hodinDoVykopu(match, ted = new Date()) {
   return (new Date(match.date) - ted) / 3_600_000;
 }
@@ -290,7 +290,7 @@ function hodinDoVykopu(match, ted = new Date()) {
 /**
  * Odhlášení ze zápasu hráčem.
  *
- * Do 12 h před výkopem se start vrátí do balíčku. Po uzávěrce se odhlásit
+ * Do 12 h před začátkem zápasu se start vrátí do balíčku. Po uzávěrce se odhlásit
  * dá pořád — jen to hráče stojí ten zápas. Vrátit se na něj může kdykoli
  * a nic dalšího se mu nestrhne.
  */
@@ -303,7 +303,7 @@ async function odhlas(playerId, match, tx = prisma) {
   // zůstává zúčtovaný — kdyby se hráč na týž zápas vrátil, nezaplatí znovu.
   return {
     ok: true, vraceno: false, code: 'LATE_WITHDRAWAL',
-    error: `Odhlášení míň než ${LHUTA_ODHLASENI_H} h před výkopem — `
+    error: `Odhlášení míň než ${LHUTA_ODHLASENI_H} h před začátkem zápasu — `
          + 'tenhle zápas ti z balíčku propadá. Když se na něj vrátíš, '
          + 'nic dalšího se ti nestrhne.',
   };
@@ -337,7 +337,7 @@ async function srovnejRezervace(match, teamId, playerIds, tx = prisma) {
 }
 
 /**
- * Zamkne sestavu a zúčtuje starty — volá se 12 h před výkopem.
+ * Zamkne sestavu a zúčtuje starty — volá se 12 h před začátkem zápasu.
  *
  * Od téhle chvíle hráč v přehledu vidí zápas jako utracený, ne jen
  * zablokovaný, a odhlášením ho už nezíská zpátky.
@@ -376,7 +376,7 @@ async function chybejiciStarty(matchId, playerIds, tx = prisma) {
 }
 
 /**
- * Projde zápasy, kterým do výkopu zbývá míň než 12 h, a zamkne jim sestavy.
+ * Projde zápasy, kterým do začátku zápasu zbývá míň než 12 h, a zamkne jim sestavy.
  * Pouští se z plánovače v `server.js`.
  */
 async function zamkniSestavy(ted = new Date()) {

@@ -627,7 +627,7 @@ router.put('/:id/lineup/:teamId', requireAuth, async (req, res, next) => {
     }
 
     // ── Počty v sestavě ──
-    // Maximum se hlídá tady, minimum až u výkopu — vedoucí si sestavu skládá
+    // Maximum se hlídá tady, minimum až u začátku zápasu — vedoucí si sestavu skládá
     // postupně a nemá smysl mu bránit v uložení rozdělané práce.
     const sloty = await prisma.teamRoster.findMany({
       where:  { teamId: req.params.teamId, season: matchCheck.season },
@@ -800,7 +800,7 @@ router.post('/:id/lineup/:teamId/add', requireAuth, async (req, res, next) => {
 /**
  * POST /matches/:id/withdraw – hráč se odhlásí ze zápasu.
  *
- * Do 12 h před výkopem se mu start vrátí do balíčku. Potom už ne: zůstane
+ * Do 12 h před začátkem zápasu se mu start vrátí do balíčku. Potom už ne: zůstane
  * zúčtovaný a vrátí se jen tehdy, když tým sestavu i tak sežene (a zápas
  * se odehraje) — sankce má trefit toho, kdo zápas položil.
  */
