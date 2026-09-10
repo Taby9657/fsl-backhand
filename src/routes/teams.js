@@ -11,6 +11,7 @@ const router = express.Router();
 const prisma = require('../lib/prisma');
 const licence = require('../services/licence');
 const seasonSvc = require('../services/seasonTransition');
+const hracskyProfil = require('../services/hracskyProfil');
 
 // GET /teams – seznam všech týmů
 //
@@ -104,7 +105,7 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
 // POST /teams – registrace nového týmu (vedoucí)
 router.post('/', requireAuth, async (req, res, next) => {
   try {
-    const { name, abbr, color, colorSecondary, venue } = req.body;
+    const { name, abbr, color, colorSecondary, venue, manager } = req.body;
     if (!name || !abbr) return res.status(400).json({ error: 'Název a zkratka jsou povinné' });
 
     // Jeden uživatel = jeden tým. Bez téhle kontroly stačilo zopakovat
@@ -137,9 +138,10 @@ router.post('/', requireAuth, async (req, res, next) => {
     const zkratka = abbr.toUpperCase().slice(0, 3);
     const code = `FSL-${zkratka}-${uuidv4().slice(0, 4).toUpperCase()}`;
 
-    // Tým, přihláška do sezóny i pozvánkový kód vzniknou najednou. Dřív to byly
-    // tři samostatné zápisy a při chybě v druhém zůstal tým bez sezóny a bez kódu.
-    const team = await prisma.$transaction(async (tx) => {
+    // Tým, přihláška do sezóny, pozvánkový kód i hráčský profil vedoucího
+    // vzniknou najednou. Dřív to byly tři samostatné zápisy a při chybě
+    // v druhém zůstal tým bez sezóny a bez kódu.
+    const { team, profil } = await prisma.$transaction(async (tx) => {
       const novy = await tx.team.create({
         data: {
           name,
@@ -160,8 +162,34 @@ router.post('/', requireAuth, async (req, res, next) => {
         },
         include: { managers: true },
       });
-      return novy;
+
+      // Vedoucí je zároveň hráč. Bez profilu nemá kam poslat licenci ani
+      // balíček startů — registraci týmu zaplatí, a další platba mu spadne
+      // na „Hráčský profil nenalezen". Proto vzniká profil rovnou tady.
+      const vysledek = await hracskyProfil.zalozProfilVedouciho(tx, {
+        userId:   req.user.id,
+        email:    req.user.email,
+        teamId:   novy.id,
+        teamName: novy.name,
+        season,
+        udaje:    manager ?? {},
+      });
+
+      return { team: novy, profil: vysledek };
     });
+
+    // Soupiska sezóny až po transakci — stejně jako u běžného hráče. Kdyby
+    // zápis selhal, tým i profil zůstanou, jen se vedoucí doplní z banneru
+    // „Doplnit kmenové hráče" v soupisce.
+    if (profil.player) {
+      try {
+        await licence.pridatDoSoupisky(profil.player.id, team.id, season, { isHome: true });
+      } catch (err) {
+        console.error('[registrace týmu] Vedoucí se nezapsal na soupisku:', err.message);
+      }
+    } else {
+      console.warn(`[registrace týmu] Vedoucí ${req.user.id} nemá hráčský profil (${profil.duvod})`);
+    }
 
     // Notifikuj vedoucího o přijetí žádosti
     await createNotification(
@@ -171,7 +199,7 @@ router.post('/', requireAuth, async (req, res, next) => {
       'admin',
     );
 
-    res.status(201).json({ team, inviteCode: code });
+    res.status(201).json({ team, inviteCode: code, player: profil.player ?? null });
   } catch (err) { next(err); }
 });
 

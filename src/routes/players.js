@@ -393,6 +393,10 @@ router.post('/:id/photo', requireAuth, uploadPhoto.single('photo'), async (req, 
 // Každý hráč má svůj kód. Kdo s ním přijde do ligy nový, zaplatí registraci
 // a koupí si balíček od tří zápasů výš, přinese tomu, kdo ho přivedl,
 // **jeden zápas zdarma**. Nový hráč může jít do libovolného týmu.
+//
+// **Počet přivedených hráčů omezený není** a strop se ani nechystá — každý
+// přivedený si své zápasy platí sám, takže odměna nikdy nepřeroste to, co
+// ten člověk do ligy přinesl.
 
 // GET /players/me/referral – můj kód (vygeneruje se při prvním zobrazení)
 router.get('/me/referral', requireAuth, async (req, res, next) => {
@@ -402,6 +406,19 @@ router.get('/me/referral', requireAuth, async (req, res, next) => {
 
     let kod = await prisma.referralCode.findUnique({ where: { playerId: player.id } });
     if (!kod) {
+      // Kód se odemyká **po prvním odehraném zápase**. Přivést někoho do ligy
+      // má smysl až ve chvíli, kdy má člověk co doporučovat — a odměna je
+      // zápas zdarma, takže dřív by ji čerpal někdo, kdo sám nehraje.
+      // Komu už kód jednou vznikl, zůstává (kontrola je jen na založení).
+      const odehrano = await kredit.odehranychZapasu(player.id);
+      if (odehrano === 0) {
+        return res.status(409).json({
+          error: 'Doporučovací kód se odemkne po prvním odehraném zápase.',
+          code:  'NO_MATCH_YET',
+          played: 0,
+        });
+      }
+
       const zkratka = (player.lastName || 'FSL').normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z]/g, '')
         .toUpperCase().slice(0, 3).padEnd(3, 'X');
@@ -426,7 +443,8 @@ router.get('/me/referral', requireAuth, async (req, res, next) => {
         rewarded: !!u.rewardedAt,
       })),
       rule: `Odměna 1 zápas zdarma se připíše, jakmile si přivedený hráč koupí `
-          + `balíček od ${kredit.MIN_BALICEK_PRO_ODMENU} zápasů výš.`,
+          + `balíček od ${kredit.MIN_BALICEK_PRO_ODMENU} zápasů výš. `
+          + `Kolik hráčů přivedeš, omezené není.`,
     });
   } catch (err) { next(err); }
 });
@@ -454,12 +472,7 @@ router.post('/referral', requireAuth, async (req, res, next) => {
 
     // Kód patří novým hráčům. Kdo už za ligu nastoupil, není koho přivádět.
     // Kontumace se nepočítá — hráč byl na papíře v sestavě, ale nehrál.
-    const starty = await prisma.lineupPlayer.count({
-      where: {
-        playerId: player.id,
-        lineup:   { match: { status: 'DONE', forfeitTeamId: null } },
-      },
-    });
+    const starty = await kredit.odehranychZapasu(player.id);
     if (starty > 0) {
       return res.status(409).json({
         error: 'Kód jde uplatnit jen před prvním odehraným zápasem',

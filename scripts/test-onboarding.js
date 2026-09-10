@@ -49,6 +49,9 @@ const fakePrisma = {
         p.teamId === where.teamId &&
         p.jersey === where.jersey &&
         (!where.id?.not || p.id !== where.id.not)) ?? null,
+    // Hledání volného čísla dresu při zakládání profilu vedoucího
+    findMany: async ({ where = {} } = {}) =>
+      db.players.filter(p => (where.teamId === undefined ? true : p.teamId === where.teamId)),
     create: async ({ data }) => {
       const p = { id: dalsiId('P'), ...data, payment: data.payment?.create ?? null };
       db.players.push(p);
@@ -155,6 +158,8 @@ app.use((req, res, next) => {
   if (id) {
     req.user = {
       id,
+      // E-mail je záložní zdroj jména pro hráčský profil vedoucího
+      email: `${id.toLowerCase()}.vedouci@fsl.cz`,
       manager: db.managers.filter(m => m.userId === id),
       player: db.players.find(p => p.userId === id) ?? null,
     };
@@ -223,6 +228,18 @@ const server = app.listen(0, async () => {
   ok(tym.telo.team?.payments?.season === '2026/27', 'platba týmu nese aktuální sezónu, ne tu z požadavku');
   ok(tym.telo.team?.seasons?.[0]?.season === '2026/27', 'přihláška vznikla do aktuální sezóny, ne do příští');
   ok(!!tym.telo.inviteCode, 'pozvánkový kód se vrátil rovnou v odpovědi');
+
+  // Vedoucí je zároveň hráč — bez profilu by nezaplatil balíček ani licenci
+  ok(!!tym.telo.player, 'registrace týmu založí vedoucímu i hráčský profil');
+  ok(tym.telo.player?.teamId === tym.telo.team.id, 'profil vedoucího je v jeho týmu');
+  ok(tym.telo.player?.payment?.season === '2026/27', 'profilu vznikla i licence na aktuální sezónu');
+  ok(db.zapisyNaSoupisku.some(z => z.playerId === tym.telo.player.id && z.teamId === tym.telo.team.id),
+    'vedoucí je rovnou na soupisce sezóny');
+
+  // Vedoucí, který hráčský profil už má, se nepřepisuje ani nepřetahuje
+  const tymSHracem = await volej('/teams', { name: 'Sokoli', abbr: 'SOK' }, 'U1');
+  ok(tymSHracem.status === 201, 'tým založí i hráč, který profil už má');
+  ok(tymSHracem.telo.player?.teamId === 'T1', 'a jeho stávající profil zůstane v původním týmu');
 
   db.managers.push({ userId: 'U5', teamId: tym.telo.team.id, team: tym.telo.team });
   const druhy = await volej('/teams', { name: 'Draci znovu', abbr: 'DR2', season: '2026/27' }, 'U5');

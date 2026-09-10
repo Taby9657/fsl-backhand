@@ -17,7 +17,9 @@
     "test:kredit": "node scripts/test-kredit.js",
     "reset:data": "node scripts/reset-data.js",
     "check:schema": "node scripts/check-schema.js",
-    "test:pokuty": "node scripts/test-pokuty.js"
+    "test:pokuty": "node scripts/test-pokuty.js",
+    "test:profil": "node scripts/test-profil-vedouciho.js",
+    "fix:profily": "node scripts/doplnit-profily-vedoucich.js"
   },
   "dependencies": {
     "@prisma/client": "^5.14.0",

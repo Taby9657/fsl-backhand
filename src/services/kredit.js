@@ -117,12 +117,32 @@ async function zustatek(playerId, season) {
  * Přehled pro obrazovku plateb — co má hráč koupené, co mu zbývá a na které
  * zápasy je přihlášený. Klient si tím vystačí s jedním voláním.
  */
+/**
+ * Kolik zápasů hráč doopravdy odehrál.
+ *
+ * Počítá se jen dohraný zápas, který se skutečně konal — **kontumace se
+ * nepočítá**, protože tam byl hráč v sestavě jen na papíře. Na tomhle čísle
+ * stojí dvě věci naráz, a proto sedí v jedné funkci: nárok uplatnit cizí
+ * doporučovací kód (jen před prvním startem) a nárok mít vlastní kód
+ * (teprve po prvním startem). Kdyby to byly dva dotazy na dvou místech,
+ * rozejdou se.
+ */
+async function odehranychZapasu(playerId, tx = prisma) {
+  return tx.lineupPlayer.count({
+    where: {
+      playerId,
+      lineup: { match: { status: 'DONE', forfeitTeamId: null } },
+    },
+  });
+}
+
 async function prehled(playerId, season) {
   const vsechny = await prisma.matchPack.findMany({
     where:   { playerId },
     orderBy: { createdAt: 'desc' },
   });
   const zaplacene = vsechny.filter(b => ZAPLACENO.includes(b.status));
+  const odehrano = await odehranychZapasu(playerId);
 
   const prihlaseny = await prisma.matchEntry.findMany({
     where: {
@@ -147,6 +167,10 @@ async function prehled(playerId, season) {
     remaining: zaplacene.reduce((s, b) => s + b.remaining, 0),
     spent:     zaplacene.reduce((s, b) => s + (b.size - b.remaining), 0),
     withdrawalHours: LHUTA_ODHLASENI_H,
+    // Odehrané zápasy (bez kontumací). Klient podle toho ukáže nebo skryje
+    // doporučovací kód — ten se odemyká až po prvním startu.
+    played:    odehrano,
+    canRefer:  odehrano > 0,
     upcoming: prihlaseny
       .map(e => ({
         matchId:   e.matchId,
@@ -397,8 +421,14 @@ async function vyresKontumaci(matchId, vinikTeamId, tx = prisma) {
  * Vyplatí odměnu za přivedení hráče.
  *
  * Volá se ve chvíli, kdy nový hráč zaplatí balíček. Odměna se vyplácí jen
- * jednou a jen tehdy, když je balíček aspoň za `MIN_BALICEK_PRO_ODMENU`
- * zápasů — jinak by stačilo koupit nejmenší balíček a kód se vyplatil sám.
+ * jednou **za přivedeného hráče** a jen tehdy, když je balíček aspoň za
+ * `MIN_BALICEK_PRO_ODMENU` zápasů — jinak by stačilo koupit nejmenší balíček
+ * a kód se vyplatil sám.
+ *
+ * **Kolik lidí kdo přivede, omezené není.** Kdo přivede deset hráčů, dostane
+ * deset zápasů zdarma. Strop by šel proti smyslu odměny: náklad na zápas
+ * zaplatí ti přivedení hráči svými balíčky, takže každý další je pro ligu
+ * plusový, ne minusový.
  */
 async function odmenZaDoporuceni(playerId, pack, tx = prisma) {
   if (!pack || pack.size < MIN_BALICEK_PRO_ODMENU || pack.isReward) return null;
@@ -434,7 +464,7 @@ async function odmenZaDoporuceni(playerId, pack, tx = prisma) {
 module.exports = {
   BALICKY, balicek, ZAPLACENO, LHUTA_ODHLASENI_H, MIN_BALICEK_PRO_ODMENU,
   maLicenciNaSezonu,
-  zustatek, prehled, rezervuj, uvolni, odhlas, hodinDoVykopu,
+  zustatek, prehled, rezervuj, uvolni, odhlas, hodinDoVykopu, odehranychZapasu,
   srovnejRezervace, chybejiciStarty, zamkniSestavu, zamkniSestavy, zuctujZapas,
   vratZapas, vyresKontumaci, odmenZaDoporuceni,
 };

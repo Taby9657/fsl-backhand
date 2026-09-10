@@ -252,6 +252,15 @@ function zapas(id, { hodin = 48, season = '2026/27' } = {}) {
   ok(await kredit.odmenZaDoporuceni('P2', podruhe) === null,
     'druhý balíček už odměnu nevyplatí');
 
+  // Kolik lidí kdo přivede, omezené není — každý přivedený si své zápasy
+  // platí sám, takže odměna nikdy nepřeroste to, co ten člověk přinesl.
+  for (const novy of ['P3', 'P4', 'P5', 'P6', 'P7']) {
+    await fakePrisma.referralUse.create({ data: { codeId: 'C1', newPlayerId: novy } });
+    await kredit.odmenZaDoporuceni(novy, await koupBalicek(novy, 3));
+  }
+  ok(await kredit.zustatek('P1', '2026/27') === 6,
+    `počet přivedených hráčů není omezený, zůstatek je ${await kredit.zustatek('P1', '2026/27')}`);
+
   // --- 10. brána rozhodčího: kdo v sestavě nemá start ---
   // Nahradilo kontrolu „domácí tým zaplatil 2 200 Kč". Zápas se nesmí
   // rozjet s někým, kdo za něj nezaplatil.
