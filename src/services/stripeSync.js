@@ -8,11 +8,18 @@
  * Tahle úloha projde platby, které nejsou zaplacené, ale mají u sebe uloženou
  * Checkout session, a u Stripe se doptá, jak to s nimi dopadlo. Doplňuje
  * webhook, nenahrazuje ho.
+ *
+ * Pokrývá **všechny** cesty, kterými peníze chodí: licenci, superlicenci,
+ * registraci týmu, balíček startů, košík a pokutu za kontumaci. Kdyby se
+ * některá vynechala, byl by to tichý výpadek — člověk zaplatí a nikdo se to
+ * nedozví. Přesně tohle se v projektu stalo balíčkům a košíku.
  */
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const prisma = require('../lib/prisma');
 const kredit = require('./kredit');
+const kosik  = require('./kosik');
+const { ohlasSupervisorum } = require('./bankSync');
 
 /**
  * Je session skutečně zaplacená – a nebyla mezitím vrácena?
@@ -156,6 +163,56 @@ async function reconcileStripePayments() {
       await kredit.odmenZaDoporuceni(pack.playerId, pack);
 
       results.fixed.push({ type: 'MATCH_PACK', packId: p.id, playerId: pack.playerId });
+    }
+  }
+
+  // ── Košíky ──
+  // Od 10. 9. 2026 jde přes košík většina peněz, takže ztracený webhook tady
+  // bolí nejvíc: nezaúčtuje se **žádná** z položek naráz — člověk zaplatí
+  // licenci i balíček a nedostane ani jedno. Zaúčtování dělá `kosik.zauctuj`,
+  // tedy tatáž funkce jako webhook, aby se ty dvě cesty nemohly rozejít.
+  const carts = await prisma.cart.findMany({
+    where:  { status: { not: 'PAID' }, sessionId: { not: null } },
+    select: { id: true, sessionId: true },
+  });
+
+  for (const c of carts) {
+    results.checked++;
+    if (await isPaid(c.sessionId)) {
+      const vysledek = await kosik.zauctuj(c.id, { method: 'stripe', stripeId: c.sessionId });
+      if (!vysledek.ok || vysledek.uzBylo) continue;
+
+      // Položka, která už zaplacená byla jinak, se přeskočila. Peníze za ni
+      // dorazily dvakrát a někdo je musí vrátit — nesmí to zapadnout.
+      for (const item of vysledek.dvoji ?? []) {
+        await ohlasSupervisorum(
+          'Dvojí platba',
+          `Doběh rekonciliace zaúčtoval košík ${c.id}. Položka „${kosik.nazev(item)}" `
+          + `(${item.amount} Kč) už ale zaplacená byla — peníze je potřeba vrátit.`,
+        );
+      }
+
+      results.fixed.push({ type: 'CART', cartId: c.id, polozek: vysledek.items?.length ?? 0 });
+    }
+  }
+
+  // ── Pokuty za kontumaci ──
+  // Mimo košík, protože se platí zvlášť a hned. Doběh je u nich potřeba
+  // stejně: dokud je pokuta nezaplacená, rozhodčí týmu další zápas nespustí,
+  // takže ztracený webhook tým zablokuje, i když peníze odešly.
+  const fines = await prisma.fine.findMany({
+    where:  { status: { notIn: ['PAID', 'WAIVED'] }, sessionId: { not: null } },
+    select: { id: true, sessionId: true },
+  });
+
+  for (const f of fines) {
+    results.checked++;
+    if (await isPaid(f.sessionId)) {
+      const updated = await prisma.fine.updateMany({
+        where: { id: f.id, status: { notIn: ['PAID', 'WAIVED'] } },
+        data:  { status: 'PAID', paidAt: new Date(), method: 'stripe', stripeId: f.sessionId },
+      });
+      if (updated.count > 0) results.fixed.push({ type: 'FINE', fineId: f.id });
     }
   }
 

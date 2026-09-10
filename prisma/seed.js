@@ -182,7 +182,10 @@ async function main() {
       const team = await prisma.team.create({
         data: { name: td.name, abbr: td.abbr, color: td.color, venue: td.venue,
           division: div.name, conference: div.conf,
-          payments: { create: { season: SEASON, amount: 8000, status: 'PAID',
+          // Registrace týmu stojí od 10. 9. 2026 3 000 Kč. Seed musí sedět
+          // s ceníkem v `kredit.js` a se schématem, jinak demo data ukazují
+          // ceník, který už neplatí.
+          payments: { create: { season: SEASON, amount: 3000, status: 'PAID',
             paidAt: new Date('2025-09-01'), method: 'bank' } } },
       });
 

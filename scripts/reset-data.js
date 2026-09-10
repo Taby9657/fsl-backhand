@@ -23,9 +23,10 @@
  * ── Co jde pryč ─────────────────────────────────────────────────────────
  *   zápasy, události, sestavy, hodnocení rozhodčích, pozápasové zprávy,
  *   soupisky, volby playoff, hráči, týmy, přihlášky do sezón, ligová
- *   struktura, pozvánkové kódy, platby, balíčky zápasů a starty,
- *   doporučovací kódy, draft, bankovní transakce, zprávy z kol, oznámení,
- *   žádosti na supervisora, plánované přechody sezóny.
+ *   struktura, pozvánkové kódy, platby, košíky, pokuty za kontumaci,
+ *   balíčky zápasů a starty, doporučovací kódy, draft, bankovní transakce,
+ *   zprávy z kol, oznámení, žádosti na supervisora, plánované přechody
+ *   sezóny.
  *
  * ── Co se tím NEVRÁTÍ ───────────────────────────────────────────────────
  * Smazáním záznamu o platbě se nikomu nevrací peníze. Co je zaplacené přes
@@ -88,6 +89,9 @@ const TABULKY = [
   ['draftVideo',        'draftová videa'],
   ['draftProfile',      'draftové profily'],
 
+  ['cartItem',          'položky v košících'],
+  ['cart',              'košíky'],
+  ['fine',              'pokuty za kontumaci'],
   ['playerPayment',     'platby hráčů'],
   ['teamPayment',       'platby týmů'],
   ['bankTransaction',   'zpracované bankovní pohyby'],
