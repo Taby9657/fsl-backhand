@@ -33,18 +33,23 @@ const LHUTA_ODHLASENI_H = 12;
 /**
  * Ceník balíčků. Ceny jsou konečné; liga není plátce DPH, takže se k nim
  * nic nepřipočítává a daň se nikde neuvádí.
- * Nejmenší balíček stojí 250 Kč a s velikostí cena za zápas klesá.
+ *
+ * Ze startů se platí hala, rozhodčí a zdravotník. Sazby jsou postavené tak,
+ * že i nejtenčí sestava zápas pokryje: 9 hráčů na každé straně po 162,50 Kč
+ * (šestnáctka) dá 2 925 Kč proti nákladu 2 200 Kč na zápas.
+ *
+ * Nejmenší balíček stojí 200 Kč a s velikostí cena za zápas klesá na 150.
  */
 const BALICKY = [
-  { size: 1,  price: 250  },
-  { size: 3,  price: 700  },
-  { size: 7,  price: 1600 },
-  { size: 12, price: 2700 },
-  { size: 16, price: 3500 },
+  { size: 1,  price: 200  },
+  { size: 3,  price: 550  },
+  { size: 7,  price: 1200 },
+  { size: 12, price: 2000 },
+  { size: 16, price: 2600 },
   // Dvacítka míří na hráče se superlicencí, kteří chodí doplňovat sestavy.
-  // Vychází na rovných 200 Kč za zápas — o pětinu líp než jednotlivý start,
+  // Vychází na 150 Kč za zápas — o čtvrtinu líp než jednotlivý start,
   // což je přesně ta pobídka, aby v lize byl kdo zaskočit.
-  { size: 20, price: 4000 },
+  { size: 20, price: 3000 },
 ];
 
 /** Od kolika zápasů se balíček počítá jako „přivedení hráče do ligy". */

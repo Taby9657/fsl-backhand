@@ -607,7 +607,7 @@ async function getPaymentQR(type, id) {
     message = `FSL pokuta kontumace ${fine.team.name}`;
   } else if (type === 'match-pack') {
     // id = packId (každý koupený balíček má vlastní VS). Převodem je balíček
-    // bez poplatku — u dvacítky za 4 000 Kč to proti kartě dělá 66,50 Kč.
+    // bez poplatku — u dvacítky za 3 000 Kč to proti kartě dělá 51,50 Kč.
     const pack = await prisma.matchPack.findUnique({
       where:   { id },
       include: { player: { select: { firstName: true, lastName: true } } },

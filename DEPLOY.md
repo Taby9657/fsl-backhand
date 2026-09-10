@@ -176,9 +176,9 @@ Každý typ platby má vlastní variabilní symbol s odlišným prefixem:
 |--------|-----|-----|---------|
 | Hráčská licence | 300 Kč | `1` + 7 číslic | `PlayerPayment.variableSymbol` |
 | Superlicence | 300 Kč | `2` + 7 číslic | `PlayerPayment.superVariableSymbol` |
-| Registrace týmu | 8 000 Kč | `3` + 7 číslic | `TeamPayment.variableSymbol` |
+| Registrace týmu | 3 000 Kč | `3` + 7 číslic | `TeamPayment.variableSymbol` |
 | Pokuta za kontumaci | 2 200 Kč | `5` + 7 číslic | `Fine.variableSymbol` |
-| Balíček zápasů | 250–4 000 Kč | `7` + 7 číslic | `MatchPack.variableSymbol` |
+| Balíček zápasů | 200–3 000 Kč | `7` + 7 číslic | `MatchPack.variableSymbol` |
 
 **Prefix 4 patřil poplatku za domácí zápas, zrušenému 9. 9. 2026.** Nerecykluje se —
 kdyby dorazil starý převod, skončí mezi nespárovanými.
