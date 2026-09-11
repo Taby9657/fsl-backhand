@@ -20,7 +20,9 @@
     "test:pokuty": "node scripts/test-pokuty.js",
     "test:profil": "node scripts/test-profil-vedouciho.js",
     "test:kosik": "node scripts/test-kosik.js",
-    "fix:profily": "node scripts/doplnit-profily-vedoucich.js"
+    "fix:profily": "node scripts/doplnit-profily-vedoucich.js",
+    "reset:vse": "node scripts/vymazat-vse.js",
+    "test:vek": "node scripts/test-vek.js"
   },
   "dependencies": {
     "@prisma/client": "^5.14.0",

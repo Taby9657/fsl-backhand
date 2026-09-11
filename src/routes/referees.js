@@ -6,6 +6,7 @@ const { createNotification } = require('./notifications');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const vekSvc = require('../utils/vek');
 
 // GET /referees – seznam rozhodčích (veřejné základní info)
 router.get('/', async (req, res, next) => {
@@ -66,6 +67,15 @@ router.post('/', requireAuth, async (req, res, next) => {
       return res.status(400).json({ error: 'Jméno a příjmení jsou povinné' });
     }
 
+    // Věková hranice platí i pro rozhodčí. Datum narození se bere z rodného
+    // čísla, které rozhodčí vyplňuje kvůli odměnám — ptát se na totéž dvakrát
+    // by bylo zbytečné. Tím se ale **rodné číslo stalo povinným**; do 11. 9.
+    // 2026 šla registrace dokončit i bez něj a doplnit ho později.
+    const vekOk = vekSvc.zkontrolujRodneCislo(birthNo);
+    if (!vekOk.ok) {
+      return res.status(400).json({ error: vekOk.chyba, code: vekOk.kod });
+    }
+
     const existing = await prisma.referee.findUnique({ where: { userId: req.user.id } });
     if (existing) return res.status(409).json({ error: 'Uživatel již má profil rozhodčího' });
 
@@ -115,6 +125,14 @@ router.put('/:id', requireAuth, async (req, res, next) => {
     // Rodné číslo šlo dřív zapsat jen při registraci z webu — kdo se registroval
     // z aplikace, neměl ho jak doplnit a supervisor mu nemohl poslat odměnu.
     const { phone, birthNo, address, city, zip, bankAccount, bankCode } = req.body;
+
+    // Rodné číslo nese věk, takže ho editace nesmí vyprázdnit ani přepsat
+    // na nezletilého — jinak by stačilo projít registrací a hned ho změnit.
+    if (birthNo !== undefined) {
+      const vekOk = vekSvc.zkontrolujRodneCislo(birthNo);
+      if (!vekOk.ok) return res.status(400).json({ error: vekOk.chyba, code: vekOk.kod });
+    }
+
     const updated = await prisma.referee.update({
       where: { id: req.params.id },
       data: {

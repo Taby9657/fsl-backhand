@@ -16,6 +16,7 @@
  */
 
 const prisma = require('../lib/prisma');
+const vekSvc = require('../utils/vek');
 
 const VYCHOZI_POST = 'Útočník';
 
@@ -109,7 +110,11 @@ async function zalozProfilVedouciho(tx, { userId, email, teamId, teamName, seaso
       lastName:  jmeno.lastName,
       jersey,
       position:  String(udaje.position ?? '').trim() || VYCHOZI_POST,
-      birthdate: udaje.birthdate ? new Date(udaje.birthdate) : null,
+      // Plnoletost si ohlídala routa (`POST /teams`), tady se jen uloží, co
+      // projde kontrolou. Bez data se sem dostane jen dodatečné doplňování
+      // profilů (`scripts/doplnit-profily-vedoucich.js`) — tam je prázdné
+      // datum lepší než žádný profil.
+      birthdate: vekSvc.zkontrolujDatumNarozeni(udaje.birthdate).datum,
       phone:     udaje.phone ? String(udaje.phone).trim() : null,
       // Licence na sezónu, do které se tým hlásí — stejně jako u běžného hráče
       payment:   { create: season ? { season } : {} },

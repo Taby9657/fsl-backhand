@@ -3,6 +3,7 @@ const express = require('express');
 const { requireAuth, optionalAuth, isSupervisorUser } = require('../middleware/auth');
 const { uploadPhoto } = require('../utils/fileUpload');
 const { verejnyHrac } = require('../utils/verejneUdaje');
+const vekSvc = require('../utils/vek');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -173,6 +174,20 @@ router.post('/', requireAuth, async (req, res, next) => {
       return res.status(400).json({ error: 'Chybí povinné údaje (jméno, příjmení, číslo dresu)' });
     }
 
+    // Do ligy smí jen dospělí. Datum narození proto není volitelný doplněk,
+    // ale podmínka registrace — a hlídá se tady, protože formulář na webu
+    // i v aplikaci se dá obejít.
+    if (!birthdate) {
+      return res.status(400).json({
+        error: 'Datum narození je povinné.',
+        code:  'BIRTHDATE_REQUIRED',
+      });
+    }
+    const vekOk = vekSvc.zkontrolujDatumNarozeni(birthdate);
+    if (!vekOk.ok) {
+      return res.status(400).json({ error: vekOk.chyba, code: vekOk.kod });
+    }
+
     // Tým se odvozuje z pozvánkového kódu. Holé teamId zůstává jako fallback
     // pro starší verze aplikace, které kód ještě neposílají.
     let invite = null;
@@ -227,7 +242,7 @@ router.post('/', requireAuth, async (req, res, next) => {
           lastName,
           jersey:    jerseyNum,
           position:  position || 'Útočník',
-          birthdate: birthdate ? new Date(birthdate) : null,
+          birthdate: vekOk.datum,
           phone,
           payment:   { create: sezonaLigy ? { season: sezonaLigy } : {} },
         },
@@ -278,7 +293,7 @@ router.post('/', requireAuth, async (req, res, next) => {
         lastName,
         jersey: jerseyNum,
         position: position || 'Útočník',
-        birthdate: birthdate ? new Date(birthdate) : null,
+        birthdate: vekOk.datum,
         phone,
         payment: { create: sezona ? { season: sezona } : {} },
       },
@@ -351,6 +366,21 @@ router.put('/:id', requireAuth, async (req, res, next) => {
 
     const { firstName, lastName, jersey, position, birthdate, phone } = req.body;
 
+    // Věkovou hranici hlídá i editace. Bez toho by stačilo projít registrací
+    // se správným datem a hned si ho v profilu přepsat.
+    let noveDatum;
+    if (birthdate !== undefined) {
+      if (!birthdate) {
+        return res.status(400).json({
+          error: 'Datum narození je povinné.',
+          code:  'BIRTHDATE_REQUIRED',
+        });
+      }
+      const vekOk = vekSvc.zkontrolujDatumNarozeni(birthdate);
+      if (!vekOk.ok) return res.status(400).json({ error: vekOk.chyba, code: vekOk.kod });
+      noveDatum = vekOk.datum;
+    }
+
     // BUG-09 OPRAVA: Validace čísla dresu při editaci
     if (jersey !== undefined && jersey !== null && jersey !== '') {
       const jerseyEditNum = parseInt(jersey, 10);
@@ -374,7 +404,7 @@ router.put('/:id', requireAuth, async (req, res, next) => {
         ...(lastName  !== undefined && lastName  && { lastName }),
         ...(jersey    !== undefined && jersey    && { jersey: parseInt(jersey, 10) }),
         ...(position  !== undefined && { position:  position  || null }),
-        ...(birthdate !== undefined && birthdate  && { birthdate: new Date(birthdate) }),
+        ...(noveDatum && { birthdate: noveDatum }),
         ...(phone     !== undefined && { phone:     phone     || null }),
       },
     });

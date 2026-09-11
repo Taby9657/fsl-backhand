@@ -184,7 +184,11 @@ const server = app.listen(0, async () => {
   };
 
   // --- registrace hráče ---
-  const zaklad = { firstName: 'Jan', lastName: 'Novak', position: 'Útočník' };
+  // Datum narození je od 11. 9. 2026 povinné a hlídá se věk 18+. Fixtury
+  // proto musí nést datum dospělého — bez něj registrace skončí na 400.
+  const DOSPELY  = '1995-06-15';
+  const NEZLETILY = new Date(Date.now() - 17 * 365.25 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const zaklad = { firstName: 'Jan', lastName: 'Novak', position: 'Útočník', birthdate: DOSPELY };
 
   const dres0 = await volej('/players', { ...zaklad, jersey: 0, inviteCode: 'FSL-TYM-AAAA' }, 'U1');
   ok(dres0.status === 201, 'dres 0 projde jako platné číslo');
@@ -223,13 +227,13 @@ const server = app.listen(0, async () => {
   // Do draftu se jinak nedalo dostat vůbec: `POST /draft/profile` chce
   // hráčský profil bez týmu, ale profil šel založit jen pozvánkovým kódem,
   // který hráče rovnou do týmu zapsal.
-  const bezKodu = await volej('/players', { firstName: 'Pavel', lastName: 'Volny', jersey: 8 }, 'U7');
+  const bezKodu = await volej('/players', { firstName: 'Pavel', lastName: 'Volny', jersey: 8, birthdate: DOSPELY }, 'U7');
   ok(bezKodu.status === 400 && bezKodu.telo.code === 'NO_INVITE_CODE',
     'bez kódu a bez příznaku profil nevznikne');
   ok(/nabídnout se v draftu/.test(bezKodu.telo.error ?? ''),
     'a chybová hláška rovnou nabídne draft');
 
-  const volny = await volej('/players', { firstName: 'Pavel', lastName: 'Volny', bezTymu: true }, 'U7');
+  const volny = await volej('/players', { firstName: 'Pavel', lastName: 'Volny', bezTymu: true, birthdate: DOSPELY }, 'U7');
   ok(volny.status === 201, 'hráč bez týmu si profil založí');
   ok(volny.telo.teamId === null, 'a zůstane bez týmu');
   ok(volny.telo.jersey === 0, 'dres se nevynucuje — vybere si ho, až ho někdo draftuje');
@@ -237,17 +241,17 @@ const server = app.listen(0, async () => {
   ok(db.zapisyNaSoupisku.every(z => z.playerId !== volny.telo.id),
     'na žádnou soupisku se nezapíše');
 
-  const znovuVolny = await volej('/players', { firstName: 'Pavel', lastName: 'Volny', bezTymu: true }, 'U7');
+  const znovuVolny = await volej('/players', { firstName: 'Pavel', lastName: 'Volny', bezTymu: true, birthdate: DOSPELY }, 'U7');
   ok(znovuVolny.status === 200, 'zopakovaný požadavek vrátí 200, ne druhý profil');
 
-  const vTymuDoDraftu = await volej('/players', { firstName: 'Jan', lastName: 'Novak', bezTymu: true }, 'U1');
+  const vTymuDoDraftu = await volej('/players', { firstName: 'Jan', lastName: 'Novak', bezTymu: true, birthdate: DOSPELY }, 'U1');
   ok(vTymuDoDraftu.status === 409 && vTymuDoDraftu.telo.code === 'ALREADY_IN_TEAM',
     'kdo je v týmu, do draftu takhle nespadne');
 
   // --- registrace týmu ---
   // Sezóna z těla se schválně ignoruje — proto se posílá jiná než aktuální
   // ('2026/27' z mocku) a čeká se, že tým stejně skončí v té aktuální.
-  const tym = await volej('/teams', { name: 'Draci', abbr: 'DRA', venue: 'Hala Jih', season: '2027/28' }, 'U5');
+  const tym = await volej('/teams', { name: 'Draci', abbr: 'DRA', venue: 'Hala Jih', season: '2027/28', manager: { birthdate: DOSPELY } }, 'U5');
   ok(tym.status === 201, 'tým se založí');
   ok(tym.telo.team?.venue === 'Hala Jih', 'domácí hala se uloží (dřív se zahazovala)');
   ok(tym.telo.team?.payments?.season === '2026/27', 'platba týmu nese aktuální sezónu, ne tu z požadavku');
@@ -262,12 +266,39 @@ const server = app.listen(0, async () => {
     'vedoucí je rovnou na soupisce sezóny');
 
   // Vedoucí, který hráčský profil už má, se nepřepisuje ani nepřetahuje
-  const tymSHracem = await volej('/teams', { name: 'Sokoli', abbr: 'SOK' }, 'U1');
+  const tymSHracem = await volej('/teams', { name: 'Sokoli', abbr: 'SOK', manager: { birthdate: DOSPELY } }, 'U1');
   ok(tymSHracem.status === 201, 'tým založí i hráč, který profil už má');
   ok(tymSHracem.telo.player?.teamId === 'T1', 'a jeho stávající profil zůstane v původním týmu');
 
+  // --- věková hranice 18 let ---
+  // Formulář na webu i v appce se dá obejít, takže tohle musí držet server.
+  const bezData = await volej('/players', { firstName: 'Adam', lastName: 'Maly', jersey: 11, inviteCode: 'FSL-TYM-AAAA' }, 'U10');
+  ok(bezData.status === 400 && bezData.telo.code === 'BIRTHDATE_REQUIRED',
+    'registrace bez data narození neprojde');
+
+  const maly = await volej('/players', { ...zaklad, birthdate: NEZLETILY, jersey: 11, inviteCode: 'FSL-TYM-AAAA' }, 'U10');
+  ok(maly.status === 400 && maly.telo.code === 'UNDERAGE', 'nezletilý hráč se nezaregistruje');
+  ok(/18 let/.test(maly.telo.error ?? ''), 'a hláška řekne proč');
+
+  const nesmysl = await volej('/players', { ...zaklad, birthdate: '2007-02-31', jersey: 11, inviteCode: 'FSL-TYM-AAAA' }, 'U10');
+  ok(nesmysl.status === 400 && nesmysl.telo.code === 'BIRTHDATE_INVALID',
+    'neexistující datum (31. února) neprojde');
+
+  const malyVDraftu = await volej('/players', { firstName: 'Adam', lastName: 'Maly', bezTymu: true, birthdate: NEZLETILY }, 'U10');
+  ok(malyVDraftu.status === 400 && malyVDraftu.telo.code === 'UNDERAGE',
+    'ani do draft poolu se nezletilý nedostane');
+
+  const malyVedouci = await volej('/teams', { name: 'Orli', abbr: 'ORL', manager: { birthdate: NEZLETILY } }, 'U11');
+  ok(malyVedouci.status === 400 && malyVedouci.telo.code === 'UNDERAGE',
+    'nezletilý si nezaloží ani tým');
+  ok(!db.teams.some(t => t.abbr === 'ORL'), 'a tým po zamítnuté registraci nezůstane viset');
+
+  const vedouciBezData = await volej('/teams', { name: 'Orli', abbr: 'OR2' }, 'U11');
+  ok(vedouciBezData.status === 400 && vedouciBezData.telo.code === 'BIRTHDATE_REQUIRED',
+    'vedoucí bez data narození tým nezaloží');
+
   db.managers.push({ userId: 'U5', teamId: tym.telo.team.id, team: tym.telo.team });
-  const druhy = await volej('/teams', { name: 'Draci znovu', abbr: 'DR2', season: '2026/27' }, 'U5');
+  const druhy = await volej('/teams', { name: 'Draci znovu', abbr: 'DR2', season: '2026/27', manager: { birthdate: DOSPELY } }, 'U5');
   ok(druhy.status === 409 && druhy.telo.code === 'ALREADY_MANAGER', 'druhý tým z jednoho účtu už nevznikne');
 
   server.close();

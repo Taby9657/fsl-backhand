@@ -9,6 +9,7 @@ const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const vekSvc = require('../utils/vek');
 const licence = require('../services/licence');
 const seasonSvc = require('../services/seasonTransition');
 const hracskyProfil = require('../services/hracskyProfil');
@@ -107,6 +108,17 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
 router.post('/', requireAuth, async (req, res, next) => {
   try {
     const { name, abbr, color, colorSecondary, venue, manager } = req.body;
+
+    // Vedoucí je zároveň hráč týmu, takže pro něj platí stejná věková hranice
+    // jako pro hráče. Kontrola je tady, ještě před transakcí — ať nevznikne
+    // tým, ke kterému pak nejde založit profil.
+    const vekVedouciho = vekSvc.zkontrolujDatumNarozeni(manager?.birthdate);
+    if (!vekVedouciho.ok) {
+      return res.status(400).json({
+        error: manager?.birthdate ? vekVedouciho.chyba : 'Datum narození je povinné.',
+        code:  manager?.birthdate ? vekVedouciho.kod   : 'BIRTHDATE_REQUIRED',
+      });
+    }
     if (!name || !abbr) return res.status(400).json({ error: 'Název a zkratka jsou povinné' });
 
     // Jeden uživatel = jeden tým. Bez téhle kontroly stačilo zopakovat
