@@ -11,11 +11,16 @@
  *
  *   node scripts/vymazat-vse.js                       # jen výpis, nic se nemaže
  *   node scripts/vymazat-vse.js --smazat              # doopravdy smaže
+ *   node scripts/vymazat-vse.js --smazat --nechat-aktuality
  *   node scripts/vymazat-vse.js --smazat --email=jiny@ucet.cz
  *
  * ── Co zůstane ──────────────────────────────────────────────────────────
  *   User      jediný řádek — účet UCHOVAT_EMAIL, nastavený jako supervisor
  *   Settings  nastavení ligy včetně aktuální sezóny (singleton)
+ *
+ * S `--nechat-aktuality` zůstanou i články v Aktualitách (`RoundHighlight`).
+ * Nejsou to soutěžní data, ale texty, které někdo psal — a mazací skript je
+ * jinak spolkne spolu s hráči a platbami.
  *
  * ── Co jde pryč ─────────────────────────────────────────────────────────
  *   všechny ostatní tabulky ze schématu, tedy i rozhodčí, hráčský profil
@@ -59,6 +64,7 @@ V Railway otevři službu Postgres → Variables a vezmi **DATABASE_PUBLIC_URL**
 const prisma = require('../src/lib/prisma');
 
 const SMAZAT = process.argv.includes('--smazat');
+const NECHAT_AKTUALITY = process.argv.includes('--nechat-aktuality');
 const arg    = process.argv.find((a) => a.startsWith('--email='));
 const EMAIL  = (arg ? arg.slice('--email='.length) : 'j.tabasek96@seznam.cz').trim().toLowerCase();
 
@@ -155,8 +161,15 @@ function zkontrolovatSchema() {
               `${ZUSTAVA.length} zůstává (${ZUSTAVA.join(', ')}).`);
 }
 
+/** Co se v tomhle běhu opravdu maže. */
+function kSmazani() {
+  return NECHAT_AKTUALITY
+    ? TABULKY.filter(([model]) => model !== 'roundHighlight')
+    : TABULKY;
+}
+
 async function smazatVse() {
-  let zbyva = [...TABULKY];
+  let zbyva = kSmazani();
 
   for (let pruchod = 1; zbyva.length > 0; pruchod++) {
     if (pruchod > 5) throw new Error('Tabulky se nedaří smazat ani po pěti průchodech.');
@@ -225,7 +238,7 @@ async function main() {
   let celkem = 0;
 
   if (!SMAZAT) {
-    for (const [model, popis] of TABULKY) {
+    for (const [model, popis] of kSmazani()) {
       const pocet = await prisma[model].count();
       celkem += pocet;
       if (pocet > 0) console.log(`  •  ${popis.padEnd(34)} ${pocet}`);
@@ -235,8 +248,10 @@ async function main() {
     if (ostatniUcty > 0) console.log(`  •  ${'ostatní účty'.padEnd(34)} ${ostatniUcty}`);
 
     const settings = await prisma.settings.findUnique({ where: { id: 'singleton' } });
+    const aktualit = await prisma.roundHighlight.count();
     console.log(`\nZůstane: účet ${uchovat.email} a nastavení ligy ` +
-                `(sezóna ${settings?.currentSeason ?? '— není nastavená —'}).`);
+                `(sezóna ${settings?.currentSeason ?? '— není nastavená —'})` +
+                (NECHAT_AKTUALITY ? `, plus ${aktualit} článků v Aktualitách.` : '.'));
     console.log(`\nCelkem ke smazání: ${celkem} záznamů.`);
     console.log('Spusť znovu s `--smazat`, až si tím budeš jistý.\n');
     return;
@@ -255,7 +270,7 @@ async function main() {
   // ── Kontrolní přepočet ──
   console.log('\nKontrola po smazání:');
   const zbytky = [];
-  for (const [model, popis] of TABULKY) {
+  for (const [model, popis] of kSmazani()) {
     const pocet = await prisma[model].count();
     if (pocet > 0) zbytky.push(`${popis} (${model}): ${pocet}`);
   }
@@ -270,6 +285,10 @@ async function main() {
   if (zbytky.length > 0 || uctyPoté.length !== 1 || !uctyPoté[0].isSupervisor) {
     console.error('\n⚠️  Stav nesedí s tím, co měl skript nechat. Projdi hlášky výš.\n');
     process.exit(1);
+  }
+
+  if (NECHAT_AKTUALITY) {
+    console.log(`  aktuality:       ${await prisma.roundHighlight.count()} (ponechány)`);
   }
 
   console.log('\nHotovo. V databázi je jediný účet (supervisor) a nastavení ligy.');
