@@ -141,6 +141,10 @@ model Referee {
   photoUrl    String?
   level       RefereeLevel   @default(C)
   status      RefereeStatus  @default(PENDING)
+  /// Do soutěže smí jen od 18 let. Nullable kvůli rozhodčím z doby, kdy se
+  /// datum nevyplňovalo; při registraci je povinné.
+  birthdate   DateTime?
+  /// Na fyzickou smlouvu a výplatu odměn. V registraci se neptáme.
   birthNo     String?
   address     String?
   city        String?

@@ -49,7 +49,8 @@ router.get('/:id', requireAuth, async (req, res, next) => {
     const isSelf       = ref.userId === req.user.id;
     const isSupervisor = isSupervisorUser(req.user);
     if (!isSelf && !isSupervisor) {
-      const { birthNo, address, city, zip, bankAccount, bankCode, ...safe } = ref;
+      // Datum narození je osobní údaj jako rodné číslo — ven nepatří.
+      const { birthdate, birthNo, address, city, zip, bankAccount, bankCode, ...safe } = ref;
       return res.json(safe);
     }
     res.json(ref);
@@ -60,18 +61,25 @@ router.get('/:id', requireAuth, async (req, res, next) => {
 router.post('/', requireAuth, async (req, res, next) => {
   try {
     const {
-      firstName, lastName, phone,
+      firstName, lastName, phone, birthdate,
+      // Rodné číslo, adresa a bankovní spojení se v přihlášce neptají —
+      // patří na fyzickou smlouvu. Starší klient je poslat může, zahodit je
+      // by ale znamenalo ztratit data, která už někdo vyplnil.
       birthNo, address, city, zip, bankAccount, bankCode,
     } = req.body;
     if (!firstName || !lastName) {
       return res.status(400).json({ error: 'Jméno a příjmení jsou povinné' });
     }
 
-    // Věková hranice platí i pro rozhodčí. Datum narození se bere z rodného
-    // čísla, které rozhodčí vyplňuje kvůli odměnám — ptát se na totéž dvakrát
-    // by bylo zbytečné. Tím se ale **rodné číslo stalo povinným**; do 11. 9.
-    // 2026 šla registrace dokončit i bez něj a doplnit ho později.
-    const vekOk = vekSvc.zkontrolujRodneCislo(birthNo);
+    // Věková hranice platí i pro rozhodčí. Krátce se věk bral z rodného čísla,
+    // ale přihláška má být jen základní profil — rodné číslo je na smlouvě.
+    if (!birthdate) {
+      return res.status(400).json({
+        error: 'Datum narození je povinné.',
+        code:  'BIRTHDATE_REQUIRED',
+      });
+    }
+    const vekOk = vekSvc.zkontrolujDatumNarozeni(birthdate);
     if (!vekOk.ok) {
       return res.status(400).json({ error: vekOk.chyba, code: vekOk.kod });
     }
@@ -85,6 +93,7 @@ router.post('/', requireAuth, async (req, res, next) => {
         firstName,
         lastName,
         phone:       phone       || null,
+        birthdate:   vekOk.datum,
         birthNo:     birthNo     || null,
         address:     address     || null,
         city:        city        || null,
@@ -124,19 +133,25 @@ router.put('/:id', requireAuth, async (req, res, next) => {
 
     // Rodné číslo šlo dřív zapsat jen při registraci z webu — kdo se registroval
     // z aplikace, neměl ho jak doplnit a supervisor mu nemohl poslat odměnu.
-    const { phone, birthNo, address, city, zip, bankAccount, bankCode } = req.body;
+    const { phone, birthdate, birthNo, address, city, zip, bankAccount, bankCode } = req.body;
 
-    // Rodné číslo nese věk, takže ho editace nesmí vyprázdnit ani přepsat
+    // Datum narození nese věk, takže ho editace nesmí vyprázdnit ani přepsat
     // na nezletilého — jinak by stačilo projít registrací a hned ho změnit.
-    if (birthNo !== undefined) {
-      const vekOk = vekSvc.zkontrolujRodneCislo(birthNo);
+    let noveDatum;
+    if (birthdate !== undefined) {
+      if (!birthdate) {
+        return res.status(400).json({ error: 'Datum narození je povinné.', code: 'BIRTHDATE_REQUIRED' });
+      }
+      const vekOk = vekSvc.zkontrolujDatumNarozeni(birthdate);
       if (!vekOk.ok) return res.status(400).json({ error: vekOk.chyba, code: vekOk.kod });
+      noveDatum = vekOk.datum;
     }
 
     const updated = await prisma.referee.update({
       where: { id: req.params.id },
       data: {
         ...(phone       !== undefined && { phone:       phone       || null }),
+        ...(noveDatum && { birthdate: noveDatum }),
         ...(birthNo     !== undefined && { birthNo:     birthNo     || null }),
         ...(address     !== undefined && { address:     address     || null }),
         ...(city        !== undefined && { city:        city        || null }),

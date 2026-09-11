@@ -91,65 +91,10 @@ function zkontrolujDatumNarozeni(hodnota, kDatu = new Date()) {
   return { ok: true, datum, kod: null, chyba: null };
 }
 
-/**
- * Datum narození z rodného čísla.
- *
- * Formát je `RRMMDD/XXX[X]`. U žen je k měsíci přičteno 50, od roku 2004
- * navíc 20 (a u žen tedy 70), když v jednom dni došla čísla.
- *
- * Ročník: devítimístné rodné číslo se přidělovalo do roku 1953, takže
- * `19RR`. U desetimístného platí 54–99 → 19xx, 00–53 → 20xx.
- *
- * Kontrolní číslice se **záměrně neověřuje** — u starších rodných čísel
- * neplatí a odmítnout platné RČ by bylo horší než pustit překlep. Pro věk
- * stačí datum.
- *
- * @returns {Date|null}
- */
-function datumZRodnehoCisla(rodneCislo) {
-  const cisla = String(rodneCislo ?? '').replace(/[^\d]/g, '');
-  if (cisla.length !== 9 && cisla.length !== 10) return null;
-
-  const rr = Number(cisla.slice(0, 2));
-  let mm = Number(cisla.slice(2, 4));
-  const dd = Number(cisla.slice(4, 6));
-
-  if (mm > 70) mm -= 70;        // žena, přetečená řada (od 2004)
-  else if (mm > 50) mm -= 50;   // žena
-  else if (mm > 20) mm -= 20;   // muž, přetečená řada (od 2004)
-
-  const rok = cisla.length === 9 ? 1900 + rr : (rr <= 53 ? 2000 + rr : 1900 + rr);
-
-  return naDatum(`${rok}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`);
-}
-
-/**
- * Kontrola věku rozhodčího. Datum narození se bere z rodného čísla —
- * vlastní pole by znamenalo ptát se na totéž dvakrát.
- */
-function zkontrolujRodneCislo(rodneCislo, kDatu = new Date()) {
-  const text = String(rodneCislo ?? '').trim();
-  if (!text) {
-    return { ok: false, datum: null, kod: 'BIRTHNO_REQUIRED', chyba: 'Rodné číslo je povinné.' };
-  }
-  const datum = datumZRodnehoCisla(text);
-  if (!datum) {
-    return {
-      ok: false,
-      datum: null,
-      kod: 'BIRTHNO_INVALID',
-      chyba: 'Rodné číslo zadej ve formátu 950615/1234.',
-    };
-  }
-  return zkontrolujDatumNarozeni(datum, kDatu);
-}
-
 module.exports = {
   VEKOVA_HRANICE,
   NEJSTARSI_ROK,
   naDatum,
   vek,
   zkontrolujDatumNarozeni,
-  datumZRodnehoCisla,
-  zkontrolujRodneCislo,
 };

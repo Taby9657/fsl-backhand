@@ -1,0 +1,11 @@
+-- Datum narození rozhodčího.
+--
+-- Do soutěže smí jen lidé od 18 let. U hráčů se věk bere z Player.birthdate,
+-- u rozhodčích se krátce bral z rodného čísla — jenže přihláška rozhodčího má
+-- být jen základní profil. Rodné číslo, adresa a bankovní spojení patří na
+-- fyzickou smlouvu, ne do registračního formuláře, takže datum narození
+-- dostává vlastní sloupec.
+--
+-- Sloupec je nullable schválně: rozhodčí registrovaní dřív ho nemají a jejich
+-- řádky se nemají čím doplnit. Povinné je až při registraci, v aplikaci.
+ALTER TABLE "Referee" ADD COLUMN "birthdate" TIMESTAMP(3);

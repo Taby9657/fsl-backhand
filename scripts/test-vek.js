@@ -33,26 +33,5 @@ ok(kod('2030-01-01') === 'BIRTHDATE_INVALID', 'datum v budoucnosti neprojde');
 ok(kod('1919-05-05') === 'BIRTHDATE_INVALID', 'ročník před 1920 je skoro jistě překlep');
 ok(vekSvc.zkontrolujDatumNarozeni('1995-06-15T00:00:00.000Z', DNES).ok, 'bere i celé ISO z toISOString()');
 
-// ── rodné číslo ──
-const den = (rc) => {
-  const d = vekSvc.datumZRodnehoCisla(rc);
-  return d ? d.toISOString().slice(0, 10) : null;
-};
-ok(den('950615/1234') === '1995-06-15', 'muž, s lomítkem');
-ok(den('9506151234') === '1995-06-15', 'muž, bez lomítka');
-ok(den('955615/1234') === '1995-06-15', 'žena má k měsíci +50');
-ok(den('0432311234') === '2004-12-31', 'přetečená řada od 2004 má +20');
-ok(den('0482311234') === '2004-12-31', 'žena v přetečené řadě má +70');
-ok(den('530615123')  === '1953-06-15', 'devítimístné RČ je vždy 19xx');
-ok(den('0406151234') === '2004-06-15', 'desetimístné 00–53 je 20xx');
-ok(den('9902301234') === null, '30. února v RČ neprojde');
-ok(den('nesmysl') === null, 'text místo RČ neprojde');
-
-const kodRC = (rc) => vekSvc.zkontrolujRodneCislo(rc, DNES).kod;
-ok(kodRC('') === 'BIRTHNO_REQUIRED', 'prázdné rodné číslo je chyba, ne povolený stav');
-ok(kodRC('abc') === 'BIRTHNO_INVALID', 'nesmysl se pozná');
-ok(kodRC('100615/1234') === 'UNDERAGE', 'nezletilý rozhodčí neprojde');
-ok(vekSvc.zkontrolujRodneCislo('080911/1234', DNES).ok, 'rozhodčí v den osmnáctin projde');
-
 console.log(fail === 0 ? '\nVŠE PROŠLO' : `\n${fail} SELHALO`);
 process.exit(fail === 0 ? 0 : 1);
