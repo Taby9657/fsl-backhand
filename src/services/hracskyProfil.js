@@ -21,14 +21,14 @@ const vekSvc = require('../utils/vek');
 const VYCHOZI_POST = 'Útočník';
 
 /**
- * Pokus o jméno z e-mailu: `j.tabasek96@…` → „J. Tabášek" se nedá uhodnout,
- * ale „J Tabasek" je pořád k poznání líp než „Vedoucí".
+ * Pokus o jméno z e-mailu: `j.novak96@…` → „J. Novák" se nedá uhodnout,
+ * ale „J Novak" je pořád k poznání líp než „Vedoucí".
  *
  * @returns {{firstName: string, lastName: string}|null}
  */
 function jmenoZEmailu(email) {
   const local = String(email ?? '').split('@')[0] ?? '';
-  // Číslice a tečky ven; „j.tabasek96" → ["j", "tabasek"].
+  // Číslice a tečky ven; „j.novak96" → ["j", "novak"].
   const casti = local.split(/[^A-Za-zÁ-Žá-ž]+/).filter(Boolean);
   if (casti.length < 2) return null;
 
