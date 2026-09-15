@@ -32,6 +32,8 @@ function novaDb() {
       T3: { id: 'T3', name: 'Starý tým', regStatus: 'APPROVED' },
     },
     zapisyNaSoupisku: [],
+    draftProfily: [],
+    draftNabidky: [],
   };
 }
 
@@ -85,6 +87,7 @@ const fakePrisma = {
   },
   manager: {
     findFirst: async ({ where }) => db.managers.find(m => m.userId === where.userId) ?? null,
+    findMany: async () => db.managers,
   },
   inviteCode: {
     findUnique: async ({ where }) => {
@@ -98,6 +101,32 @@ const fakePrisma = {
     },
   },
   teamSeason: { findFirst: async ({ where }) => ({ season: where.teamId === 'T3' ? '2025/26' : '2026/27' }) },
+  // Draft pool: registrace bez týmu do něj hráče zapisuje rovnou, vstup do
+  // týmu ho z něj musí odebrat. Obojí jde přes `services/draftPool`.
+  draftProfile: {
+    findUnique: async ({ where }) => db.draftProfily.find(d => d.playerId === where.playerId) ?? null,
+    upsert: async ({ where, create, update }) => {
+      const stavajici = db.draftProfily.find(d => d.playerId === where.playerId);
+      if (stavajici) { Object.assign(stavajici, update); return stavajici; }
+      const novy = { id: dalsiId('D'), ...create, videos: [] };
+      db.draftProfily.push(novy);
+      return novy;
+    },
+    update: async ({ where, data }) => {
+      const d = db.draftProfily.find(x => x.id === where.id);
+      Object.assign(d, data);
+      return d;
+    },
+  },
+  draftOffer: {
+    updateMany: async ({ where, data }) => {
+      let count = 0;
+      for (const o of db.draftNabidky) {
+        if (o.profileId === where.profileId && o.status === where.status) { Object.assign(o, data); count += 1; }
+      }
+      return { count };
+    },
+  },
   user: { findUnique: async () => null },
   notification: { create: async () => ({}) },
 };
@@ -241,12 +270,30 @@ const server = app.listen(0, async () => {
   ok(db.zapisyNaSoupisku.every(z => z.playerId !== volny.telo.id),
     'na žádnou soupisku se nezapíše');
 
+  // Tohle je jádro opravy z 15. 9.: registrace a vstup do draft poolu jsou
+  // jeden krok. Dřív formulář sliboval „nabídneš se v draftu", ale
+  // `DraftProfile` nikdo nezaložil a hráč v poolu nebyl.
+  const profilVolneho = db.draftProfily.find(d => d.playerId === volny.telo.id);
+  ok(!!profilVolneho, 'registrace bez týmu rovnou založí draft profil');
+  ok(profilVolneho?.isActive === true, 'a je v poolu aktivní, bez druhého kroku');
+  ok(profilVolneho?.position === 'Útočník', 'post z přihlášky se do draftu přenese');
+
   const znovuVolny = await volej('/players', { firstName: 'Pavel', lastName: 'Volny', bezTymu: true, birthdate: DOSPELY }, 'U7');
   ok(znovuVolny.status === 200, 'zopakovaný požadavek vrátí 200, ne druhý profil');
 
   const vTymuDoDraftu = await volej('/players', { firstName: 'Jan', lastName: 'Novak', bezTymu: true, birthdate: DOSPELY }, 'U1');
   ok(vTymuDoDraftu.status === 409 && vTymuDoDraftu.telo.code === 'ALREADY_IN_TEAM',
     'kdo je v týmu, do draftu takhle nespadne');
+
+  // --- kdo vstoupí do týmu, mizí z poolu ---
+  // Jinak zůstane mezi volnými hráči, jiný tým mu pošle nabídku a cron ho
+  // po vypršení okna přepíše jinam — bez jeho souhlasu. Dokud draft profil
+  // vznikal zvlášť, týkalo se to hrstky lidí; od 15. 9. má profil každý,
+  // kdo se registruje bez týmu.
+  const zPooluDoTymu = await volej('/players/join', { inviteCode: 'FSL-STA-CCCC', jersey: 11 }, 'U7');
+  ok(zPooluDoTymu.status === 200, 'hráč z draftu se připojí pozvánkovým kódem');
+  ok(db.draftProfily.find(d => d.playerId === volny.telo.id)?.isActive === false,
+    'a tím zmizí z nabídky volných hráčů');
 
   // --- registrace týmu ---
   // Sezóna z těla se schválně ignoruje — proto se posílá jiná než aktuální
