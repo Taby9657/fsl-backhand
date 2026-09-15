@@ -1,15 +1,25 @@
 /**
- * Připomínka nezaplaceného poplatku — hodinu po registraci.
+ * Plán upomínek — co komu a kdy chodí, když po registraci nezaplatí.
+ *
+ * ── Plán ────────────────────────────────────────────────────────────────
+ *   hodina  →  den  →  týden  →  ticho
+ *
+ * Jedna připomínka nestačila: kdo si ji přečte v práci a odloží ji na
+ * večer, druhou šanci od nás nedostal. Tři jsou dost na to, aby se ozval
+ * ten, kdo chce, a málo na to, aby to někoho otrávilo. **Čtvrtá už
+ * nepřijde** — kdo nereagoval třikrát, nepřesvědčí ho ani čtvrtý e-mail
+ * a nezaplacené přihlášky vidí supervisor ve Správě hráčů a v Týmech.
  *
  * ── Komu se píše ────────────────────────────────────────────────────────
- * Jen tomu, kdo doopravdy platit má:
- *   · hráč, který je v týmu a nemá zaplacenou licenci,
- *   · tým, který nemá zaplacenou registraci (píše se jeho vedoucím).
+ *   · hráč v týmu bez zaplacené licence      → hodina, den, týden
+ *   · tým bez zaplacené registrace (vedoucím) → hodina, den, týden
+ *   · hráč bez týmu v draftu                  → den, týden
  *
- * **Hráči bez týmu se nepíše nic.** Kdo se přihlásil do draftu, zatím nic
- * neplatí — nabídka Virtuálního vedoucího je možnost, ne dluh. Upomínka za
- * něco, co člověk platit nemusí, je spam a ničí přesně ten první dojem,
- * kvůli kterému uvítací e-maily vznikly.
+ * **Hráč bez týmu nedostává upomínku, ale nabídku.** V draftu nic nedluží:
+ * licenci potřebuje, teprve až ho někdo vezme. Chodí mu proto jiná zpráva —
+ * že je pořád v draftu a že nemusí čekat, když nechce (`nabidkaVstupuMail`).
+ * A nechodí hodinu po registraci: to by přistála hned za uvítacím e-mailem
+ * a vypadala by jako upomínka za něco, co platit nemusí.
  *
  * ── Proč se nemaže ──────────────────────────────────────────────────────
  * Hrozba „zaplať, nebo tě smažeme" by byla lež: **převodem platba dorazí za
@@ -18,68 +28,75 @@
  * licence hráč nenastoupí a tým bez registrace se do soutěže nezařadí.
  *
  * ── Proč se neposílá dvakrát ────────────────────────────────────────────
- * `upominkaAt` se zapisuje hned po odeslání. Cron běží každých 15 minut,
- * takže „hodinu po registraci" je ve skutečnosti 60 až 75 minut — na
- * připomínku víc než dost.
+ * `upominekPoslano` říká, kolikátá fáze je na řadě, `upominkaAt` kdy odešla
+ * poslední. Cron běží každých 15 minut, takže „hodinu po registraci" je ve
+ * skutečnosti 60 až 75 minut — na připomínku víc než dost.
  */
 
 const prisma = require('../lib/prisma');
 const mailer = require('./mailer');
 
-/** Za jak dlouho po registraci se ozveme. */
-const PO_REGISTRACI_MS = 60 * 60 * 1000;
+const HODINA = 60 * 60 * 1000;
+const DEN    = 24 * HODINA;
+
+/** Za jak dlouho po registraci odchází která fáze. Délka pole = kolik jich přijde. */
+const PLAN_PLATBA = [1 * HODINA, 1 * DEN, 7 * DEN];
+
+/** Hráč bez týmu dostane o jednu míň a začíná se až druhý den. */
+const PLAN_DRAFT = [1 * DEN, 7 * DEN];
 
 /**
  * Odkdy se upomínky posílají.
  *
- * Bez téhle hranice by první spuštění po nasazení rozeslalo připomínku všem
- * nezaplaceným registracím zpětně — včetně lidí, kteří se přihlásili v době,
- * kdy žádný uvítací e-mail neexistoval a tohle by pro ně byla první zpráva
- * od ligy vůbec.
+ * Bez téhle hranice by první spuštění po nasazení rozeslalo připomínky
+ * zpětně — včetně lidí, kteří se přihlásili v době, kdy žádný uvítací
+ * e-mail neexistoval a tohle by pro ně byla první zpráva od ligy vůbec.
  */
 const UPOMINKY_OD = new Date('2026-09-16T00:00:00Z');
 
 /** Kolik jich poslat za jeden průchod. Brzda pro případ, že se něco nastřádá. */
 const DAVKA = 50;
 
+/** Je tahle fáze na řadě? `poslano` je počet už odeslaných zpráv. */
+function naRade(plan, poslano, registrace, ted) {
+  if (poslano >= plan.length) return false;
+  return ted.getTime() - new Date(registrace).getTime() >= plan[poslano];
+}
+
 /**
  * `ted` a `od` jsou tu kvůli testu, produkce je nepředává. Bez nich by test
  * záležel na tom, kolikátého zrovna je — a `UPOMINKY_OD` je pevné datum.
  */
 async function posliUpominky({ ted = new Date(), od = UPOMINKY_OD } = {}) {
-  const hranice = new Date(ted.getTime() - PO_REGISTRACI_MS);
-  const [hracu, tymu] = await Promise.all([
-    upominkyHracum(hranice, od),
-    upominkyTymum(hranice, od),
+  const [hracu, tymu, draftu] = await Promise.all([
+    upominkyHracum(ted, od),
+    upominkyTymum(ted, od),
+    nabidkyVDraftu(ted, od),
   ]);
-  return { hracu, tymu };
+  return { hracu, tymu, draftu };
 }
 
 /** Hráč v týmu bez zaplacené licence. */
-async function upominkyHracum(hranice, od) {
+async function upominkyHracum(ted, od) {
   const platby = await prisma.playerPayment.findMany({
     where: {
-      licStatus:  { in: ['PENDING', 'OVERDUE'] },
-      upominkaAt: null,
+      licStatus:       { in: ['PENDING', 'OVERDUE'] },
+      upominekPoslano: { lt: PLAN_PLATBA.length },
       player: {
         teamId:    { not: null },
-        createdAt: { lte: hranice, gte: od },
         userId:    { not: null },
+        createdAt: { gte: od },
       },
     },
     include: {
-      player: {
-        select: {
-          firstName: true,
-          user: { select: { email: true } },
-        },
-      },
+      player: { select: { firstName: true, createdAt: true, user: { select: { email: true } } } },
     },
     take: DAVKA,
   });
 
   let odeslano = 0;
   for (const platba of platby) {
+    if (!naRade(PLAN_PLATBA, platba.upominekPoslano, platba.player.createdAt, ted)) continue;
     const email = platba.player?.user?.email;
     if (!email) continue;
 
@@ -89,34 +106,32 @@ async function upominkyHracum(hranice, od) {
         jmeno:   platba.player.firstName,
         polozky: [{ nazev: `Hráčská licence · sezóna ${platba.season}`, castka: platba.licFee }],
         castka:  platba.licFee,
+        faze:    platba.upominekPoslano + 1,
       }),
       'upominka-licence',
     );
 
-    // Zapisuje se i po neúspěchu. Kdyby se zapisoval jen úspěch, plná nebo
-    // neexistující schránka by znamenala pokus při každém průchodu cronu
-    // donekonečna.
-    await prisma.playerPayment.update({
-      where: { id: platba.id },
-      data:  { upominkaAt: new Date() },
-    });
+    // Počítadlo se zvyšuje i po neúspěchu. Kdyby se zvyšoval jen úspěch,
+    // plná nebo neexistující schránka by znamenala pokus při každém
+    // průchodu cronu donekonečna.
+    await zapisOdeslani(prisma.playerPayment, platba, ted);
     if (vysledek.ok) odeslano += 1;
   }
   return odeslano;
 }
 
 /** Tým bez zaplacené registrace — píše se všem jeho vedoucím. */
-async function upominkyTymum(hranice, od) {
+async function upominkyTymum(ted, od) {
   const platby = await prisma.teamPayment.findMany({
     where: {
-      status:     { in: ['PENDING', 'OVERDUE'] },
-      upominkaAt: null,
-      team:       { createdAt: { lte: hranice, gte: od } },
+      status:          { in: ['PENDING', 'OVERDUE'] },
+      upominekPoslano: { lt: PLAN_PLATBA.length },
+      team:            { createdAt: { gte: od } },
     },
     include: {
       team: {
         select: {
-          name:     true,
+          name: true, createdAt: true,
           managers: { select: { user: { select: { email: true } } } },
         },
       },
@@ -126,10 +141,9 @@ async function upominkyTymum(hranice, od) {
 
   let odeslano = 0;
   for (const platba of platby) {
-    const adresy = (platba.team?.managers ?? [])
-      .map(m => m.user?.email)
-      .filter(Boolean);
+    if (!naRade(PLAN_PLATBA, platba.upominekPoslano, platba.team.createdAt, ted)) continue;
 
+    const adresy = (platba.team?.managers ?? []).map(m => m.user?.email).filter(Boolean);
     for (const email of adresy) {
       const vysledek = await mailer.posliBezpecne(
         email,
@@ -140,18 +154,68 @@ async function upominkyTymum(hranice, od) {
             castka: platba.amount,
           }],
           castka: platba.amount,
+          faze:   platba.upominekPoslano + 1,
         }),
         'upominka-registrace',
       );
       if (vysledek.ok) odeslano += 1;
     }
 
-    await prisma.teamPayment.update({
-      where: { id: platba.id },
-      data:  { upominkaAt: new Date() },
-    });
+    await zapisOdeslani(prisma.teamPayment, platba, ted);
   }
   return odeslano;
 }
 
-module.exports = { posliUpominky, PO_REGISTRACI_MS, UPOMINKY_OD };
+/**
+ * Hráč bez týmu — nabídka, ne upomínka.
+ *
+ * Posílá se, jen dokud nemá zaplacený balík ani licenci. Kdo si Virtuálního
+ * vedoucího koupil, čeká na zařazení do týmu a psát mu „pořád jsi v draftu"
+ * by bylo matoucí.
+ */
+async function nabidkyVDraftu(ted, od) {
+  const platby = await prisma.playerPayment.findMany({
+    where: {
+      licStatus:       { in: ['PENDING', 'OVERDUE'] },
+      upominekPoslano: { lt: PLAN_DRAFT.length },
+      player: {
+        teamId:    null,
+        userId:    { not: null },
+        createdAt: { gte: od },
+      },
+    },
+    include: {
+      player: { select: { firstName: true, createdAt: true, user: { select: { email: true } } } },
+    },
+    take: DAVKA,
+  });
+
+  let odeslano = 0;
+  for (const platba of platby) {
+    if (!naRade(PLAN_DRAFT, platba.upominekPoslano, platba.player.createdAt, ted)) continue;
+    const email = platba.player?.user?.email;
+    if (!email) continue;
+
+    const vysledek = await mailer.posliBezpecne(
+      email,
+      mailer.nabidkaVstupuMail({
+        jmeno: platba.player.firstName,
+        faze:  platba.upominekPoslano + 1,
+      }),
+      'nabidka-vstupu',
+    );
+
+    await zapisOdeslani(prisma.playerPayment, platba, ted);
+    if (vysledek.ok) odeslano += 1;
+  }
+  return odeslano;
+}
+
+function zapisOdeslani(model, platba, ted) {
+  return model.update({
+    where: { id: platba.id },
+    data:  { upominkaAt: ted, upominekPoslano: platba.upominekPoslano + 1 },
+  });
+}
+
+module.exports = { posliUpominky, PLAN_PLATBA, PLAN_DRAFT, UPOMINKY_OD };

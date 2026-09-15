@@ -298,16 +298,17 @@ runLineupLock();
 setInterval(runLineupLock, LOCK_INTERVAL_MS);
 
 // ==================== PŘIPOMÍNKY NEZAPLACENÝCH POPLATKŮ ====================
-// Hodinu po registraci se ozveme tomu, kdo má platit a nezaplatil. Nic se
-// nemaže a hráči bez týmu se nepíše nic — proč, je v `services/upominky.js`.
+// Plán: hodina, den, týden, pak ticho. Nic se nemaže a hráč bez týmu
+// dostává nabídku, ne upomínku — proč, je v `services/upominky.js`.
 const UPOMINKY_INTERVAL_MS = 15 * 60 * 1000;
 
 async function runUpominky() {
   try {
     const { posliUpominky } = require('./src/services/upominky');
     const vysledek = await posliUpominky();
-    if (vysledek.hracu > 0 || vysledek.tymu > 0) {
-      console.log(`[Upomínky] Odesláno: ${vysledek.hracu} hráčům, ${vysledek.tymu} vedoucím.`);
+    if (vysledek.hracu > 0 || vysledek.tymu > 0 || vysledek.draftu > 0) {
+      console.log(`[Upomínky] Odesláno: ${vysledek.hracu} hráčům, ${vysledek.tymu} vedoucím, `
+        + `${vysledek.draftu} v draftu.`);
     }
   } catch (err) {
     console.error('[Upomínky] Chyba:', err.message);

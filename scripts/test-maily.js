@@ -23,10 +23,9 @@ const fakePrisma = {
   playerPayment: {
     findMany: async ({ where }) => db.playerPayments.filter(p =>
       where.licStatus.in.includes(p.licStatus)
-      && p.upominkaAt == null
-      && p.player.teamId !== null
+      && p.upominekPoslano < where.upominekPoslano.lt
+      && (where.player.teamId === null ? p.player.teamId === null : p.player.teamId !== null)
       && p.player.userId !== null
-      && p.player.createdAt <= where.player.createdAt.lte
       && p.player.createdAt >= where.player.createdAt.gte),
     update: async ({ where, data }) => {
       const p = db.playerPayments.find(x => x.id === where.id);
@@ -37,8 +36,7 @@ const fakePrisma = {
   teamPayment: {
     findMany: async ({ where }) => db.teamPayments.filter(t =>
       where.status.in.includes(t.status)
-      && t.upominkaAt == null
-      && t.team.createdAt <= where.team.createdAt.lte
+      && t.upominekPoslano < where.upominekPoslano.lt
       && t.team.createdAt >= where.team.createdAt.gte),
     update: async ({ where, data }) => {
       const t = db.teamPayments.find(x => x.id === where.id);
@@ -143,42 +141,77 @@ function projdi(nazev, zprava) {
   ok(/nenastoup|nezařadí/i.test(upominka.text),
     'místo toho říká věcný důsledek: bez licence se nenastupuje');
 
-  // --- 7. komu upomínka chodí ---
+  // --- 7. plán: komu, kdy a kolikrát ---
   reset();
-  const stary = new Date(Date.now() - 3 * 60 * 60 * 1000);
-  db.playerPayments.push({
-    id: 'PP1', season: '2026/27', licFee: 300, licStatus: 'PENDING', upominkaAt: null,
-    player: { firstName: 'Jan', teamId: 'T1', userId: 'U1', createdAt: stary, user: { email: 'jan@test.cz' } },
-  });
-  db.playerPayments.push({
-    id: 'PP2', season: '2026/27', licFee: 300, licStatus: 'PENDING', upominkaAt: null,
-    player: { firstName: 'David', teamId: null, userId: 'U2', createdAt: stary, user: { email: 'david@test.cz' } },
-  });
-  db.playerPayments.push({
-    id: 'PP3', season: '2026/27', licFee: 300, licStatus: 'PENDING', upominkaAt: null,
-    player: { firstName: 'Nový', teamId: 'T1', userId: 'U3', createdAt: new Date(), user: { email: 'novy@test.cz' } },
-  });
-  db.teamPayments.push({
-    id: 'TP1', season: '2026/27', amount: 3000, status: 'PENDING', upominkaAt: null,
-    team: { name: 'Draci', createdAt: stary, managers: [{ user: { email: 'petr@test.cz' } }] },
-  });
-
-  // `od` se předává, aby test nezáležel na tom, kolikátého zrovna je.
   const ODKDY = new Date('2020-01-01');
-  const prvni = await upominky.posliUpominky({ od: ODKDY });
-  const komu = db.odeslane.map(z => z.to);
-  ok(komu.includes('jan@test.cz'), 'upomínka dorazí hráči v týmu, který nemá licenci');
-  ok(!komu.includes('david@test.cz'),
-    'hráči bez týmu nedorazí nic — v draftu zatím nic neplatí');
-  ok(!komu.includes('novy@test.cz'),
-    'a tomu, kdo se registroval před chvílí, se taky nepíše — hodina ještě neuběhla');
-  ok(komu.includes('petr@test.cz'), 'vedoucí dostane připomínku nezaplacené registrace');
-  ok(prvni.hracu === 1 && prvni.tymu === 1, 'počty v návratové hodnotě sedí');
+  const REG = new Date('2026-09-20T10:00:00Z');   // kdy se všichni zaregistrovali
+  const po = (ms) => new Date(REG.getTime() + ms);
+  const HODINA = 60 * 60 * 1000;
+  const DEN = 24 * HODINA;
 
-  const pocetPoPrvnim = db.odeslane.length;
-  const druhy = await upominky.posliUpominky({ od: ODKDY });
-  ok(db.odeslane.length === pocetPoPrvnim && druhy.hracu === 0,
-    'druhý průchod cronu nenapíše tomutéž člověku podruhé');
+  const hrac = (id, jmeno, teamId, email) => ({
+    id, season: '2026/27', licFee: 300, licStatus: 'PENDING',
+    upominkaAt: null, upominekPoslano: 0,
+    player: { firstName: jmeno, teamId, userId: 'U' + id, createdAt: REG, user: { email } },
+  });
+  db.playerPayments.push(hrac('PP1', 'Jan', 'T1', 'jan@test.cz'));
+  db.playerPayments.push(hrac('PP2', 'David', null, 'david@test.cz'));
+  db.teamPayments.push({
+    id: 'TP1', season: '2026/27', amount: 3000, status: 'PENDING',
+    upominkaAt: null, upominekPoslano: 0,
+    team: { name: 'Draci', createdAt: REG, managers: [{ user: { email: 'petr@test.cz' } }] },
+  });
+
+  const bez = () => { const z = db.odeslane.slice(); db.odeslane.length = 0; return z; };
+  const bezi = (ms) => upominky.posliUpominky({ ted: po(ms), od: ODKDY });
+
+  // Půl hodiny po registraci nemá odejít nic.
+  await bezi(HODINA / 2);
+  ok(bez().length === 0, 'půl hodiny po registraci nechodí nic');
+
+  // Hodina: hráč v týmu a vedoucí. Hráč bez týmu ne — ten nic nedluží.
+  await bezi(HODINA);
+  const poHodine = bez();
+  ok(poHodine.some(z => z.to === 'jan@test.cz'), 'po hodině: hráč v týmu bez licence');
+  ok(poHodine.some(z => z.to === 'petr@test.cz'), 'po hodině: vedoucí bez zaplacené registrace');
+  ok(!poHodine.some(z => z.to === 'david@test.cz'),
+    'po hodině: hráči bez týmu nechodí nic — v draftu zatím nic neplatí');
+  ok(poHodine.every(z => /Ještě zbývá zaplatit/.test(z.subject)), 'a je to první fáze plánu');
+
+  // Ještě jednou po dvou hodinách — druhá fáze je až za den, takže ticho.
+  await bezi(2 * HODINA);
+  ok(bez().length === 0, 'druhá fáze nepřijde dřív než za den');
+
+  // Den: druhá fáze platícím a první nabídka tomu v draftu.
+  await bezi(DEN);
+  const poDni = bez();
+  ok(poDni.some(z => z.to === 'jan@test.cz' && /Připomínka/.test(z.subject)),
+    'po dni: druhá připomínka hráči v týmu');
+  const nabidka = poDni.find(z => z.to === 'david@test.cz');
+  ok(!!nabidka, 'po dni: hráč v draftu dostane první zprávu');
+  ok(/draftu/i.test(nabidka.subject) && !/Visí na tobě/.test(nabidka.text),
+    'a není to upomínka — je to nabídka Virtuálního vedoucího, nic nedluží');
+
+  // Týden: poslední fáze všem.
+  await bezi(7 * DEN);
+  const poTydnu = bez();
+  ok(poTydnu.some(z => z.to === 'jan@test.cz' && /Poslední/.test(z.subject)),
+    'po týdnu: poslední připomínka');
+  ok(poTydnu.some(z => /poslední připomínka/i.test(z.text) && z.to === 'david@test.cz'),
+    'a poslední nabídka i tomu v draftu');
+
+  // Měsíc: plán je vyčerpaný, dál se mlčí.
+  await bezi(30 * DEN);
+  ok(bez().length === 0, 'po vyčerpání plánu se přestane psát — čtvrtá zpráva nepřijde');
+  ok(db.playerPayments.find(p => p.id === 'PP1').upominekPoslano === 3
+    && db.playerPayments.find(p => p.id === 'PP2').upominekPoslano === 2,
+    'počítadlo sedí: tři zprávy platícímu, dvě tomu v draftu');
+
+  // Kdo zaplatí, vypadne z plánu.
+  db.playerPayments.push(hrac('PP3', 'Eva', 'T1', 'eva@test.cz'));
+  db.playerPayments.find(p => p.id === 'PP3').licStatus = 'PAID';
+  await bezi(2 * HODINA);
+  ok(!bez().some(z => z.to === 'eva@test.cz'), 'zaplacené licenci už nechodí nic');
 
   console.log(fail === 0 ? '\nVŠE PROŠLO' : `\n${fail} SELHALO`);
   process.exit(fail === 0 ? 0 : 1);

@@ -428,8 +428,9 @@ model TeamPayment {
   stripeId       String?
   sessionId      String?       // rozpracovaná Stripe Checkout session
   variableSymbol String?       @unique
-  /// Kdy odešla připomínka nezaplacené registrace (viz PlayerPayment.upominkaAt).
+  /// Poslední připomínka nezaplacené registrace (viz PlayerPayment.upominkaAt).
   upominkaAt     DateTime?
+  upominekPoslano Int      @default(0)
 
   team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
 }
@@ -455,9 +456,10 @@ model PlayerPayment {
   superSessionId String?  // rozpracovaná Checkout session – superlicence
   variableSymbol      String?  @unique // licence (prefix 1)
   superVariableSymbol String?  @unique // superlicence (prefix 2)
-  /// Kdy odešla připomínka nezaplacené licence. Drží se tu proto, aby
-  /// druhý průchod cronu nenapsal tomutéž člověku podruhé.
+  /// Kdy odešla poslední připomínka a kolikátá to byla. Podle počtu se
+  /// pozná, která fáze plánu přijde na řadu — viz `services/upominky.js`.
   upominkaAt          DateTime?
+  upominekPoslano     Int       @default(0)
 
   player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
 }

@@ -398,14 +398,37 @@ ${WEB}/platby`;
  * převodem platba dorazí za den dva a párování běží v denním cyklu, takže
  * by se mazali lidé, kteří zaplatili.
  */
-function upominkaPlatbaMail({ jmeno, polozky, castka }) {
+function upominkaPlatbaMail({ jmeno, polozky, castka, faze = 1 }) {
   const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
   const radky = polozkyRadky(polozky);
+
+  // Tón se stupňuje jen v tom, jak naléhavě zní — nikdy v tom, čím hrozí.
+  const uvod = {
+    1: 'registrace ti prošla, ale platba zatím ne. Visí na tobě:',
+    2: 'včera ti prošla registrace a platba pořád visí:',
+    3: 'týden se ti tu drží nezaplacená položka:',
+  }[faze] ?? 'platba zatím nedorazila:';
+
+  const zaver = {
+    1: 'Spěchat nemusíš, jen ať to nezapadne: bez zaplacené licence tě nejde postavit '
+     + 'do sestavy a tým bez zaplacené registrace se nezařadí do soutěže.',
+    2: 'Kdyby se platba někde zasekla nebo ti něco nebylo jasné, napiš — vyřešíme to. '
+     + 'A kdybys to mezitím poslal převodem, počkej den dva, než se spáruje.',
+    3: 'Tohle je od nás poslední připomínka, dál už psát nebudeme. Přihláška ti nikam '
+     + 'nezmizí a zaplatit jde kdykoli; dokud to neuděláš, jen se s tebou nepočítá '
+     + 'do soutěže.',
+  }[faze] ?? '';
+
+  const predmet = {
+    1: 'Ještě zbývá zaplatit',
+    2: 'Připomínka: platba zatím nedorazila',
+    3: 'Poslední připomínka platby',
+  }[faze] ?? 'Ještě zbývá zaplatit';
 
   const text =
 `${oslov}
 
-registrace ti prošla, ale platba zatím ne. Visí na tobě:
+${uvod}
 
 ${radky.map((r) => `· ${r}`).join('\n')}
 Celkem ${castka} Kč
@@ -413,21 +436,68 @@ Celkem ${castka} Kč
 Zaplatit jde kartou i převodem — a klidně všechno najednou v jednom košíku:
 ${WEB}/platby
 
-Spěchat nemusíš, jen ať to nezapadne: bez zaplacené licence tě nejde postavit
-do sestavy a tým bez zaplacené registrace se nezařadí do soutěže.
+${zaver}
 
 Kdyby něco nešlo nebo sis to rozmyslel, stačí odpovědět na tenhle e-mail.`;
 
   const html = obalka(
-    'Ještě zbývá zaplatit',
-    odstavec(`${oslov} registrace ti prošla, ale platba zatím ne. Visí na tobě:`)
+    predmet,
+    odstavec(`${oslov} ${uvod}`)
     + ramecek(radky.map((r) => `· ${r}`).join('<br>') + `<br><strong>Celkem ${castka} Kč</strong>`)
     + tlacitko('Zaplatit', '/platby')
-    + odstavec('Spěchat nemusíš, jen ať to nezapadne: bez zaplacené licence tě nejde postavit do sestavy a tým bez zaplacené registrace se nezařadí do soutěže.')
+    + odstavec(zaver)
     + odstavec('Kdyby něco nešlo nebo sis to rozmyslel, stačí odpovědět na tenhle e-mail.'),
   );
 
-  return { subject: 'Ještě zbývá zaplatit', text, html };
+  return { subject: predmet, text, html };
+}
+
+/**
+ * Hráč bez týmu, který zatím nic nezaplatil.
+ *
+ * **Není to upomínka a nesmí tak znít** — v draftu člověk nic nedluží.
+ * Je to nabídka druhé cesty pro toho, komu zatím nikdo nenapsal: vzít si
+ * Virtuálního vedoucího a nechat tým složit lize. Proto se taky neposílá
+ * hodinu po registraci jako platební připomínka, ale až druhý den.
+ */
+function nabidkaVstupuMail({ jmeno, castka = 800, licFee = 300, faze = 1 }) {
+  const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
+  const uvod = faze >= 2
+    ? 'jsi u nás týden v draftu volných hráčů a zatím ti nikdo nenabídl místo.'
+    : 'jsi v draftu volných hráčů a zatím ti nikdo nenabídl místo. Nic se neděje, '
+    + 'týmy se teprve skládají.';
+  const zaver = faze >= 2
+    ? 'Tohle je od nás poslední připomínka — v draftu zůstáváš dál a nic tím neztrácíš.'
+    : 'V draftu zůstáváš tak jako tak a nic tě to nestojí.';
+
+  const text =
+`${oslov}
+
+${uvod}
+
+Když nechceš čekat, můžeš do soutěže vstoupit sám: balík Virtuální vedoucí
+za ${castka} Kč na sezónu. Tým ti složí liga z ostatních jednotlivců a sestavu si
+pak hráči skládají sami — hraje ten, kdo se na zápas přihlásí. V ceně je
+startovné 500 Kč a hráčská licence ${licFee} Kč.
+
+Otevřený tým se skládá kolem čtrnácti lidí, takže než se první sejde, nějaký
+čas to potrvá. Když si to rozmyslíš dřív, než tě do týmu zařadíme, startovné
+se ti vrátí.
+
+${WEB}/platby
+
+${zaver}`;
+
+  const html = obalka(
+    'Pořád jsi v draftu',
+    odstavec(`${oslov} ${uvod}`)
+    + ramecek(`<strong>Virtuální vedoucí, ${castka} Kč na sezónu.</strong><br>Tým ti složí liga z ostatních jednotlivců, sestavu si skládají hráči sami. V ceně startovné 500 Kč a licence ${licFee} Kč.`)
+    + odstavec('Otevřený tým se skládá kolem čtrnácti lidí, takže než se první sejde, nějaký čas to potrvá. Když si to rozmyslíš dřív, než tě do týmu zařadíme, startovné se ti vrátí.')
+    + tlacitko('Podívat se na platby', '/platby')
+    + odstavec(zaver),
+  );
+
+  return { subject: 'Pořád jsi v draftu volných hráčů', text, html };
 }
 
 /**
@@ -461,4 +531,5 @@ module.exports = {
   registraceRozhodciMail,
   platbaPrijataMail,
   upominkaPlatbaMail,
+  nabidkaVstupuMail,
 };
