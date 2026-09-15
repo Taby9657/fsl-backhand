@@ -6,9 +6,65 @@ const { createNotification, createNotifications } = require('./notifications');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const licence = require('../services/licence');
+const seasonSvc = require('../services/seasonTransition');
+const pocty = require('../services/pocty');
+const { slotZPostu } = require('../utils/posty');
+const draftPool = require('../services/draftPool');
 
 const H72 = 72 * 60 * 60 * 1000;
 const H24 = 24 * 60 * 60 * 1000;
+
+/**
+ * Draft končí zápisem na **soupisku**, ne nastavením `Player.teamId`.
+ *
+ * Do 15. 9. 2026 nastavovalo přijetí nabídky i cron jen `teamId`. Hráč se
+ * objevil na `/tym/soupiska` (ta čte `Player.teamId`), ale sestava se skládá
+ * výhradně z `TeamRoster` — v seznamu tedy nebyl a vedoucí neměl jak zjistit
+ * proč. **Kdo sem přidá další cestu do týmu, musí zavolat tohle**, ne jen
+ * `player.update`.
+ *
+ * Zároveň se přepíše `Player.position` postem z draft profilu: vedoucí
+ * draftoval brankáře podle toho, co četl v poolu, a bez tohohle by mu
+ * skončil na soupisce jako hráč do pole.
+ */
+async function zapisNaSoupisku(playerId, teamId, draftPosition) {
+  try {
+    if (draftPosition) {
+      await prisma.player.update({
+        where: { id: playerId },
+        data:  { position: draftPosition },
+      });
+    }
+    const sezona = await licence.sezonaTymu(teamId, await seasonSvc.currentSeason());
+    if (!sezona) {
+      console.warn(`[draft] Tým ${teamId} nemá přihlášku do sezóny — hráč ${playerId} není na soupisce`);
+      return;
+    }
+    const vysledek = await licence.pridatDoSoupisky(playerId, teamId, sezona, { isHome: true });
+    if (!vysledek?.ok && vysledek?.code !== 'ALREADY_ON_ROSTER') {
+      console.error(`[draft] Zápis na soupisku selhal (${vysledek?.code}): ${vysledek?.error}`);
+    }
+  } catch (err) {
+    console.error('[draft] Zápis na soupisku selhal:', err.message);
+  }
+}
+
+/**
+ * Vejde se hráč ještě na soupisku týmu? Kontroluje se **při odesílání
+ * nabídky**, ne až při přijetí — jinak by se hráč dozvěděl o zamítnutí
+ * teprve po 72 hodinách čekání.
+ */
+async function miMistoNaSoupisce(teamId, position) {
+  const sezona = await licence.sezonaTymu(teamId, await seasonSvc.currentSeason());
+  if (!sezona) return { ok: true };
+  const team = await prisma.team.findUnique({ where: { id: teamId }, select: { isOpen: true } });
+  const naSoupisce = await prisma.teamRoster.findMany({
+    where: { teamId, season: sezona }, select: { slot: true },
+  });
+  return pocty.vejdeSeNaSoupisku(
+    pocty.rozdel(naSoupisce), slotZPostu(position), pocty.limitySoupisky(team));
+}
 
 // ── Auto-expire helper – PERF-01: voláno z cron jobu v server.js, NE při každém requestu ──
 async function processExpiredWindows() {
@@ -30,6 +86,7 @@ async function processExpiredWindows() {
     if (claimed.count === 0) continue;
     // Hráč vstupuje do týmu
     await prisma.player.update({ where: { id: playerId }, data: { teamId: offer.teamId } });
+    await zapisNaSoupisku(playerId, offer.teamId, offer.profile.position);
     // Zbytek nabídek vyprší
     await prisma.draftOffer.updateMany({
       where: { profileId, status: 'PENDING' },
@@ -142,29 +199,10 @@ router.post('/profile', requireAuth, async (req, res, next) => {
 
     const { bio, pubSkill, position } = req.body;
 
-    // Zjisti zda profil existuje před upsert (re-join vs. nový vstup)
-    const existingProfile = await prisma.draftProfile.findUnique({ where: { playerId: player.id } });
-    const isReJoin = !!existingProfile;
-
-    const profile = await prisma.draftProfile.upsert({
-      where:  { playerId: player.id },
-      create: { playerId: player.id, bio: bio || null, pubSkill: pubSkill || null, position: position || null, isActive: true },
-      update: { bio: bio || null, pubSkill: pubSkill || null, position: position || null, isActive: true, updatedAt: new Date() },
-      include: { videos: true },
-    });
-
-    // Notifikace pouze při PRVNÍM vstupu do draft poolu – ne při re-joinu
-    if (!isReJoin) {
-      const managers = await prisma.manager.findMany({ select: { userId: true } });
-      if (managers.length) {
-        await createNotifications(managers.map(m => ({
-          userId: m.userId,
-          title:  'Nový hráč v draftu',
-          body:   `${player.firstName} ${player.lastName} se přidal(a) do draft poolu`,
-          screen: 'draft',
-        })));
-      }
-    }
+    // Profil hráči obvykle vznikl už při registraci — tohle je doplnění
+    // toho, co o sobě napíše, ne první vstup do poolu. Zápis i notifikace
+    // drží `services/draftPool.js`, aby se nerozešly.
+    const profile = await draftPool.zapisDoPoolu(player, { bio, pubSkill, position });
 
     res.status(201).json(profile);
   } catch (err) { next(err); }
@@ -206,18 +244,9 @@ router.delete('/profile', requireAuth, async (req, res, next) => {
     const player = await prisma.player.findUnique({ where: { userId: req.user.id } });
     if (!player) return res.status(404).json({ error: 'Hráčský profil nenalezen' });
 
-    const profile = await prisma.draftProfile.findUnique({ where: { playerId: player.id } });
+    const profile = await draftPool.odeberZPoolu(player.id);
     if (!profile) return res.status(404).json({ error: 'Draft profil nenalezen' });
 
-    // Zrušit všechny pending nabídky – jinak by mohly expirovat a hráče auto-draftovat
-    await prisma.draftOffer.updateMany({
-      where: { profileId: profile.id, status: 'PENDING' },
-      data:  { status: 'EXPIRED' },
-    });
-    await prisma.draftProfile.update({
-      where: { id: profile.id },
-      data:  { isActive: false },
-    });
     res.json({ ok: true });
   } catch (err) { next(err); }
 });
@@ -370,6 +399,13 @@ router.post('/:playerId/offer', requireAuth, async (req, res, next) => {
       await prisma.draftOffer.delete({ where: { id: existingOffer.id } });
     }
 
+    // Plný tým nesmí blokovat hráče na 72 hodin nabídkou, kterou stejně
+    // nemůže přijmout.
+    const misto = await miMistoNaSoupisce(myTeamId, profile.position);
+    if (!misto.ok) {
+      return res.status(409).json({ error: misto.error, code: misto.code });
+    }
+
     const { message } = req.body;
     const now = new Date();
 
@@ -466,6 +502,7 @@ router.post('/:playerId/offer/:offerId/accept', requireAuth, async (req, res, ne
       prisma.player.update({ where: { id: player.id }, data: { teamId: offer.teamId } }),
       prisma.draftProfile.update({ where: { id: profile.id }, data: { isActive: false } }),
     ]);
+    await zapisNaSoupisku(player.id, offer.teamId, profile.position);
 
     // Notifikace akceptovaného týmu
     const managers = await prisma.manager.findMany({
