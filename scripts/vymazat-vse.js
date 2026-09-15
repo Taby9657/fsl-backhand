@@ -110,6 +110,7 @@ const TABULKY = [
 
   ['cartItem',          'položky v košících'],
   ['cart',              'košíky'],
+  ['openEntry',         'balíky „Virtuální vedoucí"'],
   ['playerPayment',     'platby hráčů'],
   ['teamPayment',       'platby týmů'],
   ['bankTransaction',   'zpracované bankovní pohyby'],

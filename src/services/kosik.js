@@ -25,9 +25,17 @@
 
 const prisma = require('../lib/prisma');
 const kredit = require('./kredit');
+const { slotZPostu } = require('../utils/posty');
+
+/**
+ * Startovné v balíku „Virtuální vedoucí". Celý balík je 800 Kč = tohle
+ * + hráčská licence; **licence se drží zvlášť**, aby se nezaplatila dvakrát.
+ * Kdo licenci na sezónu má, platí jen startovné.
+ */
+const STARTOVNE = 500;
 
 /** Položky, které se v jednom košíku nesmí opakovat (dvakrát licence nedává smysl). */
-const JEDNOU = ['PLAYER_LICENSE', 'SUPER_LICENSE', 'TEAM_REG'];
+const JEDNOU = ['PLAYER_LICENSE', 'SUPER_LICENSE', 'TEAM_REG', 'OPEN_ENTRY'];
 
 /** Lidsky čitelný název položky — do Stripe, do QR i do přehledu. */
 function nazev(item) {
@@ -36,6 +44,9 @@ function nazev(item) {
     case 'SUPER_LICENSE':  return 'Superlicence';
     case 'TEAM_REG':       return 'Registrace týmu';
     case 'MATCH_PACK':     return `Balíček ${item.packSize} ${sklonuj(item.packSize)}`;
+    case 'OPEN_ENTRY':     return item.amount > STARTOVNE
+      ? 'Virtuální vedoucí (startovné + licence)'
+      : 'Virtuální vedoucí (startovné)';
     default:               return 'Poplatek';
   }
 }
@@ -164,6 +175,46 @@ async function zauctujPolozku(item, { method, stripeId }, tx = prisma) {
     return zapis.count > 0;
   }
 
+  if (item.kind === 'OPEN_ENTRY') {
+    // Co je uvnitř, se pozná z ceny na položce, ne z dnešního ceníku:
+    // 800 = startovné + licence, 500 = samotné startovné. Kdyby se to
+    // dopočítávalo z ceníku při placení, změna ceny by přepsala to, co
+    // člověk viděl v košíku.
+    const licCastka = Math.max(0, item.amount - STARTOVNE);
+    const klic = { playerId_season: { playerId: item.playerId, season: item.season } };
+
+    const uz = await tx.openEntry.findUnique({ where: klic });
+    if (uz?.status === 'PAID') return false;
+
+    const hrac = await tx.player.findUnique({
+      where:  { id: item.playerId },
+      select: { position: true },
+    });
+    const zapis = {
+      entryFee: STARTOVNE, licFee: licCastka, status: 'PAID',
+      paidAt: new Date(), paidAmount: item.amount, ...spolecne,
+    };
+    await tx.openEntry.upsert({
+      where:  klic,
+      create: {
+        playerId: item.playerId, season: item.season,
+        slot: slotZPostu(hrac?.position), ...zapis,
+      },
+      update: zapis,
+    });
+
+    // Licence uvnitř balíku se musí vystavit, jinak hráč zaplatí 800 Kč
+    // a systém ho pořád vede jako bez licence — do sestavy by ho nepustil.
+    if (licCastka > 0) {
+      await tx.playerPayment.updateMany({
+        where: { playerId: item.playerId, licStatus: { not: 'PAID' } },
+        data:  { licStatus: 'PAID', licPaidAt: new Date(), licPaidAmount: licCastka, ...spolecne },
+      });
+      await tx.player.update({ where: { id: item.playerId }, data: { licensed: true } });
+    }
+    return true;
+  }
+
   if (item.kind === 'MATCH_PACK') {
     // Balíček vzniká až tady, ne při vložení do košíku. Kdyby vznikal dřív,
     // musel by se při vyhození z košíku zase mazat — a kdyby se to nepovedlo,
@@ -271,6 +322,22 @@ async function vrat(cartId) {
             paidAmount: 0, stripeId: null, sessionId: null,
           },
         });
+      } else if (item.kind === 'OPEN_ENTRY') {
+        await tx.openEntry.updateMany({
+          where: { playerId: item.playerId, season: item.season },
+          data:  { status: 'REFUNDED', paidAmount: 0, paidAt: null, method: null, stripeId: null },
+        });
+        // Licence, která byla uvnitř balíku, padá s ním.
+        if (item.amount > STARTOVNE) {
+          await tx.playerPayment.updateMany({
+            where: { playerId: item.playerId },
+            data:  {
+              licStatus: 'PENDING', licPaidAt: null, licMethod: null,
+              licPaidAmount: 0, stripeId: null, licSessionId: null,
+            },
+          });
+          await tx.player.update({ where: { id: item.playerId }, data: { licensed: false } });
+        }
       } else if (item.kind === 'MATCH_PACK') {
         // Balíček vznikl až při zaúčtování, takže ho hledáme podle košíku.
         const packs = await tx.matchPack.findMany({
@@ -301,6 +368,6 @@ async function vrat(cartId) {
 }
 
 module.exports = {
-  JEDNOU, nazev, sklonuj, otevreny, zaloz, soucet, pridej, odeber,
+  STARTOVNE, JEDNOU, nazev, sklonuj, otevreny, zaloz, soucet, pridej, odeber,
   zauctuj, zauctujPolozku, vrat,
 };

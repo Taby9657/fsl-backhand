@@ -29,7 +29,7 @@ function reset() {
   idSeq = 0;
   db = {
     carts: [], items: [], packs: [], payments: [], teamPayments: [], players: [],
-    uses: [], codes: [],
+    openEntries: [], uses: [], codes: [],
   };
 }
 
@@ -89,6 +89,7 @@ const fakePrisma = {
     },
   },
   player: {
+    findUnique: async ({ where }) => db.players.find(x => x.id === where.id) ?? null,
     update: async ({ where, data }) => {
       const p = db.players.find(x => x.id === where.id) ?? { id: where.id };
       Object.assign(p, data);
@@ -111,6 +112,25 @@ const fakePrisma = {
       const b = db.packs.find(x => x.id === where.id);
       Object.assign(b, data);
       return b;
+    },
+  },
+  openEntry: {
+    findUnique: async ({ where }) => {
+      const k = where.playerId_season;
+      return db.openEntries.find(e => e.playerId === k.playerId && e.season === k.season) ?? null;
+    },
+    upsert: async ({ where, create, update }) => {
+      const k = where.playerId_season;
+      const uz = db.openEntries.find(e => e.playerId === k.playerId && e.season === k.season);
+      if (uz) { Object.assign(uz, update); return uz; }
+      const novy = { id: `O${++idSeq}`, ...create };
+      db.openEntries.push(novy);
+      return novy;
+    },
+    updateMany: async ({ where, data }) => {
+      const radky = db.openEntries.filter(e => shoda(e, where));
+      radky.forEach(e => Object.assign(e, data));
+      return { count: radky.length };
     },
   },
   referralUse:  { findUnique: async () => null, update: async () => ({}) },
@@ -222,6 +242,59 @@ const pridej = (data) => kosik.pridej('U1', SEZONA, { season: SEZONA, ...data })
   ok(vraceni.vycerpane.length === 1 && vraceni.vycerpane[0].vycerpano === 2,
     'odehrané starty se hlásí supervisorovi, zpátky se neberou');
   ok(db.carts[0].status === 'REFUNDED', 'košík je označený jako vrácený');
+
+  // --- 9. balík „Virtuální vedoucí" ---
+  //
+  // Hlídá se hlavně to, že se licence nezaplatí dvakrát: uvnitř balíku je
+  // a hráč po zaplacení musí být licencovaný, jinak zaplatí 800 Kč a systém
+  // ho do sestavy stejně nepustí.
+  reset();
+  db.players.push({ id: 'H1', position: 'Brankář' });
+  db.payments.push({ playerId: 'H1', licStatus: 'PENDING', superStatus: 'PENDING', season: SEZONA });
+  await pridej({ kind: 'OPEN_ENTRY', playerId: 'H1', amount: 800 });
+  const balik = await kosik.otevreny('U1');
+  ok(kosik.nazev(balik.items[0]) === 'Virtuální vedoucí (startovné + licence)',
+    'název položky říká, že je uvnitř licence');
+  await kosik.zauctuj(balik.id, { method: 'stripe', stripeId: 'cs_v1', castka: 800 });
+
+  const zapsany = db.openEntries[0];
+  ok(zapsany?.status === 'PAID' && zapsany.paidAmount === 800, 'balík je zaplacený');
+  ok(zapsany.entryFee === 500 && zapsany.licFee === 300,
+    'a je vidět, že je to 500 startovné + 300 licence');
+  ok(zapsany.slot === 'GOALKEEPER', 'brankář se zapíše jako brankář, ne jako hráč do pole');
+  ok(db.payments[0].licStatus === 'PAID' && db.payments[0].licPaidAmount === 300,
+    'licence uvnitř balíku se vystavila — jinak hráč zaplatí 800 a licenci nemá');
+  ok(db.players.find(p => p.id === 'H1')?.licensed === true, 'a hráč je licencovaný');
+
+  // Kdo licenci má, platí jen startovné — a licence se nesmí přepsat znovu.
+  reset();
+  db.players.push({ id: 'H2', position: 'Útočník' });
+  db.payments.push({
+    playerId: 'H2', licStatus: 'PAID', licPaidAmount: 300, superStatus: 'PENDING', season: SEZONA,
+  });
+  await pridej({ kind: 'OPEN_ENTRY', playerId: 'H2', amount: 500 });
+  const samotne = await kosik.otevreny('U1');
+  ok(kosik.nazev(samotne.items[0]) === 'Virtuální vedoucí (startovné)',
+    'bez licence uvnitř se položka jmenuje jinak');
+  await kosik.zauctuj(samotne.id, { method: 'transfer', castka: 500 });
+  ok(db.openEntries[0].licFee === 0, 'licence se do balíku nezapočítá podruhé');
+  ok(db.payments[0].licPaidAmount === 300, 'a zaplacená licence zůstala, jak byla');
+
+  // Dvojí platba a vrácení.
+  const znovuBalik = await kosik.zauctujPolozku(
+    { kind: 'OPEN_ENTRY', playerId: 'H2', season: SEZONA, amount: 500 }, { method: 'stripe' }, fakePrisma);
+  ok(znovuBalik === false, 'zaplacený balík se podruhé nezaúčtuje');
+
+  reset();
+  db.players.push({ id: 'H3', position: 'Útočník' });
+  db.payments.push({ playerId: 'H3', licStatus: 'PENDING', superStatus: 'PENDING', season: SEZONA });
+  await pridej({ kind: 'OPEN_ENTRY', playerId: 'H3', amount: 800 });
+  const kVraceniBalik = await kosik.otevreny('U1');
+  await kosik.zauctuj(kVraceniBalik.id, { method: 'stripe', stripeId: 'cs_v2', castka: 800 });
+  await kosik.vrat(kVraceniBalik.id);
+  ok(db.openEntries[0].status === 'REFUNDED', 'vrácený balík se označí jako vrácený');
+  ok(db.payments[0].licStatus === 'PENDING' && db.players.find(p => p.id === 'H3').licensed === false,
+    'a licence, která v něm byla, padá s ním');
 
   console.log(fail === 0 ? '\nVšechny testy prošly.' : `\n${fail} testů selhalo.`);
   process.exitCode = fail === 0 ? 0 : 1;

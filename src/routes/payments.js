@@ -159,10 +159,31 @@ router.get('/me', requireAuth, async (req, res, next) => {
         })
       : [];
 
+    // Balík „Virtuální vedoucí" — vstup do soutěže pro hráče bez týmu.
+    // Vrací se i nezaplacený (nebo vůbec žádný), protože Platby jsou jediné
+    // místo, kde se o něm člověk dozví.
+    const openEntry = player && sezona
+      ? await prisma.openEntry.findUnique({
+          where: { playerId_season: { playerId: player.id, season: sezona } },
+        })
+      : null;
+
     res.json({
       playerPayment: player?.payment ?? null,
       teamPayment:   platbaTymuProSezonu(teamPayment, sezona),
       fines,
+      openEntry,
+      // Balík se nabízí jen tomu, kdo tým nemá — vedoucí i kmenový hráč
+      // platí licenci.
+      openEntryOffer: !!player && !player.teamId && openEntry?.status !== 'PAID'
+        ? {
+            amount: kosik.STARTOVNE + (player.payment?.licStatus === 'PAID'
+              ? 0
+              : (player.payment?.licFee ?? 300)),
+            entryFee: kosik.STARTOVNE,
+            licIncluded: player.payment?.licStatus !== 'PAID',
+          }
+        : null,
       currentSeason: sezona,
     });
   } catch (err) { next(err); }
@@ -503,6 +524,54 @@ async function pripravPolozku(req, sezona) {
       kind, playerId: cilovy,
       amount: platba?.[jeLic ? 'licFee' : 'superFee'] ?? 300,
       season: platba?.season ?? sezona,
+    };
+  }
+
+  if (kind === 'OPEN_ENTRY') {
+    const cilovy = playerId || req.user.player?.id;
+    if (!cilovy) return { error: 'Hráčský profil nenalezen', code: 'NO_PLAYER', status: 404 };
+    if (!await smiZaHrace(req.user, cilovy)) {
+      return { error: 'Za tohohle hráče platit nemůžeš', code: 'FORBIDDEN', status: 403 };
+    }
+
+    const hrac = await prisma.player.findUnique({
+      where:  { id: cilovy },
+      select: { teamId: true, payment: true },
+    });
+    if (!hrac) return { error: 'Hráč nenalezen', code: 'NO_PLAYER', status: 404 };
+
+    // Balík je cesta do soutěže pro toho, kdo tým nemá. Kdo tým má, platí
+    // licenci — startovné by u něj bylo za nic.
+    if (hrac.teamId) {
+      return {
+        error: 'Balík „Virtuální vedoucí" je pro hráče bez týmu. Máš tým, takže platíš jen licenci.',
+        code:  'HAS_TEAM', status: 409,
+      };
+    }
+
+    const uz = await prisma.openEntry.findUnique({
+      where: { playerId_season: { playerId: cilovy, season: sezona } },
+    });
+    if (uz?.status === 'PAID') {
+      return { error: 'Balík na tuhle sezónu je už zaplacený', code: 'ALREADY_PAID', status: 409 };
+    }
+
+    // Licence je uvnitř balíku. Kdo ji už zaplatil, platí jen startovné —
+    // a kdo ji má v košíku, musí se rozhodnout, jinak ji zaplatí dvakrát.
+    const maLicenci = hrac.payment?.licStatus === 'PAID';
+    const kosikTed  = await kosik.otevreny(req.user.id);
+    if (!maLicenci && (kosikTed?.items ?? []).some(
+      i => i.kind === 'PLAYER_LICENSE' && i.playerId === cilovy)) {
+      return {
+        error: 'V košíku máš hráčskou licenci a ta je uvnitř balíku „Virtuální vedoucí". '
+             + 'Vyhoď ji z košíku a přidej balík znovu.',
+        code:  'LICENSE_IN_CART', status: 409,
+      };
+    }
+
+    return {
+      kind, playerId: cilovy, season: sezona,
+      amount: kosik.STARTOVNE + (maLicenci ? 0 : (hrac.payment?.licFee ?? 300)),
     };
   }
 

@@ -128,6 +128,7 @@ model Player {
   referralCode   ReferralCode?
   referredBy     ReferralUse?  @relation("PrivedenyHrac")
   cartItems      CartItem[]
+  openEntries    OpenEntry[]
 }
 
 // ==================== REFEREES ====================
@@ -889,11 +890,50 @@ model Fine {
 /// Pokuta za kontumaci tu schválně **není**. Blokuje týmu další zápas, takže
 /// se musí zaplatit hned a zvlášť — kdyby čekala v košíku na to, až si někdo
 /// vybere balíček, stála by liga zápas.
+/// Balík „Virtuální vedoucí" — jak se jednotlivec dostane do soutěže, když
+/// nemá tým. Startovné 500 Kč + hráčská licence 300 Kč, účtováno jako jedna
+/// položka za 800 Kč.
+///
+/// **Licence se drží rozepsaná zvlášť**, protože se nesmí zaplatit dvakrát:
+/// kdo už ji na sezónu má, platí jen 500 a `licFee` je nula. Kdo ji nemá,
+/// zaplatí 800 a zaúčtování balíku mu licenci rovnou vystaví.
+///
+/// Zařazení do otevřeného týmu, pořadník a dvojice tenhle model **neřeší** —
+/// hráče zařazuje supervisor ve Správě hráčů. Až bude pořadník hotový
+/// (`fsl-otevrene-tymy-navrh.md`), přibudou sem `teamId`, `pairCode`
+/// a vlastní stav; tohle je ta část, která umí vybrat peníze.
+model OpenEntry {
+  id       String @id @default(uuid())
+  playerId String
+  season   String
+  /// Brankář se musí přihlásit jako brankář — `Player.position` defaultuje
+  /// na „Útočník", takže se na něj spolehnout nedá a tým bez dvou gólmanů
+  /// nevznikne.
+  slot     RosterSlot @default(FIELD)
+
+  entryFee Int @default(500)
+  licFee   Int @default(300)
+
+  status     PaymentStatus @default(PENDING)
+  paidAmount Int           @default(0)
+  paidAt     DateTime?
+  method     String?
+  stripeId   String?
+  createdAt  DateTime      @default(now())
+
+  player Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([playerId, season])
+  @@index([season, status])
+}
+
 enum CartItemKind {
   PLAYER_LICENSE
   SUPER_LICENSE
   MATCH_PACK
   TEAM_REG
+  /// Balík „Virtuální vedoucí" — vstup jednotlivce do otevřeného týmu.
+  OPEN_ENTRY
 }
 
 /// Košík: víc poplatků, jedna platba.
