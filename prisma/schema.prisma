@@ -680,12 +680,22 @@ enum DraftOfferStatus {
 
 // ==================== SUPERVISOR REQUESTS ====================
 
+/// Zpráva supervisorovi z webu — dotaz, hlášení chyby, cokoli.
+///
+/// `email` je kontakt na odesílatele. U přihlášeného se bere z účtu, ale
+/// ukládá se i tak: účet může být smazaný (`userId` je `SetNull`) a bez
+/// adresy by zůstala zpráva, na kterou není komu odpovědět.
+///
+/// `page` je adresa stránky, ze které se zpráva odeslala. U hlášení chyby
+/// je to ta nejdůležitější informace a člověk ji sám nenapíše.
 model SupervisorRequest {
   id        String        @id @default(uuid())
   type      RequestType
   userId    String?
   teamId    String?
   matchId   String?
+  email     String?
+  page      String?
   body      String
   note      String?
   status    RequestStatus @default(PENDING)
@@ -700,6 +710,10 @@ enum RequestType {
   PLAYER_DISPUTE
   LICENSE_ISSUE
   OTHER
+  WEB_BUG
+  REGISTRATION
+  PAYMENT
+  ROSTER
 }
 
 enum RequestStatus {

@@ -13,7 +13,7 @@ function fromAddress() {
   return process.env.MAIL_FROM ?? 'FSL <noreply@fslleague.cz>';
 }
 
-async function sendMail({ to, subject, text, html }) {
+async function sendMail({ to, subject, text, html, replyTo }) {
   const key = process.env.RESEND_API_KEY;
 
   if (!key) {
@@ -38,6 +38,9 @@ async function sendMail({ to, subject, text, html }) {
         subject,
         text,
         ...(html ? { html } : {}),
+        // Reply-To míří na člověka, který zprávu poslal. Bez toho by odpověď
+        // z info@ odešla zase na info@ a nikdo by se to nedozvěděl.
+        ...(replyTo ? { reply_to: [replyTo] } : {}),
       }),
     });
 
@@ -88,4 +91,53 @@ Otevři aplikaci a použij tlačítko „Přihlásit se přes ${provider}".`;
   return { subject: 'Obnova hesla FSL', text };
 }
 
-module.exports = { sendMail, resetPasswordMail, providerAccountMail };
+/**
+ * Adresa, na kterou chodí zprávy z webu.
+ *
+ * Schválně **ne** osobní adresa provozovatele: veřejný formulář posílá
+ * komukoli, kdo ho najde, a jakmile jednou odejde na soukromou schránku,
+ * nejde to vzít zpět. Když proměnná chybí, padá to na info@fslleague.cz,
+ * ne na nic — zpráva od uživatele se nesmí ztratit kvůli nenastavenému env.
+ */
+function supervisorAddress() {
+  return process.env.SUPERVISOR_EMAIL ?? 'info@fslleague.cz';
+}
+
+/** Zpráva supervisorovi z formuláře na webu. */
+function zpravaZWebuMail({ kategorie, telo, odesilatel, prihlasen, stranka }) {
+  const radky = [
+    `Kategorie: ${kategorie}`,
+    `Od: ${odesilatel}${prihlasen ? ' (přihlášený účet)' : ' (nepřihlášený)'}`,
+    stranka ? `Stránka: ${stranka}` : null,
+    '',
+    telo,
+    '',
+    '— Odesláno z formuláře na fslleague.cz. Odpověď půjde rovnou odesílateli.',
+  ].filter((r) => r !== null); // pozor: ne filter(Boolean), ten by smazal i prázdné řádky
+
+  const esc = (t) =>
+    String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const html =
+`<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:560px">
+  <h2 style="margin:0 0 4px">${esc(kategorie)}</h2>
+  <p style="margin:0 0 16px;color:#666;font-size:14px">
+    Od: ${esc(odesilatel)}${prihlasen ? ' · přihlášený účet' : ' · nepřihlášený'}
+    ${stranka ? `<br>Stránka: ${esc(stranka)}` : ''}
+  </p>
+  <div style="white-space:pre-wrap;padding:16px;background:#f6f6f8;border-radius:8px;color:#222">${esc(telo)}</div>
+  <p style="margin:16px 0 0;color:#888;font-size:13px">
+    Odesláno z formuláře na fslleague.cz. Odpověď půjde rovnou odesílateli.
+  </p>
+</div>`;
+
+  return { subject: `FSL — ${kategorie}`, text: radky.join('\n'), html };
+}
+
+module.exports = {
+  sendMail,
+  resetPasswordMail,
+  providerAccountMail,
+  supervisorAddress,
+  zpravaZWebuMail,
+};

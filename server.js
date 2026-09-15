@@ -26,6 +26,7 @@ const licenceRoutes = require('./src/routes/licence');
 const draftRoutes        = require('./src/routes/draft');
 const { processExpiredWindows } = require('./src/routes/draft');
 const searchRoutes       = require('./src/routes/search');
+const requestRoutes      = require('./src/routes/requests');
 const { requireAuth }    = require('./src/middleware/auth');
 const errorHandler       = require('./src/middleware/errorHandler');
 
@@ -161,20 +162,10 @@ app.use('/api/licence',      licenceRoutes);
 app.use('/api/draft',        draftRoutes);
 app.use('/api/search',       searchRoutes);
 
-// POST /api/requests – žádosti od běžných uživatelů (vedoucí, hráči) supervisorovi
-// POZOR: musí být mimo /api/supervisor/* který vyžaduje supervisor roli
-app.post('/api/requests', requireAuth, async (req, res, next) => {
-  try {
-    const { type, teamId, matchId, body } = req.body;
-    if (!type || !body) return res.status(400).json({ error: 'Chybí typ nebo popis žádosti' });
-
-    const request = await prisma.supervisorRequest.create({
-      data: { type, userId: req.user.id, teamId: teamId || null, matchId: matchId || null, body },
-      include: { user: { select: { id: true, email: true } } },
-    });
-    res.status(201).json(request);
-  } catch (err) { next(err); }
-});
+// Zprávy supervisorovi z webu — dotazy i hlášení chyb, od přihlášených
+// i nepřihlášených.
+// POZOR: musí být mimo /api/supervisor/*, který vyžaduje supervisor roli.
+app.use('/api/requests', requestRoutes);
 
 // ==================== 404 ====================
 
