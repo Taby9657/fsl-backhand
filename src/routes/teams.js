@@ -415,8 +415,13 @@ router.post('/:id/roster/home', requireAuth, async (req, res, next) => {
     const season = req.body.season
       || await licence.sezonaTymu(req.params.id, await seasonSvc.currentSeason());
 
+    // Supervisor smí do soupisky sáhnout taky. Bez toho nemá liga na
+    // soupisky žádnou páku: zařazení hráče z /admin/hraci by skončilo
+    // na 403 u vlastního API.
     const jeVedouci = req.user.manager?.some(m => m.teamId === req.params.id);
-    if (!jeVedouci) return res.status(403).json({ error: 'Nejsi vedoucí tohoto týmu' });
+    if (!jeVedouci && !isSupervisorUser(req.user)) {
+      return res.status(403).json({ error: 'Nejsi vedoucí tohoto týmu' });
+    }
 
     const radky = await prisma.teamRoster.findMany({
       where:  { teamId: req.params.id, season },
@@ -454,8 +459,13 @@ router.post('/:id/roster', requireAuth, async (req, res, next) => {
     const season = req.body.season
       || await licence.sezonaTymu(req.params.id, await seasonSvc.currentSeason());
 
+    // Supervisor smí do soupisky sáhnout taky. Bez toho nemá liga na
+    // soupisky žádnou páku: zařazení hráče z /admin/hraci by skončilo
+    // na 403 u vlastního API.
     const jeVedouci = req.user.manager?.some(m => m.teamId === req.params.id);
-    if (!jeVedouci) return res.status(403).json({ error: 'Nejsi vedoucí tohoto týmu' });
+    if (!jeVedouci && !isSupervisorUser(req.user)) {
+      return res.status(403).json({ error: 'Nejsi vedoucí tohoto týmu' });
+    }
     if (!playerId)  return res.status(400).json({ error: 'Chybí playerId' });
 
     const vysledek = await licence.pridatDoSoupisky(playerId, req.params.id, season, { slot });
@@ -485,8 +495,13 @@ router.delete('/:id/roster/:playerId', requireAuth, async (req, res, next) => {
     const season = req.query.season
       || await licence.sezonaTymu(req.params.id, await seasonSvc.currentSeason());
 
+    // Supervisor smí do soupisky sáhnout taky. Bez toho nemá liga na
+    // soupisky žádnou páku: zařazení hráče z /admin/hraci by skončilo
+    // na 403 u vlastního API.
     const jeVedouci = req.user.manager?.some(m => m.teamId === req.params.id);
-    if (!jeVedouci) return res.status(403).json({ error: 'Nejsi vedoucí tohoto týmu' });
+    if (!jeVedouci && !isSupervisorUser(req.user)) {
+      return res.status(403).json({ error: 'Nejsi vedoucí tohoto týmu' });
+    }
 
     const radek = await licence.jeNaSoupisce(req.params.playerId, req.params.id, season);
     if (!radek) return res.status(404).json({ error: 'Hráč na soupisce není' });
