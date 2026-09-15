@@ -651,6 +651,104 @@ router.put('/players/:id/team', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+/**
+ * DELETE /supervisor/players/:id – smazání hráče.
+ *
+ * Do dneška šlo z webu smazat tým, ale ne člověka: testovací registrace
+ * zůstávaly viset ve Správě hráčů a mezi volnými hráči je viděl každý.
+ *
+ * **Maže se jen hráč bez historie.** Sestava, zúčtovaný start, gól i hlas
+ * pro MVP jsou podklad pro statistiky a nárok na play-off, a `scorerId`
+ * v `MatchEvent` je nullovatelný — smazání hráče by z gólu tiše udělalo gól
+ * bez střelce. Kdo nastoupil, se proto neodstraňuje, jen odvádí z týmu.
+ *
+ * **Zaplacené peníze drží taky.** Licence nebo balíček, na které dorazila
+ * koruna, mají protistranu na bankovním výpisu; ta smazáním řádku nezmizí.
+ *
+ * `?ucet=1` smaže i uživatelský účet — bez toho zůstane e-mail obsazený
+ * a znovu se s ním zaregistrovat nejde. **Účet vedoucího týmu, rozhodčího
+ * ani supervisora se nemaže nikdy**, hráč se smaže a účet zůstane.
+ */
+router.delete('/players/:id', async (req, res, next) => {
+  try {
+    const hrac = await prisma.player.findUnique({
+      where:   { id: req.params.id },
+      include: {
+        payment: true,
+        user:    { select: { id: true, email: true, isSupervisor: true } },
+      },
+    });
+    if (!hrac) return res.status(404).json({ error: 'Hráč nenalezen' });
+    if (hrac.isSupervisor || hrac.user?.isSupervisor) {
+      return res.status(409).json({
+        error: 'Supervisora smazat nelze',
+        code:  'PLAYER_IS_SUPERVISOR',
+      });
+    }
+
+    // ── Historie v zápasech ────────────────────────────────────────────
+    const [udalosti, sestavy, starty, mvp] = await Promise.all([
+      prisma.matchEvent.count({
+        where: { OR: [{ scorerId: hrac.id }, { assistId: hrac.id }, { penaltyId: hrac.id }] },
+      }),
+      prisma.lineupPlayer.count({ where: { playerId: hrac.id } }),
+      prisma.matchEntry.count({ where: { playerId: hrac.id } }),
+      prisma.postmatchData.count({ where: { opponentMvpId: hrac.id } }),
+    ]);
+    const historie = udalosti + sestavy + starty + mvp;
+    if (historie > 0) {
+      return res.status(409).json({
+        error:  `Hráč má ${historie} záznamů ze zápasů – smazat ho nejde, stojí na nich statistiky. Odveď ho z týmu.`,
+        code:   'PLAYER_HAS_HISTORY',
+        detail: { udalosti, sestavy, starty, mvp },
+      });
+    }
+
+    // ── Zaplacené peníze ───────────────────────────────────────────────
+    const balicky = await prisma.matchPack.count({
+      where: { playerId: hrac.id, OR: [{ status: 'PAID' }, { paidAmount: { gt: 0 } }] },
+    });
+    const zaplaceno = (hrac.payment?.licPaidAmount ?? 0) + (hrac.payment?.superPaidAmount ?? 0);
+    if (balicky > 0 || zaplaceno > 0) {
+      return res.status(409).json({
+        error:  'Hráč má zaplacené položky – smazat ho nejde. Nejdřív vyřeš platby.',
+        code:   'PLAYER_HAS_PAYMENTS',
+        detail: { zaplaceno, balicky },
+      });
+    }
+
+    // ── Účet ───────────────────────────────────────────────────────────
+    const smazatUcet = req.query.ucet === '1' || req.body?.ucet === true;
+    let ucet = null;
+    if (smazatUcet && hrac.user) {
+      const [vedouci, rozhodci] = await Promise.all([
+        prisma.manager.count({ where: { userId: hrac.user.id } }),
+        prisma.referee.count({ where: { userId: hrac.user.id } }),
+      ]);
+      if (vedouci > 0) {
+        ucet = { smazan: false, email: hrac.user.email, duvod: 'Účet je vedoucí týmu', code: 'USER_IS_MANAGER' };
+      } else if (rozhodci > 0) {
+        ucet = { smazan: false, email: hrac.user.email, duvod: 'Účet je rozhodčí', code: 'USER_IS_REFEREE' };
+      }
+    }
+
+    // Soupiska, draft profil i s nabídkami, předpis licence, balíčky,
+    // položky v košíku a doporučovací kód visí na hráči kaskádou.
+    await prisma.player.delete({ where: { id: hrac.id } });
+
+    if (smazatUcet && hrac.user && !ucet) {
+      await prisma.user.delete({ where: { id: hrac.user.id } });
+      ucet = { smazan: true, email: hrac.user.email };
+    }
+
+    console.log(
+      `[správa hráčů] Smazán hráč ${hrac.firstName} ${hrac.lastName} (${hrac.id})` +
+      (ucet?.smazan ? `, účet ${ucet.email}` : ''),
+    );
+    res.json({ ok: true, ucet });
+  } catch (err) { next(err); }
+});
+
 // ==================== SOUTĚŽE A DIVIZE ====================
 
 router.get('/divisions', async (req, res, next) => {

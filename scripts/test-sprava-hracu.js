@@ -24,6 +24,7 @@ function novaDb() {
       { id: 'P1', userId: 'U1', firstName: 'Pavel', lastName: 'Volny',   jersey: 0, position: 'Útočník', teamId: null },
       { id: 'P2', userId: 'U2', firstName: 'Marek', lastName: 'Brankar', jersey: 0, position: 'Brankář', teamId: null },
       { id: 'P3', userId: 'U3', firstName: 'Jan',   lastName: 'Kmenovy', jersey: 9, position: 'Obránce', teamId: 'T1' },
+      { id: 'P4', userId: 'U4', firstName: 'Petr',  lastName: 'Vedouci',  jersey: 4, position: 'Obránce', teamId: null },
     ],
     teamsById: {
       T1: { id: 'T1', name: 'Draci',     abbr: 'DRA', isOpen: false, regStatus: 'APPROVED' },
@@ -36,7 +37,22 @@ function novaDb() {
       { id: 'D2', playerId: 'P2', isActive: true, position: 'Brankář' },
     ],
     draftNabidky: [{ id: 'N1', profileId: 'D1', status: 'PENDING' }],
-    managers: [{ userId: 'U9', teamId: 'T1' }],
+    managers: [{ userId: 'U9', teamId: 'T1' }, { userId: 'U4', teamId: 'T3' }],
+    users: [
+      { id: 'U1', email: 'volny@test.cz' },
+      { id: 'U2', email: 'brankar@test.cz' },
+      { id: 'U3', email: 'kmenovy@test.cz' },
+      { id: 'U4', email: 'vedouci@test.cz' },
+    ],
+    // Předpisy licencí. P2 má zaplaceno — takového hráče smazat nejde.
+    platby: [
+      { playerId: 'P1', licPaidAmount: 0,   superPaidAmount: 0 },
+      { playerId: 'P2', licPaidAmount: 300, superPaidAmount: 0 },
+      { playerId: 'P3', licPaidAmount: 0,   superPaidAmount: 0 },
+      { playerId: 'P4', licPaidAmount: 0,   superPaidAmount: 0 },
+    ],
+    // Historie v zápasech — drží hráče před smazáním.
+    starty_v_zapasech: [{ playerId: 'P3' }],
     // Kdo za který tým odehrál — řídí, jestli se smí soupiska zrušit.
     starty: new Map([['P3|T1', 2]]),
     oznameni: [],
@@ -50,7 +66,23 @@ const dalsiId = (p) => `${p}${++idSeq}`;
 const fakePrisma = {
   $transaction: async (fn) => fn(fakePrisma),
   player: {
-    findUnique: async ({ where }) => db.players.find(p => p.id === where.id) ?? null,
+    findUnique: async ({ where, include }) => {
+      const p = db.players.find(x => x.id === where.id) ?? null;
+      if (!p || !include) return p;
+      const s = { ...p };
+      if (include.payment) s.payment = db.platby.find(x => x.playerId === p.id) ?? null;
+      if (include.user)    s.user    = db.users.find(u => u.id === p.userId) ?? null;
+      return s;
+    },
+    delete: async ({ where }) => {
+      const p = db.players.find(x => x.id === where.id);
+      db.players = db.players.filter(x => x.id !== where.id);
+      // Co v databázi visí na hráči kaskádou.
+      db.soupisky      = db.soupisky.filter(r => r.playerId !== where.id);
+      db.draftProfily  = db.draftProfily.filter(d => d.playerId !== where.id);
+      db.platby        = db.platby.filter(x => x.playerId !== where.id);
+      return p;
+    },
     findFirst: async ({ where }) => db.players.find(p =>
       p.teamId === where.teamId &&
       p.jersey === where.jersey &&
@@ -80,7 +112,25 @@ const fakePrisma = {
       r.season === where.season &&
       (!where.playerId?.in || where.playerId.in.includes(r.playerId))),
   },
-  manager: { findMany: async ({ where }) => db.managers.filter(m => !where?.teamId || m.teamId === where.teamId) },
+  manager: {
+    findMany: async ({ where }) => db.managers.filter(m => !where?.teamId || m.teamId === where.teamId),
+    count: async ({ where }) => db.managers.filter(m => m.userId === where.userId).length,
+  },
+  referee: { count: async () => 0 },
+  user: {
+    delete: async ({ where }) => {
+      const u = db.users.find(x => x.id === where.id);
+      db.users = db.users.filter(x => x.id !== where.id);
+      return u;
+    },
+  },
+  matchEvent:    { count: async () => 0 },
+  lineupPlayer:  { count: async () => 0 },
+  postmatchData: { count: async () => 0 },
+  matchEntry: {
+    count: async ({ where }) => db.starty_v_zapasech.filter(e => e.playerId === where.playerId).length,
+  },
+  matchPack: { count: async () => 0 },
   draftProfile: {
     findUnique: async ({ where }) => db.draftProfily.find(d => d.playerId === where.playerId) ?? null,
     upsert: async ({ where, create, update }) => {
@@ -195,12 +245,12 @@ const server = app.listen(0, async () => {
 
   // --- seznam ---
   const vsichni = await volej('/supervisor/players', null, 'GET');
-  ok(vsichni.status === 200 && vsichni.telo.players.length === 3, 'seznam vrátí všechny hráče');
+  ok(vsichni.status === 200 && vsichni.telo.players.length === 4, 'seznam vrátí všechny hráče');
   ok(vsichni.telo.players.find(p => p.id === 'P3')?.rosters?.length === 1,
     'a u každého i jeho soupisky v sezóně');
 
   const bezTymu = await volej('/supervisor/players?bezTymu=1', null, 'GET');
-  ok(bezTymu.telo.players.length === 2 && bezTymu.telo.players.every(p => p.teamId === null),
+  ok(bezTymu.telo.players.length === 3 && bezTymu.telo.players.every(p => p.teamId === null),
     'filtr „bez týmu" ukáže jen ty, se kterými je co dělat');
 
   const hledani = await volej('/supervisor/players?q=brank', null, 'GET');
@@ -275,6 +325,34 @@ const server = app.listen(0, async () => {
 
   const nikdo = await volej('/supervisor/players/PXX/team', { teamId: 'T1' });
   ok(nikdo.status === 404, 'neexistující hráč vrátí 404, ne pád');
+
+  // --- mazání hráče ---
+  const sHistorii = await volej('/supervisor/players/P3?ucet=1', null, 'DELETE');
+  ok(sHistorii.status === 409 && sHistorii.telo.code === 'PLAYER_HAS_HISTORY',
+    'hráče, který už nastoupil, smazat nejde — na zápasech stojí statistiky');
+  ok(db.players.some(p => p.id === 'P3'), 'a opravdu zůstal v databázi');
+
+  const sPlatbou = await volej('/supervisor/players/P2?ucet=1', null, 'DELETE');
+  ok(sPlatbou.status === 409 && sPlatbou.telo.code === 'PLAYER_HAS_PAYMENTS',
+    'zaplacená licence hráče před smazáním taky ochrání — peníze mají protistranu v bance');
+
+  const vedouciHrac = await volej('/supervisor/players/P4?ucet=1', null, 'DELETE');
+  ok(vedouciHrac.status === 200 && !db.players.some(p => p.id === 'P4'),
+    'hráčský profil vedoucího se smazat dá');
+  ok(vedouciHrac.telo.ucet?.smazan === false && vedouciHrac.telo.ucet.code === 'USER_IS_MANAGER',
+    'ale jeho účet ne — tým by přišel o vedoucího');
+  ok(db.users.some(u => u.id === 'U4'), 'účet vedoucího v databázi zůstal');
+
+  const smazan = await volej('/supervisor/players/P1?ucet=1', null, 'DELETE');
+  ok(smazan.status === 200 && !db.players.some(p => p.id === 'P1'),
+    'hráč bez historie a bez plateb se smazat dá');
+  ok(!db.soupisky.some(r => r.playerId === 'P1') && !db.draftProfily.some(d => d.playerId === 'P1'),
+    'a zmizí s ním soupiska i draft profil');
+  ok(smazan.telo.ucet?.smazan === true && !db.users.some(u => u.id === 'U1'),
+    's ucet=1 zmizí i účet — jinak zůstane e-mail obsazený a znovu se registrovat nejde');
+
+  const bezUctu = await volej('/supervisor/players/PXX', null, 'DELETE');
+  ok(bezUctu.status === 404, 'mazání neexistujícího hráče vrátí 404, ne pád');
 
   server.close();
   console.log(fail === 0 ? '\nVŠE PROŠLO' : `\n${fail} SELHALO`);
