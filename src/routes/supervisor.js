@@ -5,6 +5,12 @@ const { createNotification, createNotifications } = require('./notifications');
 const seasonSvc = require('../services/seasonTransition');
 const standings = require('../services/standings');
 const { stavParovani } = require('../services/bankSync');
+const { KATEGORIE } = require('./requests');
+const {
+  sendMail,
+  supervisorAddress,
+  odpovedNaZpravuMail,
+} = require('../services/mailer');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -75,6 +81,23 @@ router.post('/requests', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
+const STAV_SLOVY = {
+  IN_PROGRESS: 'řešíme to',
+  APPROVED:    'vyřízeno',
+  REJECTED:    'zamítnuto',
+};
+
+/**
+ * Změna stavu žádosti — a jediná cesta, jak se člověk dozví odpověď.
+ *
+ * Poznámka je od začátku „poznámka pro žadatele", jenže se nikam
+ * neodesílala: zůstala v adminu a ten, kdo psal, o ní nevěděl. Teď se
+ * posílá e-mailem — i nepřihlášenému, který žádné oznámení v účtu dostat
+ * nemůže — a přihlášenému navíc jako oznámení v účtu.
+ *
+ * **Bez poznámky se nic neposílá.** Úklid fronty nemá nikoho budit
+ * e-mailem, který neříká víc než „stav změněn".
+ */
 router.put('/requests/:id', async (req, res, next) => {
   try {
     const { status, note } = req.body;
@@ -85,7 +108,46 @@ router.put('/requests/:id', async (req, res, next) => {
     const request = await prisma.supervisorRequest.update({
       where: { id: req.params.id },
       data: { status, ...(note && { note }) },
+      include: { user: { select: { id: true, email: true } } },
     });
+
+    const odpoved = typeof note === 'string' ? note.trim() : '';
+    const kontakt = request.email ?? request.user?.email ?? null;
+
+    if (odpoved && kontakt) {
+      const { subject, text, html } = odpovedNaZpravuMail({
+        kategorie: KATEGORIE[request.type] ?? 'Zpráva',
+        stav:      STAV_SLOVY[status] ?? status,
+        odpoved,
+        puvodni:   request.body,
+      });
+
+      // Odeslání e-mailu nesmí shodit změnu stavu — ta už proběhla.
+      const poslano = await sendMail({
+        to: kontakt,
+        subject,
+        text,
+        html,
+        replyTo: supervisorAddress(),
+      });
+      if (!poslano.ok) {
+        console.error(`[Žádost ${request.id}] odpověď se neodeslala: ${poslano.reason}`);
+      }
+    }
+
+    if (odpoved && request.userId) {
+      try {
+        await createNotification(
+          request.userId,
+          'Odpověď na tvoji zprávu',
+          odpoved.length > 140 ? `${odpoved.slice(0, 137)}…` : odpoved,
+          '/muj-ucet',
+        );
+      } catch (notifErr) {
+        console.error('Oznámení o odpovědi selhalo (non-fatal):', notifErr.message);
+      }
+    }
+
     res.json(request);
   } catch (err) { next(err); }
 });

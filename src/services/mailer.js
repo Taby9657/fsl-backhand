@@ -134,10 +134,47 @@ function zpravaZWebuMail({ kategorie, telo, odesilatel, prihlasen, stranka }) {
   return { subject: `FSL — ${kategorie}`, text: radky.join('\n'), html };
 }
 
+/**
+ * Odpověď supervisora na zprávu z webu.
+ *
+ * Posílá se tomu, kdo psal — včetně nepřihlášených, kteří žádné oznámení
+ * v účtu dostat nemůžou. Do e-mailu se přikládá i původní zpráva: mezi
+ * odesláním a odpovědí můžou být dny a člověk si nemusí pamatovat, čeho
+ * se to týkalo.
+ */
+function odpovedNaZpravuMail({ kategorie, stav, odpoved, puvodni }) {
+  const esc = (t) =>
+    String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const text =
+`Odpověď na tvoji zprávu (${kategorie}) — ${stav}.
+
+${odpoved}
+
+---
+Tvoje původní zpráva:
+${puvodni}
+
+Odpovědět můžeš přímo na tenhle e-mail.`;
+
+  const html =
+`<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:560px">
+  <h2 style="margin:0 0 4px">Odpověď na tvoji zprávu</h2>
+  <p style="margin:0 0 16px;color:#666;font-size:14px">${esc(kategorie)} · ${esc(stav)}</p>
+  <div style="white-space:pre-wrap;padding:16px;background:#f6f6f8;border-radius:8px;color:#222">${esc(odpoved)}</div>
+  <p style="margin:20px 0 6px;color:#888;font-size:13px">Tvoje původní zpráva:</p>
+  <div style="white-space:pre-wrap;padding:12px 16px;border-left:3px solid #ddd;color:#666;font-size:13px">${esc(puvodni)}</div>
+  <p style="margin:16px 0 0;color:#888;font-size:13px">Odpovědět můžeš přímo na tenhle e-mail.</p>
+</div>`;
+
+  return { subject: `FSL — odpověď na tvoji zprávu (${kategorie})`, text, html };
+}
+
 module.exports = {
   sendMail,
   resetPasswordMail,
   providerAccountMail,
   supervisorAddress,
   zpravaZWebuMail,
+  odpovedNaZpravuMail,
 };
