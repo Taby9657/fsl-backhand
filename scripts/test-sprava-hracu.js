@@ -21,8 +21,8 @@ const Module = require('module');
 function novaDb() {
   return {
     players: [
-      { id: 'P1', userId: 'U1', firstName: 'Pavel', lastName: 'Volny',   jersey: 0, position: 'Útočník', teamId: null },
-      { id: 'P2', userId: 'U2', firstName: 'Marek', lastName: 'Brankar', jersey: 0, position: 'Brankář', teamId: null },
+      { id: 'P1', userId: 'U1', firstName: 'Pavel', lastName: 'Volny',   jersey: 0, position: 'Útočník', teamId: null, birthdate: new Date('1998-04-12'), phone: '777123456' },
+      { id: 'P2', userId: 'U2', firstName: 'Marek', lastName: 'Brankar', jersey: 0, position: 'Brankář', teamId: null, birthdate: new Date('2001-01-05'), phone: null },
       { id: 'P3', userId: 'U3', firstName: 'Jan',   lastName: 'Kmenovy', jersey: 9, position: 'Obránce', teamId: 'T1' },
       { id: 'P4', userId: 'U4', firstName: 'Petr',  lastName: 'Vedouci',  jersey: 4, position: 'Obránce', teamId: null },
     ],
@@ -87,7 +87,7 @@ const fakePrisma = {
       p.teamId === where.teamId &&
       p.jersey === where.jersey &&
       (!where.id?.not || p.id !== where.id.not)) ?? null,
-    findMany: async ({ where = {} } = {}) => db.players.filter(p => {
+    findMany: async ({ where = {}, select } = {}) => db.players.filter(p => {
       if ('teamId' in where && p.teamId !== where.teamId) return false;
       if (where.draftProfile?.isActive !== undefined) {
         const d = db.draftProfily.find(x => x.playerId === p.id);
@@ -99,7 +99,10 @@ const fakePrisma = {
         if (!cele.includes(hledej)) return false;
       }
       return true;
-    }),
+    }).map(p => (select?.user
+      // Select se vztahem: e-mail sedí na User, ne na Player.
+      ? { ...p, user: db.users.find(u => u.id === p.userId) ?? null }
+      : p)),
     update: async ({ where, data }) => {
       const p = db.players.find(x => x.id === where.id);
       Object.assign(p, data);
@@ -248,6 +251,12 @@ const server = app.listen(0, async () => {
   ok(vsichni.status === 200 && vsichni.telo.players.length === 4, 'seznam vrátí všechny hráče');
   ok(vsichni.telo.players.find(p => p.id === 'P3')?.rosters?.length === 1,
     'a u každého i jeho soupisky v sezóně');
+
+  const pavel = vsichni.telo.players.find(p => p.id === 'P1');
+  ok(pavel?.user?.email === 'volny@test.cz',
+    'supervisor vidí e-mail hráče — bez kontaktu s ním nemá jak mluvit');
+  ok(!!pavel?.birthdate && pavel.phone === '777123456',
+    'a taky datum narození a telefon');
 
   const bezTymu = await volej('/supervisor/players?bezTymu=1', null, 'GET');
   ok(bezTymu.telo.players.length === 3 && bezTymu.telo.players.every(p => p.teamId === null),

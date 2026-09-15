@@ -405,10 +405,22 @@ router.delete('/teams/:id', async (req, res, next) => {
  * který je vidět na soupisce a v sestavě chybí. Přesně to dělal draft.
  */
 
-/** Co Správa u hráče potřebuje vidět. Osobní údaje sem patří — supervisor na ně má právo. */
+/**
+ * Co Správa u hráče potřebuje vidět. **Osobní údaje sem patří** — supervisor
+ * na ně má právo a bez kontaktu nemá jak s člověkem mluvit.
+ *
+ * E-mail je na `User`, ne na `Player`, takže se musí dotáhnout vztahem.
+ * Hráč založený vedoucím přes pozvánku účet mít nemusí — pak je `user` null
+ * a jediný kontakt je telefon.
+ *
+ * **Tenhle select platí jen pro supervisorské routy.** Veřejná data se řeší
+ * whitelistem ve `utils/verejneUdaje.js` a datum narození ani kontakty do
+ * nich nepatří.
+ */
 const HRAC_PRO_SPRAVU = {
   id: true, firstName: true, lastName: true, jersey: true, position: true,
   photoUrl: true, phone: true, birthdate: true, teamId: true, createdAt: true,
+  user:         { select: { email: true } },
   team:         { select: { id: true, name: true, abbr: true, isOpen: true, regStatus: true } },
   payment:      { select: { season: true, licStatus: true, superStatus: true, superLic: true } },
   draftProfile: { select: { isActive: true, position: true } },
