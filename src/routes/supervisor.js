@@ -14,6 +14,9 @@ const {
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const licence = require('../services/licence');
+const draftPool = require('../services/draftPool');
+const { slotZPostu } = require('../utils/posty');
 
 // Všechny endpointy v tomto souboru vyžadují supervisor roli
 router.use(requireSupervisor);
@@ -384,6 +387,267 @@ router.delete('/teams/:id', async (req, res, next) => {
 
     await prisma.team.delete({ where: { id: req.params.id } });
     res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// ==================== SPRÁVA HRÁČŮ ====================
+
+/**
+ * Ruční páka ligy na to, kdo kde hraje.
+ *
+ * Do 15. 9. 2026 žádná nebyla. Hráč se do týmu dostal jen pozvánkovým kódem
+ * od vedoucího, nebo draftem, a `POST /teams/:id/roster` je `jeVedouci`-only,
+ * takže supervisor dostal 403 i na API. Kdo se registroval bez týmu a nikoho
+ * nezaujal, zůstal viset a organizátor s tím nemohl udělat nic.
+ *
+ * **Zařazení do týmu není `player.update({ teamId })`.** Sestava se skládá
+ * z `TeamRoster`, ne z `Player.teamId` — kdo zapíše jen jedno, vyrobí hráče,
+ * který je vidět na soupisce a v sestavě chybí. Přesně to dělal draft.
+ */
+
+/** Co Správa u hráče potřebuje vidět. Osobní údaje sem patří — supervisor na ně má právo. */
+const HRAC_PRO_SPRAVU = {
+  id: true, firstName: true, lastName: true, jersey: true, position: true,
+  photoUrl: true, phone: true, birthdate: true, teamId: true, createdAt: true,
+  team:         { select: { id: true, name: true, abbr: true, isOpen: true, regStatus: true } },
+  payment:      { select: { season: true, licStatus: true, superStatus: true, superLic: true } },
+  draftProfile: { select: { isActive: true, position: true } },
+};
+
+/**
+ * GET /supervisor/players – seznam hráčů.
+ *
+ * `bezTymu=1` je ten filtr, kvůli kterému obrazovka vznikla: ukáže lidi,
+ * kteří zaplatili nebo se aspoň zaregistrovali a čekají, až je někdo někam
+ * dá. `q` hledá ve jméně, `teamId` omezí na jeden tým.
+ */
+router.get('/players', async (req, res, next) => {
+  try {
+    const { q, bezTymu, teamId, vPoolu } = req.query;
+    const season = req.query.season || await seasonSvc.currentSeason();
+
+    const where = {};
+    if (bezTymu === '1') where.teamId = null;
+    else if (teamId)     where.teamId = teamId;
+    if (vPoolu === '1')  where.draftProfile = { isActive: true };
+    if (q?.trim()) {
+      const hledej = q.trim();
+      where.OR = [
+        { firstName: { contains: hledej, mode: 'insensitive' } },
+        { lastName:  { contains: hledej, mode: 'insensitive' } },
+      ];
+    }
+
+    const hraci = await prisma.player.findMany({
+      where,
+      select:  HRAC_PRO_SPRAVU,
+      orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+      take:    500,
+    });
+
+    // Soupisky sezóny jedním dotazem — u pěti set hráčů by dotaz na hlavu
+    // znamenal pět set dotazů.
+    const radky = await prisma.teamRoster.findMany({
+      where:  { season, playerId: { in: hraci.map(h => h.id) } },
+      select: { playerId: true, teamId: true, slot: true, isHome: true },
+    });
+    const podleHrace = new Map();
+    for (const r of radky) {
+      if (!podleHrace.has(r.playerId)) podleHrace.set(r.playerId, []);
+      podleHrace.get(r.playerId).push(r);
+    }
+
+    res.json({
+      season,
+      players: hraci.map(h => ({ ...h, rosters: podleHrace.get(h.id) ?? [] })),
+    });
+  } catch (err) { next(err); }
+});
+
+/**
+ * PUT /supervisor/players/:id – dres a post.
+ *
+ * Dres po draftu nikdo nepřepisoval: hráč z poolu vzniká s nulou a žádná
+ * obrazovka se ho na číslo nezeptala, přestože onboarding slibuje „dres si
+ * vybereš, až budeš v týmu". Tady se to dá spravit.
+ */
+router.put('/players/:id', async (req, res, next) => {
+  try {
+    const { jersey, position, phone } = req.body;
+    const hrac = await prisma.player.findUnique({ where: { id: req.params.id } });
+    if (!hrac) return res.status(404).json({ error: 'Hráč nenalezen' });
+
+    const data = {};
+    if (jersey !== undefined) {
+      const cislo = parseInt(jersey, 10);
+      if (isNaN(cislo) || cislo < 0 || cislo > 99) {
+        return res.status(400).json({ error: 'Číslo dresu musí být číslo v rozsahu 0–99' });
+      }
+      // Nula je platné číslo dresu, takže kolizi hlídáme i u ní.
+      if (hrac.teamId) {
+        const obsazeny = await prisma.player.findFirst({
+          where: { teamId: hrac.teamId, jersey: cislo, id: { not: hrac.id } },
+        });
+        if (obsazeny) {
+          return res.status(409).json({
+            error: `Číslo dresu ${cislo} má v týmu ${obsazeny.firstName} ${obsazeny.lastName}`,
+            code:  'JERSEY_TAKEN',
+          });
+        }
+      }
+      data.jersey = cislo;
+    }
+    if (position !== undefined) data.position = position;
+    if (phone    !== undefined) data.phone    = phone || null;
+
+    if (!Object.keys(data).length) {
+      return res.status(400).json({ error: 'Není co měnit' });
+    }
+
+    const upraveny = await prisma.player.update({
+      where:  { id: hrac.id },
+      data,
+      select: HRAC_PRO_SPRAVU,
+    });
+    res.json(upraveny);
+  } catch (err) { next(err); }
+});
+
+/**
+ * PUT /supervisor/players/:id/team – zařazení do týmu, nebo odchod z něj.
+ *
+ * `teamId: null` hráče z týmu vyvede. Zařazení dělá tři věci naráz, protože
+ * kterákoli z nich sama o sobě vyrobí rozbitý stav:
+ *   1. `Player.teamId` — kmenový tým, podle něj se hráč zobrazuje,
+ *   2. `TeamRoster` — jediný seznam, ze kterého se skládá sestava,
+ *   3. odchod z draft poolu — jinak ho jiný tým přebije nabídkou.
+ */
+router.put('/players/:id/team', async (req, res, next) => {
+  try {
+    const { teamId, jersey, slot, doPoolu } = req.body;
+    const hrac = await prisma.player.findUnique({ where: { id: req.params.id } });
+    if (!hrac) return res.status(404).json({ error: 'Hráč nenalezen' });
+
+    const puvodniTym = hrac.teamId;
+    const season = req.body.season || await seasonSvc.currentSeason();
+
+    // ── odchod z týmu ──────────────────────────────────────────────────
+    if (!teamId) {
+      if (!puvodniTym) return res.status(400).json({ error: 'Hráč v žádném týmu není' });
+
+      // Odehrané zápasy jsou podklad pro statistiky i nárok na playoff.
+      // Řádek na soupisce se proto ruší jen tam, kde hráč nenastoupil.
+      const starty = await licence.startyPodleTymu(hrac.id, season);
+      const odehral = (starty.get(puvodniTym) ?? 0) > 0;
+      if (!odehral) await licence.odebratZeSoupisky(hrac.id, puvodniTym, season);
+
+      await prisma.player.update({ where: { id: hrac.id }, data: { teamId: null } });
+
+      // Do poolu se vrací jen na výslovné přání — ne každý odchod znamená,
+      // že hráč shání nový tým.
+      if (doPoolu === true) {
+        try { await draftPool.zapisDoPoolu(hrac); }
+        catch (err) { console.error('[správa hráčů] Návrat do poolu selhal:', err.message); }
+      }
+
+      const vysledek = await prisma.player.findUnique({
+        where: { id: hrac.id }, select: HRAC_PRO_SPRAVU,
+      });
+      return res.json({ ...vysledek, odebranZeSoupisky: !odehral, ponechanoKvuliStartum: odehral });
+    }
+
+    // ── zařazení do týmu ───────────────────────────────────────────────
+    const tym = await prisma.team.findUnique({
+      where:  { id: teamId },
+      select: { id: true, name: true, isOpen: true, regStatus: true },
+    });
+    if (!tym) return res.status(404).json({ error: 'Tým nenalezen' });
+    if (tym.regStatus === 'REJECTED') {
+      return res.status(409).json({
+        error: 'Registrace tohohle týmu byla zamítnutá, hráče do něj zařadit nelze',
+        code:  'TEAM_REJECTED',
+      });
+    }
+
+    // Dres: buď přijde v požadavku, nebo se zkusí ten stávající. Nula
+    // z draftu koliduje s každým brankářem, který si ji vybral, takže se
+    // musí dát zadat.
+    const cislo = jersey === undefined || jersey === null || jersey === ''
+      ? hrac.jersey
+      : parseInt(jersey, 10);
+    if (isNaN(cislo) || cislo < 0 || cislo > 99) {
+      return res.status(400).json({ error: 'Číslo dresu musí být číslo v rozsahu 0–99' });
+    }
+    const obsazeny = await prisma.player.findFirst({
+      where: { teamId, jersey: cislo, id: { not: hrac.id } },
+    });
+    if (obsazeny) {
+      return res.status(409).json({
+        error: `Číslo dresu ${cislo} má v týmu ${obsazeny.firstName} ${obsazeny.lastName}, vyber jiné`,
+        code:  'JERSEY_TAKEN',
+      });
+    }
+
+    if (slot !== undefined && slot !== null && !licence.jeSlot(slot)) {
+      return res.status(400).json({
+        error: `slot musí být jedno z: ${licence.SLOTY.join(', ')}`,
+        code:  'BAD_SLOT',
+      });
+    }
+
+    // Sezóna se bere z přihlášky týmu, ne z té, kterou zrovna ukazuje liga.
+    const sezonaTymu = await licence.sezonaTymu(teamId, season);
+
+    // Ze starého týmu odejít dřív, než se zapíše nový — jinak by hráč zůstal
+    // na dvou soupiskách a limity by se počítaly ze špatných čísel.
+    if (puvodniTym && puvodniTym !== teamId) {
+      const starty = await licence.startyPodleTymu(hrac.id, sezonaTymu);
+      if ((starty.get(puvodniTym) ?? 0) === 0) {
+        await licence.odebratZeSoupisky(hrac.id, puvodniTym, sezonaTymu);
+      }
+    }
+
+    const zapis = await licence.pridatDoSoupisky(hrac.id, teamId, sezonaTymu, {
+      isHome: true,
+      slot:   slot ?? slotZPostu(hrac.position),
+    });
+    if (!zapis.ok && zapis.code !== 'ALREADY_ON_ROSTER') {
+      return res.status(zapis.code === 'NO_PLAYER' ? 404 : 422)
+        .json({ error: zapis.error, code: zapis.code });
+    }
+
+    await prisma.player.update({
+      where: { id: hrac.id },
+      data:  { teamId, jersey: cislo },
+    });
+
+    // Hráč má tým, takže v nabídce volných hráčů nemá co dělat.
+    try { await draftPool.odeberZPoolu(hrac.id); }
+    catch (err) { console.error('[správa hráčů] Odebrání z poolu selhalo:', err.message); }
+
+    // Hráč se to musí dozvědět — zařadil ho někdo jiný než on sám.
+    if (hrac.userId) {
+      await createNotification(
+        hrac.userId,
+        'Jsi v týmu',
+        `Liga tě zařadila do týmu ${tym.name}.`,
+        'admin',
+      );
+    }
+    const vedouci = await prisma.manager.findMany({ where: { teamId }, select: { userId: true } });
+    if (vedouci.length) {
+      await createNotifications(vedouci.map(m => ({
+        userId: m.userId,
+        title:  'Nový hráč na soupisce',
+        body:   `${hrac.firstName} ${hrac.lastName} byl(a) zařazen(a) do vašeho týmu ligou.`,
+        screen: 'admin',
+      })));
+    }
+
+    const vysledek = await prisma.player.findUnique({
+      where: { id: hrac.id }, select: HRAC_PRO_SPRAVU,
+    });
+    res.json({ ...vysledek, season: sezonaTymu });
   } catch (err) { next(err); }
 });
 
