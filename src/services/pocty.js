@@ -7,26 +7,39 @@
  * `MIN_PLAYERS = 9 && někdo je brankář`.
  *
  * Kdo je brankář, rozhoduje `TeamRoster.slot`, ne `Player.position`.
+ *
+ * **`null` jako strop znamená „bez stropu", ne nulu.** Kdo ho někde porovná
+ * číslem bez kontroly, propustí tiše všechno — `pole >= null` je vždycky
+ * `false`. Proto se všude testuje `limity.max... != null` napřed.
  */
-
-/** Soupiska na sezónu — platí pro celou ligu. */
-const SOUPISKA = { minPole: 9, minBrankaru: 1, maxPole: 15, maxBrankaru: 2 };
-
-/** Otevřený tým má soupisku přísnější: 12 + 2. */
-const SOUPISKA_OTEVRENY = { ...SOUPISKA, maxPole: 12 };
 
 /**
- * Sestava na zápas — **8 + 1 minimum, 15 + 2 maximum**.
+ * Soupiska na sezónu — **9 + 1 minimum, bez horního stropu**.
  *
- * Strop se 10. 9. 2026 zvedl z 12 na 15, tedy na stejné číslo jako obecná
- * soupiska: kdo je na soupisce, může nastoupit. Nižší strop v sestavě
- * znamenal, že vedoucí musel někoho ze soupisky nechat doma, i když měl
- * zaplacený start — a nikde nebylo napsané, podle čeho vybírat.
- *
- * U otevřených týmů se to neprojeví: jejich soupiska je 12 + 2, takže
- * strop drží ta.
+ * Strop padl 15. 9. 2026. Do té doby byla soupiska 15 + 2 a tým, který
+ * sehnal šestnáctého hráče, ho musel odmítnout, přestože by si licenci
+ * i starty platil sám. **Minimum zůstává:** bez 9 + 1 tým supervisor do
+ * soutěže nezařadí.
  */
-const SESTAVA = { minPole: 8, minBrankaru: 1, maxPole: 15, maxBrankaru: 2 };
+const SOUPISKA = { minPole: 9, minBrankaru: 1, maxPole: null, maxBrankaru: null };
+
+/**
+ * Otevřený tým měl do 15. 9. 2026 soupisku přísnější (12 + 2). Dnes platí
+ * pro všechny stejná, tedy bez stropu. Konstanta zůstává schválně: díky ní
+ * má `limitySoupisky` pořád kam sáhnout a strop se dá otevřeným týmům vrátit
+ * na jednom místě, ne po celém backendu.
+ */
+const SOUPISKA_OTEVRENY = { ...SOUPISKA };
+
+/**
+ * Sestava na zápas — **8 + 1 minimum, 18 + 2 maximum**.
+ *
+ * Strop se 15. 9. 2026 zvedl z 15 na 18. **Sestava je od té doby jediné
+ * místo, kde se počet hlídá shora** — soupiska strop nemá vůbec, takže se
+ * o něj sestava nemůže opřít tak, jak to dělala dřív („kdo je na soupisce,
+ * může nastoupit"). Drží se kvůli zápisu a střídání, ne kvůli soupisce.
+ */
+const SESTAVA = { minPole: 8, minBrankaru: 1, maxPole: 18, maxBrankaru: 2 };
 
 /** Limity soupisky podle typu týmu. */
 function limitySoupisky(team) {
@@ -49,7 +62,7 @@ function rozdel(radky) {
  */
 function vejdeSeNaSoupisku({ pole, brankaru }, slot, limity = SOUPISKA) {
   if (slot === 'GOALKEEPER') {
-    if (brankaru >= limity.maxBrankaru) {
+    if (limity.maxBrankaru != null && brankaru >= limity.maxBrankaru) {
       return {
         ok: false, code: 'GK_LIMIT',
         error: `Tým už má ${limity.maxBrankaru} brankáře, víc jich na soupisku nepatří`,
@@ -57,7 +70,7 @@ function vejdeSeNaSoupisku({ pole, brankaru }, slot, limity = SOUPISKA) {
     }
     return { ok: true };
   }
-  if (pole >= limity.maxPole) {
+  if (limity.maxPole != null && pole >= limity.maxPole) {
     return {
       ok: false, code: 'FIELD_LIMIT',
       error: `Tým už má ${limity.maxPole} hráčů do pole, víc se jich na soupisku nevejde`,

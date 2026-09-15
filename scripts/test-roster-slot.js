@@ -25,6 +25,7 @@ function novaDb() {
       { id: 'P2', teamId: 'T1', firstName: 'Bob',  lastName: 'Utocnik', jersey: 10, position: 'Útočník', payment: { licStatus: 'PAID', superStatus: 'PENDING' } },
       { id: 'P3', teamId: 'T1', firstName: 'Cyril', lastName: 'Kodovy', jersey: 3,  position: 'GK',       payment: { licStatus: 'PAID', superStatus: 'PENDING' } },
       { id: 'P4', teamId: null, firstName: 'David', lastName: 'Host',   jersey: 22, position: 'Brankář',  payment: { licStatus: 'PAID', superStatus: 'PAID' } },
+      { id: 'P5', teamId: null, firstName: 'Emil',  lastName: 'Host2',  jersey: 23, position: 'Brankář',  payment: { licStatus: 'PAID', superStatus: 'PAID' } },
     ],
     rosters: [],
   };
@@ -169,13 +170,15 @@ const server = app.listen(0, async () => {
     'uvnitř skupiny se pořád řadí podle čísla dresu');
   ok(soupiska.telo.goalkeepers === 2, 'odpověď rovnou říká, kolik má tým brankářů');
 
-  // --- 4. strop brankářů a přednost poslaného slotu ---
-  // P4 má post „Brankář", ale tým už dva brankáře má.
+  // --- 4. soupiska nemá strop a poslaný slot má přednost ---
+  // P4 má post „Brankář" a tým už dva brankáře má. Do 15. 9. 2026 by tady
+  // přišlo 422 GK_LIMIT; od té doby soupiska strop nemá ani v poli, ani
+  // v brance, takže se vejde i třetí brankář.
   const treti = await volej('/teams/T1/roster', { playerId: 'P4' }, 'U1');
-  ok(treti.status === 422 && treti.telo.code === 'GK_LIMIT',
-    'třetí brankář se na soupisku nevejde');
+  ok(treti.status === 201 && treti.telo.slot === 'GOALKEEPER',
+    'třetí brankář se na soupisku vejde — soupiska strop nemá');
 
-  const host = await volej('/teams/T1/roster', { playerId: 'P4', slot: 'FIELD' }, 'U1');
+  const host = await volej('/teams/T1/roster', { playerId: 'P5', slot: 'FIELD' }, 'U1');
   ok(host.status === 201 && host.telo.slot === 'FIELD',
     'poslaný slot má přednost před postem hráče (brankář zapsaný do pole)');
 
