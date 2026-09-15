@@ -13,6 +13,7 @@
  *   node scripts/vymazat-vse.js --smazat              # doopravdy smaže
  *   node scripts/vymazat-vse.js --smazat --nechat-aktuality
  *   node scripts/vymazat-vse.js --smazat --email=jiny@ucet.cz
+ *   node scripts/vymazat-vse.js --smazat --bez-uctu
  *
  * ── Co zůstane ──────────────────────────────────────────────────────────
  *   User      jediný řádek — účet UCHOVAT_EMAIL, nastavený jako supervisor
@@ -21,6 +22,11 @@
  * S `--nechat-aktuality` zůstanou i články v Aktualitách (`RoundHighlight`).
  * Nejsou to soutěžní data, ale texty, které někdo psal — a mazací skript je
  * jinak spolkne spolu s hráči a platbami.
+ *
+ * S `--bez-uctu` se smaže i poslední účet. V databázi pak nezůstane nikdo,
+ * kdo se přihlásí, a liga nemá supervisora, který by schválil první tým.
+ * Cesta zpátky je jediná: zaregistrovat se znovu na webu a pak spustit
+ * `npm run supervisor -- --email=tvuj@email.cz`.
  *
  * ── Co jde pryč ─────────────────────────────────────────────────────────
  *   všechny ostatní tabulky ze schématu, tedy i rozhodčí, hráčský profil
@@ -65,6 +71,7 @@ const prisma = require('../src/lib/prisma');
 
 const SMAZAT = process.argv.includes('--smazat');
 const NECHAT_AKTUALITY = process.argv.includes('--nechat-aktuality');
+const BEZ_UCTU = process.argv.includes('--bez-uctu');
 const arg    = process.argv.find((a) => a.startsWith('--email='));
 const EMAIL  = (arg ? arg.slice('--email='.length) : 'j.tabasek96@seznam.cz').trim().toLowerCase();
 
@@ -207,30 +214,39 @@ async function main() {
     select: { id: true, email: true, isSupervisor: true, passwordHash: true, googleId: true, appleId: true },
     orderBy: { createdAt: 'asc' },
   });
-  const uchovat = ucty.find((u) => u.email.toLowerCase() === EMAIL);
+  const uchovat = BEZ_UCTU ? null : ucty.find((u) => u.email.toLowerCase() === EMAIL);
 
-  if (!uchovat) {
-    console.error(`\n⛔ Účet ${EMAIL} v databázi není — nic se nemazalo.\n`);
-    console.error('   Kdyby skript pokračoval, zůstala by prázdná liga bez přihlášení.');
-    console.error('\n   Účty, které v databázi jsou:');
-    ucty.forEach((u) => console.error(`     ${u.isSupervisor ? '★' : ' '} ${u.email}`));
-    console.error('\n   Spusť skript s `--email=...` a jedním z nich.\n');
-    process.exit(1);
-  }
+  if (BEZ_UCTU) {
+    console.log(`\n⚠️  --bez-uctu: smažou se i všechny účty (${ucty.length}).`);
+    ucty.forEach((u) => console.log(`     ${u.isSupervisor ? '★' : ' '} ${u.email}`));
+    console.log('\n   Po tomhle se do ligy nepřihlásí nikdo a nebude mít kdo schválit');
+    console.log('   první tým. Cesta zpátky: registrace na webu a pak');
+    console.log('   npm run supervisor -- --email=tvuj@email.cz');
+  } else {
+    if (!uchovat) {
+      console.error(`\n⛔ Účet ${EMAIL} v databázi není — nic se nemazalo.\n`);
+      console.error('   Kdyby skript pokračoval, zůstala by prázdná liga bez přihlášení.');
+      console.error('\n   Účty, které v databázi jsou:');
+      ucty.forEach((u) => console.error(`     ${u.isSupervisor ? '★' : ' '} ${u.email}`));
+      console.error('\n   Spusť skript s `--email=...` a jedním z nich,');
+      console.error('   nebo s `--bez-uctu`, když nemá zůstat vůbec žádný.\n');
+      process.exit(1);
+    }
 
-  const zpusobPrihlaseni = [
-    uchovat.passwordHash && 'heslo',
-    uchovat.googleId && 'Google',
-    uchovat.appleId && 'Apple',
-  ].filter(Boolean).join(' + ') || 'žádný (!)';
+    const zpusobPrihlaseni = [
+      uchovat.passwordHash && 'heslo',
+      uchovat.googleId && 'Google',
+      uchovat.appleId && 'Apple',
+    ].filter(Boolean).join(' + ') || 'žádný (!)';
 
-  console.log(`\nZůstane účet: ${uchovat.email}`);
-  console.log(`  supervisor:  ${uchovat.isSupervisor ? 'ano' : 'ne → skript ho nastaví'}`);
-  console.log(`  přihlášení:  ${zpusobPrihlaseni}`);
-  if (zpusobPrihlaseni === 'žádný (!)') {
-    console.error('\n⛔ Ten účet nemá ani heslo, ani Google/Apple — nepřihlásíš se k němu.');
-    console.error('   Nic se nemazalo. Nastav si u něj nejdřív heslo (obnova hesla v aplikaci).\n');
-    process.exit(1);
+    console.log(`\nZůstane účet: ${uchovat.email}`);
+    console.log(`  supervisor:  ${uchovat.isSupervisor ? 'ano' : 'ne → skript ho nastaví'}`);
+    console.log(`  přihlášení:  ${zpusobPrihlaseni}`);
+    if (zpusobPrihlaseni === 'žádný (!)') {
+      console.error('\n⛔ Ten účet nemá ani heslo, ani Google/Apple — nepřihlásíš se k němu.');
+      console.error('   Nic se nemazalo. Nastav si u něj nejdřív heslo (obnova hesla v aplikaci).\n');
+      process.exit(1);
+    }
   }
 
   // ── Výpis / mazání ──
@@ -243,13 +259,15 @@ async function main() {
       celkem += pocet;
       if (pocet > 0) console.log(`  •  ${popis.padEnd(34)} ${pocet}`);
     }
-    const ostatniUcty = ucty.length - 1;
-    celkem += ostatniUcty;
-    if (ostatniUcty > 0) console.log(`  •  ${'ostatní účty'.padEnd(34)} ${ostatniUcty}`);
+    const uctyKeSmazani = BEZ_UCTU ? ucty.length : ucty.length - 1;
+    celkem += uctyKeSmazani;
+    const popisUctu = BEZ_UCTU ? 'účty (všechny)' : 'ostatní účty';
+    if (uctyKeSmazani > 0) console.log(`  •  ${popisUctu.padEnd(34)} ${uctyKeSmazani}`);
 
     const settings = await prisma.settings.findUnique({ where: { id: 'singleton' } });
     const aktualit = await prisma.roundHighlight.count();
-    console.log(`\nZůstane: účet ${uchovat.email} a nastavení ligy ` +
+    const coZustane = BEZ_UCTU ? 'žádný účet, jen nastavení ligy' : `účet ${uchovat.email} a nastavení ligy`;
+    console.log(`\nZůstane: ${coZustane} ` +
                 `(sezóna ${settings?.currentSeason ?? '— není nastavená —'})` +
                 (NECHAT_AKTUALITY ? `, plus ${aktualit} článků v Aktualitách.` : '.'));
     console.log(`\nCelkem ke smazání: ${celkem} záznamů.`);
@@ -259,10 +277,13 @@ async function main() {
 
   await smazatVse();
 
-  const { count: smazanoUctu } = await prisma.user.deleteMany({ where: { id: { not: uchovat.id } } });
-  if (smazanoUctu > 0) console.log(`  ✓  ${'ostatní účty'.padEnd(34)} smazáno ${smazanoUctu}`);
+  const { count: smazanoUctu } = await prisma.user.deleteMany(
+    BEZ_UCTU ? {} : { where: { id: { not: uchovat.id } } });
+  if (smazanoUctu > 0) {
+    console.log(`  ✓  ${(BEZ_UCTU ? 'účty (všechny)' : 'ostatní účty').padEnd(34)} smazáno ${smazanoUctu}`);
+  }
 
-  if (!uchovat.isSupervisor) {
+  if (!BEZ_UCTU && !uchovat.isSupervisor) {
     await prisma.user.update({ where: { id: uchovat.id }, data: { isSupervisor: true } });
     console.log(`  ✓  ${'supervisor'.padEnd(34)} nastaven na ${uchovat.email}`);
   }
@@ -282,7 +303,11 @@ async function main() {
   console.log(`  ostatní tabulky: ${zbytky.length === 0 ? 'prázdné' : 'ZBYTKY!'}`);
   zbytky.forEach((z) => console.log(`     ⚠️  ${z}`));
 
-  if (zbytky.length > 0 || uctyPoté.length !== 1 || !uctyPoté[0].isSupervisor) {
+  const uctySedi = BEZ_UCTU
+    ? uctyPoté.length === 0
+    : uctyPoté.length === 1 && uctyPoté[0].isSupervisor;
+
+  if (zbytky.length > 0 || !uctySedi) {
     console.error('\n⚠️  Stav nesedí s tím, co měl skript nechat. Projdi hlášky výš.\n');
     process.exit(1);
   }
@@ -291,7 +316,11 @@ async function main() {
     console.log(`  aktuality:       ${await prisma.roundHighlight.count()} (ponechány)`);
   }
 
-  console.log('\nHotovo. V databázi je jediný účet (supervisor) a nastavení ligy.');
+  console.log(BEZ_UCTU
+    ? '\nHotovo. V databázi nezůstal žádný účet — jen nastavení ligy.\n' +
+      'Do ligy se teď nepřihlásí nikdo. Zaregistruj se na webu a pak spusť:\n' +
+      '  npm run supervisor -- --email=tvuj@email.cz'
+    : '\nHotovo. V databázi je jediný účet (supervisor) a nastavení ligy.');
   console.log('Smazáním se nikomu nevrátily peníze — refundace patří do Stripu.');
   console.log('Ligovou strukturu (liga → konference → divize) je potřeba založit znovu.\n');
 }
