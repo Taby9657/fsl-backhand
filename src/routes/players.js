@@ -10,6 +10,7 @@ const prisma = require('../lib/prisma');
 const licence = require('../services/licence');
 const seasonSvc = require('../services/seasonTransition');
 const kredit = require('../services/kredit');
+const draftPool = require('../services/draftPool');
 const { v4: uuidv4 } = require('uuid');
 
 /**
@@ -36,6 +37,22 @@ async function overPozvanku(inviteCode) {
   return { invite };
 }
 
+/**
+ * Zápis do draft poolu nesmí shodit registraci.
+ *
+ * Profil hráče už v tu chvíli existuje; kdyby se z pádu tady vrátila 500,
+ * klient by to četl jako „registrace selhala" a poslal ji znovu. Proto se
+ * chyba loguje a jde se dál — chybějící profil v poolu se dá doplnit,
+ * ztracená registrace ne.
+ */
+async function zapisDoPoolu(player) {
+  try {
+    await draftPool.zapisDoPoolu(player);
+  } catch (err) {
+    console.error('[onboarding] Zápis do draft poolu selhal:', err.message);
+  }
+}
+
 /** Číslo dresu obsazené v týmu? Vrací `true`, když ano. */
 async function dresObsazeny(teamId, jerseyNum, krome = null) {
   const kolize = await prisma.player.findFirst({
@@ -56,6 +73,17 @@ async function dresObsazeny(teamId, jerseyNum, krome = null) {
  * Když se zápis nepovede, vedoucí hráče doplní přes soupisku.
  */
 async function dokonciVstupDoTymu(player, teamId, invite) {
+  // Hráč je v týmu, takže v nabídce volných hráčů být nesmí. Bez tohohle
+  // kroku zůstane v poolu, jiný tým mu pošle nabídku a cron ho po vypršení
+  // okna přepíše jinam — bez jeho souhlasu a bez odebrání ze soupisky.
+  // Od 15. 9. je to povinné: draft profil vzniká každému, kdo se registruje
+  // bez týmu, takže „profil stejně nemá“ už neplatí.
+  try {
+    await draftPool.odeberZPoolu(player.id);
+  } catch (err) {
+    console.error('[onboarding] Odebrání z draft poolu selhalo:', err.message);
+  }
+
   try {
     const sezona = await licence.sezonaTymu(teamId, await seasonSvc.currentSeason());
     if (sezona) {
@@ -230,6 +258,10 @@ router.post('/', requireAuth, async (req, res, next) => {
             code:  'ALREADY_IN_TEAM',
           });
         }
+        // Zopakovaný požadavek. Profil vracíme, ale nejdřív se ujistíme,
+        // že je hráč opravdu v poolu — mohl mu tam chybět z doby, kdy se
+        // draft profil zakládal zvlášť.
+        await zapisDoPoolu(existujici);
         return res.status(200).json(existujici);
       }
 
@@ -247,6 +279,10 @@ router.post('/', requireAuth, async (req, res, next) => {
           payment:   { create: sezonaLigy ? { season: sezonaLigy } : {} },
         },
       });
+      // Registrace a vstup do poolu jsou jeden krok, ne dva. Formulář
+      // slibuje „po vyplnění se nabídneš v draftu“ — splní se to tady,
+      // ne až na obrazovce, kterou si hráč musí najít sám.
+      await zapisDoPoolu(volny);
       return res.status(201).json(volny);
     }
 
