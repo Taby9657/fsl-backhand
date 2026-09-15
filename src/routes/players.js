@@ -417,20 +417,27 @@ router.put('/:id', requireAuth, async (req, res, next) => {
       noveDatum = vekOk.datum;
     }
 
-    // BUG-09 OPRAVA: Validace čísla dresu při editaci
-    if (jersey !== undefined && jersey !== null && jersey !== '') {
-      const jerseyEditNum = parseInt(jersey, 10);
+    // BUG-09 OPRAVA: Validace čísla dresu při editaci.
+    // Dres 0 je platné číslo, jenže `0` je v JS falsy — a dokud se tu i níž
+    // ptalo na pravdivost, hráč, který si nulu vybral, ji dostal tiše
+    // zahozenou: kontrola obsazenosti se přeskočila a do `data` se číslo
+    // vůbec nedostalo. Proto se všude ptáme na „hodnota přišla", ne na
+    // pravdivost. (15. 9. 2026)
+    const dresZadan = jersey !== undefined && jersey !== null && jersey !== '';
+    let jerseyEditNum;
+    if (dresZadan) {
+      jerseyEditNum = parseInt(jersey, 10);
       if (isNaN(jerseyEditNum) || jerseyEditNum < 0 || jerseyEditNum > 99) {
         return res.status(400).json({ error: 'Číslo dresu musí být číslo v rozsahu 0–99' });
       }
     }
 
     // Zkontroluj unikátnost čísla dresu při změně
-    if (jersey && player.teamId) {
+    if (dresZadan && player.teamId) {
       const jerseyTaken = await prisma.player.findFirst({
-        where: { teamId: player.teamId, jersey: parseInt(jersey, 10), NOT: { id: req.params.id } },
+        where: { teamId: player.teamId, jersey: jerseyEditNum, NOT: { id: req.params.id } },
       });
-      if (jerseyTaken) return res.status(409).json({ error: `Číslo dresu ${parseInt(jersey, 10)} je již obsazeno v tomto týmu` });
+      if (jerseyTaken) return res.status(409).json({ error: `Číslo dresu ${jerseyEditNum} je již obsazeno v tomto týmu` });
     }
 
     const updated = await prisma.player.update({
@@ -438,7 +445,7 @@ router.put('/:id', requireAuth, async (req, res, next) => {
       data: {
         ...(firstName !== undefined && firstName && { firstName }),
         ...(lastName  !== undefined && lastName  && { lastName }),
-        ...(jersey    !== undefined && jersey    && { jersey: parseInt(jersey, 10) }),
+        ...(dresZadan && { jersey: jerseyEditNum }),
         ...(position  !== undefined && { position:  position  || null }),
         ...(noveDatum && { birthdate: noveDatum }),
         ...(phone     !== undefined && { phone:     phone     || null }),
