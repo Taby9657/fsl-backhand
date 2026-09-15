@@ -7,6 +7,7 @@ const { createNotification } = require('./notifications');
 const router = express.Router();
 const prisma = require('../lib/prisma');
 const vekSvc = require('../utils/vek');
+const mailer = require('../services/mailer');
 
 // GET /referees – seznam rozhodčích (veřejné základní info)
 router.get('/', async (req, res, next) => {
@@ -104,6 +105,13 @@ router.post('/', requireAuth, async (req, res, next) => {
         level:       'C',
       },
     });
+    // Rozhodčí neplatí nic, takže v jeho zprávě nesmí být ani slovo o platbě.
+    mailer.posliBezpecne(
+      req.user.email,
+      mailer.registraceRozhodciMail({ jmeno: firstName }),
+      'registrace-rozhodci',
+    );
+
     res.status(201).json(ref);
   } catch (err) { next(err); }
 });

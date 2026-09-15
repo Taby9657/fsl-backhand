@@ -11,6 +11,7 @@ const licence = require('../services/licence');
 const seasonSvc = require('../services/seasonTransition');
 const kredit = require('../services/kredit');
 const draftPool = require('../services/draftPool');
+const mailer = require('../services/mailer');
 const { v4: uuidv4 } = require('uuid');
 
 /**
@@ -283,6 +284,14 @@ router.post('/', requireAuth, async (req, res, next) => {
       // slibuje „po vyplnění se nabídneš v draftu“ — splní se to tady,
       // ne až na obrazovce, kterou si hráč musí najít sám.
       await zapisDoPoolu(volny);
+
+      // E-mail schválně bez `await`: registrace prošla a nesmí spadnout na
+      // tom, že Resend zrovna neodpovídá.
+      mailer.posliBezpecne(
+        req.user.email,
+        mailer.registraceHracMail({ jmeno: firstName, tym: null }),
+        'registrace-hrac-draft',
+      );
       return res.status(201).json(volny);
     }
 
@@ -338,6 +347,12 @@ router.post('/', requireAuth, async (req, res, next) => {
     // Kmenový tým se rovnou promítne do soupisky sezóny — z ní se skládá sestava.
     // Případné selhání profil neshodí, jen se zaloguje.
     await dokonciVstupDoTymu(player, cilovyTeamId, invite);
+
+    mailer.posliBezpecne(
+      req.user.email,
+      mailer.registraceHracMail({ jmeno: firstName, tym: invite?.team?.name ?? null }),
+      'registrace-hrac',
+    );
 
     res.status(201).json(player);
   } catch (err) { next(err); }

@@ -24,7 +24,8 @@
     "fix:profily": "node scripts/doplnit-profily-vedoucich.js",
     "reset:vse": "node scripts/vymazat-vse.js",
     "supervisor": "node scripts/udelat-supervisora.js",
-    "test:vek": "node scripts/test-vek.js"
+    "test:vek": "node scripts/test-vek.js",
+    "test:maily": "node scripts/test-maily.js"
   },
   "dependencies": {
     "@prisma/client": "^5.14.0",

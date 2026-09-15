@@ -26,6 +26,7 @@
 const prisma = require('../lib/prisma');
 const kredit = require('./kredit');
 const { slotZPostu } = require('../utils/posty');
+const mailer = require('./mailer');
 
 /**
  * Startovné v balíku „Virtuální vedoucí". Celý balík je 800 Kč = tohle
@@ -244,6 +245,42 @@ async function zauctujPolozku(item, { method, stripeId }, tx = prisma) {
  * neudělá nic a vrátí `uzBylo: true`.
  */
 async function zauctuj(cartId, { method, stripeId, castka }) {
+  const vysledek = await zauctujVTransakci(cartId, { method, stripeId, castka });
+
+  // E-mail až po transakci a bez `await` na výsledek zápisu: platba je
+  // hotová a nesmí ji shodit to, že Resend neodpovídá. Podruhé se
+  // neposílá — `uzBylo` odchytí druhý webhook i rekonciliaci.
+  if (vysledek.ok && !vysledek.uzBylo) {
+    posliPotvrzeni(vysledek, { method, castka }).catch(
+      (err) => console.error('[Košík] Potvrzení platby se neodeslalo:', err.message),
+    );
+  }
+  return vysledek;
+}
+
+/** Komu a co po zaplacení napsat. Doklad to není — ten posílá brána, u převodu systém. */
+async function posliPotvrzeni(vysledek, { method, castka }) {
+  const cart  = vysledek.cart;
+  const items = vysledek.items ?? [];
+  const user  = await prisma.user.findUnique({
+    where:  { id: cart.userId },
+    select: { email: true, player: { select: { firstName: true } } },
+  });
+  if (!user?.email) return;
+
+  await mailer.posliBezpecne(
+    user.email,
+    mailer.platbaPrijataMail({
+      jmeno:    user.player?.firstName ?? null,
+      polozky:  items.map(i => ({ nazev: nazev(i), castka: i.amount })),
+      castka:   castka ?? soucet(items),
+      prevodem: method !== 'stripe',
+    }),
+    'platba-prijata',
+  );
+}
+
+async function zauctujVTransakci(cartId, { method, stripeId, castka }) {
   return prisma.$transaction(async (tx) => {
     const cart = await tx.cart.findUnique({
       where:   { id: cartId },

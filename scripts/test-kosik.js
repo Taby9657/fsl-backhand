@@ -133,6 +133,8 @@ const fakePrisma = {
       return { count: radky.length };
     },
   },
+  // Potvrzení platby chodí e-mailem; v testu se jen počítá, komu by šlo.
+  user: { findUnique: async ({ where }) => ({ id: where.id, email: 'test@fsl.cz', player: null }) },
   referralUse:  { findUnique: async () => null, update: async () => ({}) },
   referralCode: { findUnique: async () => null },
 };

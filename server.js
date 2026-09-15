@@ -297,6 +297,27 @@ async function runLineupLock() {
 runLineupLock();
 setInterval(runLineupLock, LOCK_INTERVAL_MS);
 
+// ==================== PŘIPOMÍNKY NEZAPLACENÝCH POPLATKŮ ====================
+// Hodinu po registraci se ozveme tomu, kdo má platit a nezaplatil. Nic se
+// nemaže a hráči bez týmu se nepíše nic — proč, je v `services/upominky.js`.
+const UPOMINKY_INTERVAL_MS = 15 * 60 * 1000;
+
+async function runUpominky() {
+  try {
+    const { posliUpominky } = require('./src/services/upominky');
+    const vysledek = await posliUpominky();
+    if (vysledek.hracu > 0 || vysledek.tymu > 0) {
+      console.log(`[Upomínky] Odesláno: ${vysledek.hracu} hráčům, ${vysledek.tymu} vedoucím.`);
+    }
+  } catch (err) {
+    console.error('[Upomínky] Chyba:', err.message);
+  }
+}
+setTimeout(() => {
+  runUpominky();
+  setInterval(runUpominky, UPOMINKY_INTERVAL_MS);
+}, 4 * 60 * 1000);
+
 // ==================== REKONCILIACE STRIPE ====================
 // Doplněk k webhooku: kdyby některý nedorazil (deploy, výpadek sítě), tahle
 // úloha se Stripe doptá na platby, které u nás visí jako nezaplacené.

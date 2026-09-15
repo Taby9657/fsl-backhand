@@ -170,11 +170,295 @@ Odpovědět můžeš přímo na tenhle e-mail.`;
   return { subject: `FSL — odpověď na tvoji zprávu (${kategorie})`, text, html };
 }
 
+
+// ==================== E-MAILY PO REGISTRACI A K PLATBÁM ====================
+//
+// Tyhle zprávy jsou často **první** písemná stopa, kterou po nás člověk má.
+// Platí pro ně, co pro celý web: **nesmí slibovat aplikaci**, kterou si
+// nemůže stáhnout, nesmí jmenovat provozovatele jinak než Ninety Three
+// Group s.r.o., nesmí uvádět DPH (liga není plátce) a nepoužívá se v nich
+// slovo „výkop".
+//
+// Odpovědi chodí na info@fslleague.cz, což je zároveň odesílatel, takže
+// `reply_to` se nenastavuje.
+
+const WEB = 'https://fslleague.cz';
+
+/** Společná obálka, ať všechny zprávy vypadají stejně a drží se na šířku mobilu. */
+function obalka(nadpis, telo) {
+  return `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:560px;color:#222">
+  <h2 style="margin:0 0 16px;font-size:20px">${nadpis}</h2>
+  ${telo}
+  <p style="margin:24px 0 0;padding-top:16px;border-top:1px solid #e5e5e8;color:#888;font-size:13px">
+    Floorball Stars Liga · <a href="${WEB}/cenik" style="color:#8a6d2f">ceník</a><br>
+    Odpovědět můžeš přímo na tenhle e-mail.
+  </p>
+</div>`;
+}
+
+const odstavec = (t) => `<p style="margin:0 0 14px;line-height:1.6">${t}</p>`;
+
+/** Zvýrazněný blok s částkou nebo kódem. */
+function ramecek(obsah) {
+  return `<div style="margin:0 0 16px;padding:14px 16px;background:#f6f6f8;border-radius:10px;line-height:1.6">${obsah}</div>`;
+}
+
+const tlacitko = (text, cesta) =>
+  `<p style="margin:0 0 16px"><a href="${WEB}${cesta}" style="display:inline-block;padding:11px 20px;background:#C9A140;color:#1a1005;border-radius:10px;text-decoration:none;font-weight:600">${text}</a></p>`;
+
+/**
+ * Hráč se zaregistroval.
+ *
+ * Dvě situace, které se nesmí slít do jedné: kdo přišel s pozvánkovým kódem,
+ * je rovnou na soupisce a řeší jen licenci. Kdo se přihlásil bez týmu, tým
+ * ještě nemá — a musí se dozvědět obojí, co ho čeká: že se nabízí v draftu
+ * **a** že si může vzít Virtuálního vedoucího a nechat tým složit lize.
+ */
+function registraceHracMail({ jmeno, tym, licFee = 300, balikCastka = 800 }) {
+  const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
+
+  const text = tym
+    ? `${oslov}
+
+jsi zaregistrovaný ve Floorball Stars Lize a rovnou na soupisce týmu ${tym}.
+
+Zbývá ti zaplatit hráčskou licenci ${licFee} Kč na sezónu. Bez ní tě vedoucí
+nemůže postavit do sestavy. Zápasy se pak platí zvlášť balíčkem startů — od
+200 Kč za jeden po 3 000 Kč za dvacet, což vychází na 150 Kč za zápas.
+
+Zaplatit jde kartou i převodem: ${WEB}/platby
+
+Jak se hraje: pět hráčů do pole a brankář, 3 × 15 minut hrubého času.
+Základní část 15 až 20 kol od listopadu do března, pak play-off, do kterého
+postupuje každý tým. Hraje se v Praze, halu upřesníme podle počtu
+přihlášených týmů.`
+    : `${oslov}
+
+jsi zaregistrovaný ve Floorball Stars Lize. Přihlásil ses bez týmu, takže
+teď jsi v draftu volných hráčů — tvoje karta je vidět a vedoucí ti můžou
+poslat nabídku. Rozhodnutí je pak na tobě a nic tě to zatím nestojí.
+
+Když nechceš čekat, můžeš si vzít balík Virtuální vedoucí za ${balikCastka} Kč na
+sezónu: tým ti složí liga z ostatních jednotlivců a sestavu si pak hráči
+skládají sami — hraje ten, kdo se na zápas přihlásí. V ceně je startovné
+500 Kč a hráčská licence ${licFee} Kč. Otevřený tým se skládá kolem čtrnácti lidí,
+takže než se první sejde, nějaký čas to potrvá; když si to rozmyslíš dřív,
+než tě do týmu zařadíme, startovné se vrací.
+
+Obojí najdeš tady: ${WEB}/platby
+
+Zápasy se platí zvlášť balíčkem startů — od 200 Kč za jeden po 3 000 Kč za
+dvacet, což vychází na 150 Kč za zápas. Kupuješ ho, až budeš vědět, že hraješ.
+
+Jak se hraje: pět hráčů do pole a brankář, 3 × 15 minut hrubého času.
+Základní část 15 až 20 kol od listopadu do března, pak play-off, do kterého
+postupuje každý tým. Hraje se v Praze, halu upřesníme podle počtu
+přihlášených týmů.`;
+
+  const html = obalka(
+    tym ? 'Jsi v lize' : 'Jsi v draftu volných hráčů',
+    tym
+      ? odstavec(`${oslov} jsi zaregistrovaný ve Floorball Stars Lize a rovnou na soupisce týmu <strong>${tym}</strong>.`)
+        + ramecek(`<strong>Hráčská licence ${licFee} Kč</strong> na sezónu. Bez ní tě vedoucí nemůže postavit do sestavy.`)
+        + tlacitko('Zaplatit licenci', '/platby')
+        + odstavec('Zápasy se platí zvlášť balíčkem startů — od 200 Kč za jeden po 3 000 Kč za dvacet, tedy 150 Kč za zápas.')
+        + odstavec('Hraje se pět do pole a brankář, 3 × 15 minut hrubého času. Základní část 15 až 20 kol od listopadu do března, pak play-off, do kterého postupuje každý tým. V Praze, halu upřesníme podle počtu přihlášených týmů.')
+      : odstavec(`${oslov} jsi zaregistrovaný ve Floorball Stars Lize. Přihlásil ses bez týmu, takže jsi v <strong>draftu volných hráčů</strong> — tvoje karta je vidět a vedoucí ti můžou poslat nabídku. Nic tě to zatím nestojí.`)
+        + ramecek(`<strong>Nechceš čekat? Virtuální vedoucí, ${balikCastka} Kč na sezónu.</strong><br>Tým ti složí liga z ostatních jednotlivců, sestavu si skládají hráči sami — hraje ten, kdo se na zápas přihlásí. V ceně startovné 500 Kč a licence ${licFee} Kč.`)
+        + odstavec('Otevřený tým se skládá kolem čtrnácti lidí, takže než se první sejde, nějaký čas to potrvá. Když si to rozmyslíš dřív, než tě do týmu zařadíme, startovné se vrací.')
+        + tlacitko('Podívat se na platby', '/platby')
+        + odstavec('Zápasy se platí zvlášť balíčkem startů — od 200 Kč za jeden po 3 000 Kč za dvacet, tedy 150 Kč za zápas. Kupuješ ho, až budeš vědět, že hraješ.')
+        + odstavec('Hraje se pět do pole a brankář, 3 × 15 minut hrubého času. Základní část 15 až 20 kol od listopadu do března, pak play-off, do kterého postupuje každý tým. V Praze, halu upřesníme podle počtu přihlášených týmů.'),
+  );
+
+  return { subject: tym ? `Jsi v lize — ${tym}` : 'Jsi v draftu volných hráčů', text, html };
+}
+
+/**
+ * Tým se přihlásil.
+ *
+ * **Schválení supervisorem je provozní povinnost, ne formalita** — tým po
+ * registraci visí v `PENDING` a nikdo se to jinak nedozví. Zároveň je to
+ * jediné místo, kde vedoucí dostane pozvánkový kód písemně.
+ */
+function registraceVedouciMail({ jmeno, tym, kod, castka = 3000, licFee = 300 }) {
+  const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
+
+  const text =
+`${oslov}
+
+tým ${tym} je přihlášený do Floorball Stars Ligy. Teď ho projdeme a ozveme se
+ti, jakmile bude schválený.
+
+Mezitím dvě věci:
+
+1) Pozvánkový kód pro spoluhráče: ${kod}
+   Kdo ho zadá při registraci, přistane rovnou na vaší soupisce. Na soupisce
+   musí být nejmíň devět hráčů do pole a jeden brankář, horní hranice není.
+
+2) Registrace týmu ${castka} Kč na sezónu. Je to jediné, co platí tým jako
+   celek — zápasy si pak platí každý hráč sám balíčkem startů, po nikom
+   nic nevybíráš. Jako vedoucí máš i hráčský profil, takže pro tebe platí
+   i licence ${licFee} Kč.
+
+Zaplatit jde kartou i převodem, a klidně všechno najednou: ${WEB}/platby
+
+Jak se hraje: pět hráčů do pole a brankář, 3 × 15 minut hrubého času.
+Základní část 15 až 20 kol od listopadu do března, pak play-off, do kterého
+postupuje každý tým. Hraje se v Praze, halu upřesníme podle počtu
+přihlášených týmů.`;
+
+  const html = obalka(
+    'Přihláška týmu přijata',
+    odstavec(`${oslov} tým <strong>${tym}</strong> je přihlášený do Floorball Stars Ligy. Projdeme ho a ozveme se, jakmile bude schválený.`)
+    + ramecek(`<strong>Pozvánkový kód pro spoluhráče</strong><br><span style="font-size:22px;font-weight:700;letter-spacing:2px">${kod}</span><br>Kdo ho zadá při registraci, přistane rovnou na vaší soupisce. Minimum je 9 hráčů do pole a 1 brankář, horní hranice není.`)
+    + ramecek(`<strong>Registrace týmu ${castka} Kč</strong> na sezónu — jediné, co platí tým jako celek. Zápasy si platí každý hráč sám, po nikom nic nevybíráš. Jako vedoucí máš i hráčský profil, takže pro tebe platí i licence ${licFee} Kč.`)
+    + tlacitko('Zaplatit', '/platby')
+    + odstavec('Hraje se pět do pole a brankář, 3 × 15 minut hrubého času. Základní část 15 až 20 kol od listopadu do března, pak play-off, do kterého postupuje každý tým. V Praze, halu upřesníme podle počtu přihlášených týmů.'),
+  );
+
+  return { subject: `Přihláška týmu ${tym} přijata`, text, html };
+}
+
+/**
+ * Rozhodčí se přihlásil.
+ *
+ * **Nic neplatí**, takže v téhle zprávě nesmí být ani slovo o platbě.
+ * Rodné číslo, adresa a bankovní spojení se vyplňují až na smlouvě po
+ * schválení — a e-mail je to místo, kde se to má říct dopředu.
+ */
+function registraceRozhodciMail({ jmeno }) {
+  const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
+
+  const text =
+`${oslov}
+
+díky za přihlášku mezi rozhodčí Floorball Stars Ligy. Přihlášku projdeme
+a ozveme se ti.
+
+Nic neplatíš — poplatky se rozhodčích netýkají. Zbytek údajů (bankovní
+spojení a co patří na smlouvu) budeme řešit až po schválení, ne teď.
+
+Liga se hraje v Praze od listopadu do března, pět hráčů do pole a brankář,
+3 × 15 minut hrubého času.`;
+
+  const html = obalka(
+    'Přihláška rozhodčího přijata',
+    odstavec(`${oslov} díky za přihlášku mezi rozhodčí Floorball Stars Ligy. Projdeme ji a ozveme se ti.`)
+    + odstavec('<strong>Nic neplatíš</strong> — poplatky se rozhodčích netýkají. Bankovní spojení a údaje na smlouvu budeme řešit až po schválení.')
+    + odstavec('Hraje se v Praze od listopadu do března, pět hráčů do pole a brankář, 3 × 15 minut hrubého času.'),
+  );
+
+  return { subject: 'Přihláška rozhodčího přijata', text, html };
+}
+
+/** Řádky položek do textu i do HTML. */
+function polozkyRadky(polozky) {
+  return (polozky ?? []).map((p) => `${p.nazev} — ${p.castka} Kč`);
+}
+
+/**
+ * Platba dorazila.
+ *
+ * Posílá se z košíku, tedy z jediné cesty, kterou dnes lidé platí. Doklad
+ * tenhle e-mail **není** — ten posílá platební brána, u převodu systém při
+ * spárování. Proto se tu neuvádí nic o DPH: liga není plátce.
+ */
+function platbaPrijataMail({ jmeno, polozky, castka, prevodem }) {
+  const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
+  const radky = polozkyRadky(polozky);
+
+  const text =
+`${oslov}
+
+platba ${castka} Kč dorazila${prevodem ? ' (převodem)' : ''}. Máš zaplaceno:
+
+${radky.map((r) => `· ${r}`).join('\n')}
+
+Nic dalšího od tebe nepotřebujeme. Stav svých plateb vidíš kdykoli tady:
+${WEB}/platby`;
+
+  const html = obalka(
+    'Platba dorazila',
+    odstavec(`${oslov} platba <strong>${castka} Kč</strong> dorazila${prevodem ? ' převodem' : ''}. Máš zaplaceno:`)
+    + ramecek(radky.map((r) => `· ${r}`).join('<br>'))
+    + odstavec('Nic dalšího od tebe nepotřebujeme.')
+    + tlacitko('Moje platby', '/platby'),
+  );
+
+  return { subject: `Platba ${castka} Kč dorazila`, text, html };
+}
+
+/**
+ * Připomínka nezaplaceného poplatku.
+ *
+ * **Nevyhrožuje se smazáním.** Skutečná páka je v pravidlech a je věcná:
+ * bez zaplacené licence hráč nenastoupí a tým bez zaplacené registrace
+ * supervisor do soutěže nezařadí. Hrozba mazáním by navíc byla lež —
+ * převodem platba dorazí za den dva a párování běží v denním cyklu, takže
+ * by se mazali lidé, kteří zaplatili.
+ */
+function upominkaPlatbaMail({ jmeno, polozky, castka }) {
+  const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
+  const radky = polozkyRadky(polozky);
+
+  const text =
+`${oslov}
+
+registrace ti prošla, ale platba zatím ne. Visí na tobě:
+
+${radky.map((r) => `· ${r}`).join('\n')}
+Celkem ${castka} Kč
+
+Zaplatit jde kartou i převodem — a klidně všechno najednou v jednom košíku:
+${WEB}/platby
+
+Spěchat nemusíš, jen ať to nezapadne: bez zaplacené licence tě nejde postavit
+do sestavy a tým bez zaplacené registrace se nezařadí do soutěže.
+
+Kdyby něco nešlo nebo sis to rozmyslel, stačí odpovědět na tenhle e-mail.`;
+
+  const html = obalka(
+    'Ještě zbývá zaplatit',
+    odstavec(`${oslov} registrace ti prošla, ale platba zatím ne. Visí na tobě:`)
+    + ramecek(radky.map((r) => `· ${r}`).join('<br>') + `<br><strong>Celkem ${castka} Kč</strong>`)
+    + tlacitko('Zaplatit', '/platby')
+    + odstavec('Spěchat nemusíš, jen ať to nezapadne: bez zaplacené licence tě nejde postavit do sestavy a tým bez zaplacené registrace se nezařadí do soutěže.')
+    + odstavec('Kdyby něco nešlo nebo sis to rozmyslel, stačí odpovědět na tenhle e-mail.'),
+  );
+
+  return { subject: 'Ještě zbývá zaplatit', text, html };
+}
+
+/**
+ * Odeslání, které nesmí položit to, kvůli čemu se volá.
+ *
+ * Registrace se nesmí rozbít proto, že Resend zrovna neodpovídá — člověk
+ * by dostal chybu u přihlášky, která ve skutečnosti prošla.
+ */
+async function posliBezpecne(to, zprava, kde) {
+  if (!to) return { ok: false, reason: 'no-recipient' };
+  try {
+    const r = await sendMail({ to, ...zprava });
+    if (!r.ok) console.error(`[Mail:${kde}] Neodesláno (${r.reason}) → ${to}`);
+    return r;
+  } catch (err) {
+    console.error(`[Mail:${kde}] Výjimka: ${err.message}`);
+    return { ok: false, reason: err.message };
+  }
+}
+
 module.exports = {
   sendMail,
+  posliBezpecne,
   resetPasswordMail,
   providerAccountMail,
   supervisorAddress,
   zpravaZWebuMail,
   odpovedNaZpravuMail,
+  registraceHracMail,
+  registraceVedouciMail,
+  registraceRozhodciMail,
+  platbaPrijataMail,
+  upominkaPlatbaMail,
 };

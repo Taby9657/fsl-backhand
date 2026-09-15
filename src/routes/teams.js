@@ -13,6 +13,7 @@ const vekSvc = require('../utils/vek');
 const licence = require('../services/licence');
 const seasonSvc = require('../services/seasonTransition');
 const hracskyProfil = require('../services/hracskyProfil');
+const mailer = require('../services/mailer');
 const kredit = require('../services/kredit');
 
 // GET /teams – seznam všech týmů
@@ -210,6 +211,18 @@ router.post('/', requireAuth, async (req, res, next) => {
       'Registrace přijata 📋',
       `Tým ${team.name} byl přihlášen do sezóny ${season}. Čeká na schválení supervisorem.`,
       'admin',
+    );
+
+    // Pozvánkový kód jinde písemně nedostane a schválení supervisorem je
+    // provozní povinnost, o které musí vedoucí vědět dopředu.
+    mailer.posliBezpecne(
+      req.user.email,
+      mailer.registraceVedouciMail({
+        jmeno: profil.player?.firstName ?? manager?.firstName ?? null,
+        tym:   team.name,
+        kod:   code,
+      }),
+      'registrace-vedouci',
     );
 
     res.status(201).json({ team, inviteCode: code, player: profil.player ?? null });
