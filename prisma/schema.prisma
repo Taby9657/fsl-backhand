@@ -1005,3 +1005,41 @@ model CartItem {
 
   @@index([cartId])
 }
+
+// ==================== MĚŘENÍ PŘIHLÁŠKY ====================
+
+/// Průchod přihláškou — jeden řádek na jeden krok, kam člověk došel.
+///
+/// Vzniklo 16. 9. 2026. Za 24 hodin otevřelo `/registrace` 192 lidí a odeslaná
+/// přihláška z toho nebyla ani jedna. Síťové logy Railway přitom ukázaly, že na
+/// registrační cesty nepřišel **jediný POST** — nikdo tedy neodpadl na chybě
+/// ani na validaci, lidé odcházeli někde uvnitř formuláře. Kde, nešlo zjistit:
+/// krok žije v `?krok=` a Vercel Analytics na plánu Hobby dotaz nerozlišuje.
+///
+/// **Neukládá nic z formuláře.** Žádné jméno, e-mail, telefon ani datum
+/// narození — jen náhodné id jednoho průchodu, roli, krok a čas. `navsteva`
+/// vzniká v paměti otevřené stránky (`crypto.randomUUID()`), do prohlížeče se
+/// neukládá a zavřením karty zaniká; nejde ji tedy spojit s člověkem ani
+/// s jeho příští návštěvou. Proto to není osobní údaj a nepotřebuje souhlas.
+/// Kdo sem někdy přidá cokoli z formuláře, tuhle vlastnost zruší.
+///
+/// Dvojice `navsteva` + `krok` je unikátní schválně: opakovaný návrat na krok
+/// nový řádek nezaloží, takže „kolik lidí došlo na krok X" je prostý počet
+/// řádků a trychtýř nezkreslí ten, kdo se vracel tam a zpátky.
+model OnboardingStep {
+  id       String  @id @default(uuid())
+  /// Jeden průchod formulářem. Společné pro všechny kroky jedné návštěvy.
+  navsteva String
+  /// "player" / "manager" / "referee". Null na výběru role, kde ještě není.
+  role     String?
+  /// Slug kroku, jak ho zná web: role, kod, jmeno, dres, doplnky, tym,
+  /// vzhled, ja, osobni, kontrola, hotovo.
+  krok     String
+  /// Zkrácená cesta hráče bez týmu — dva kroky místo čtyř.
+  bezTymu  Boolean @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@unique([navsteva, krok])
+  @@index([createdAt])
+}
