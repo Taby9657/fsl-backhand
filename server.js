@@ -27,6 +27,7 @@ const draftRoutes        = require('./src/routes/draft');
 const { processExpiredWindows } = require('./src/routes/draft');
 const searchRoutes       = require('./src/routes/search');
 const requestRoutes      = require('./src/routes/requests');
+const onboardingRoutes   = require('./src/routes/onboarding');
 const { requireAuth }    = require('./src/middleware/auth');
 const errorHandler       = require('./src/middleware/errorHandler');
 
@@ -166,6 +167,10 @@ app.use('/api/search',       searchRoutes);
 // i nepřihlášených.
 // POZOR: musí být mimo /api/supervisor/*, který vyžaduje supervisor roli.
 app.use('/api/requests', requestRoutes);
+
+// Měření trychtýře přihlášky. Bez přihlášení a bez osobních údajů —
+// viz hlavička `src/routes/onboarding.js`.
+app.use('/api/onboarding', onboardingRoutes);
 
 // ==================== 404 ====================
 
