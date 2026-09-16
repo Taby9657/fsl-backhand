@@ -46,9 +46,9 @@ async function overPozvanku(inviteCode) {
  * chyba loguje a jde se dál — chybějící profil v poolu se dá doplnit,
  * ztracená registrace ne.
  */
-async function zapisDoPoolu(player) {
+async function zapisDoPoolu(player, data) {
   try {
-    await draftPool.zapisDoPoolu(player);
+    await draftPool.zapisDoPoolu(player, data);
   } catch (err) {
     console.error('[onboarding] Zápis do draft poolu selhal:', err.message);
   }
@@ -187,6 +187,12 @@ router.post('/', requireAuth, async (req, res, next) => {
   try {
     const {
       firstName, lastName, jersey, position, birthdate, phone, teamId, inviteCode,
+      // Text do draft profilu. Přihláška hráče bez týmu se na něj ptá v kroku
+      // navíc — dřív se dal vyplnit až na `/draft/profil`, kterou si hráč
+      // musel najít sám, takže pool byl plný profilů bez jediného slova.
+      // `upsert` v `draftPool` nechává `undefined` být, takže tohle nikdy
+      // nepřepíše text, který si hráč napsal dřív.
+      bio, pubSkill,
       // Hráč bez týmu: chce do draft poolu, kód od vedoucího nemá a mít
       // nemůže. Je to výslovný příznak, ne mlčky povolený stav — klient,
       // kterému se jen ztratil kód, nemá nechtěně skončit bez týmu.
@@ -262,7 +268,7 @@ router.post('/', requireAuth, async (req, res, next) => {
         // Zopakovaný požadavek. Profil vracíme, ale nejdřív se ujistíme,
         // že je hráč opravdu v poolu — mohl mu tam chybět z doby, kdy se
         // draft profil zakládal zvlášť.
-        await zapisDoPoolu(existujici);
+        await zapisDoPoolu(existujici, { bio, pubSkill });
         return res.status(200).json(existujici);
       }
 
@@ -283,7 +289,7 @@ router.post('/', requireAuth, async (req, res, next) => {
       // Registrace a vstup do poolu jsou jeden krok, ne dva. Formulář
       // slibuje „po vyplnění se nabídneš v draftu“ — splní se to tady,
       // ne až na obrazovce, kterou si hráč musí najít sám.
-      await zapisDoPoolu(volny);
+      await zapisDoPoolu(volny, { bio, pubSkill });
 
       // E-mail schválně bez `await`: registrace prošla a nesmí spadnout na
       // tom, že Resend zrovna neodpovídá.

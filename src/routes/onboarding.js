@@ -22,7 +22,7 @@ const prisma = require('../lib/prisma');
 
 /** Slugy kroků, jak je zná `registrace/onboarding-client.tsx`. */
 const KROKY = [
-  'role', 'kod', 'jmeno', 'dres', 'doplnky',
+  'role', 'kod', 'jmeno', 'dres', 'doplnky', 'draft',
   'tym', 'vzhled', 'ja', 'osobni', 'kontrola', 'hotovo',
 ];
 
@@ -34,7 +34,7 @@ const ODCHODY = ['klik', 'jinam', 'zavrel'];
 /** Pořadí kroků v trychtýři. Mimo tenhle seznam se nic neuloží. */
 const POSTUP = {
   null:     ['role'],
-  player:   ['kod', 'jmeno', 'dres', 'doplnky', 'hotovo'],
+  player:   ['kod', 'jmeno', 'dres', 'doplnky', 'draft', 'hotovo'],
   manager:  ['tym', 'vzhled', 'ja', 'hotovo'],
   referee:  ['osobni', 'kontrola', 'hotovo'],
 };
