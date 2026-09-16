@@ -7,6 +7,8 @@
  * odeslání e-mailu je vedlejší efekt, ne jádro operace.
  */
 
+const sezona = require('../utils/sezona');
+
 const RESEND_URL = 'https://api.resend.com/emails';
 
 function fromAddress() {
@@ -216,6 +218,9 @@ const tlacitko = (text, cesta) =>
  */
 function registraceHracMail({ jmeno, tym, licFee = 300, balikCastka = 800 }) {
   const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
+  // Do otevření poolu hráče nevidí ani vedoucí. Kdo to neví, čeká na nabídku,
+  // která z principu nemůže přijít, a bere to jako že o něj nikdo nestojí.
+  const otevreni = sezona.den(sezona.OTEVRENI_DRAFTU);
 
   const text = tym
     ? `${oslov}
@@ -235,8 +240,16 @@ přihlášených týmů.`
     : `${oslov}
 
 jsi zaregistrovaný ve Floorball Stars Lize. Přihlásil ses bez týmu, takže
-teď jsi v draftu volných hráčů — tvoje karta je vidět a vedoucí ti můžou
-poslat nabídku. Rozhodnutí je pak na tobě a nic tě to zatím nestojí.
+jsi v draftu volných hráčů — mezi lidmi, ze kterých si vedoucí doplňují
+soupisky.
+
+Vedoucím se ten seznam otevře ${otevreni}, hned po uzávěrce přihlášek. Do té
+doby ho schválně neukazujeme, aby si nikdo nerozebral hráče dřív, než je
+jasné, kdo do soutěže nastoupí. Takže když se do té doby nic neděje, není to
+tím, že by o tebe nikdo nestál — zatím tě prostě nikdo nevidí.
+
+Do té doby tě nic nestojí. Hráčskou licenci ${licFee} Kč na sezónu platíš,
+teprve až tě někdo vezme do týmu.
 
 Když nechceš čekat, můžeš si vzít balík Virtuální vedoucí za ${balikCastka} Kč na
 sezónu: tým ti složí liga z ostatních jednotlivců a sestavu si pak hráči
@@ -263,7 +276,9 @@ přihlášených týmů.`;
         + tlacitko('Zaplatit licenci', '/platby')
         + odstavec('Zápasy se platí zvlášť balíčkem startů — od 200 Kč za jeden po 3 000 Kč za dvacet, tedy 150 Kč za zápas.')
         + odstavec('Hraje se pět do pole a brankář, 3 × 15 minut hrubého času. Základní část 15 až 20 kol od listopadu do března, pak play-off, do kterého postupuje každý tým. V Praze, halu upřesníme podle počtu přihlášených týmů.')
-      : odstavec(`${oslov} jsi zaregistrovaný ve Floorball Stars Lize. Přihlásil ses bez týmu, takže jsi v <strong>draftu volných hráčů</strong> — tvoje karta je vidět a vedoucí ti můžou poslat nabídku. Nic tě to zatím nestojí.`)
+      : odstavec(`${oslov} jsi zaregistrovaný ve Floorball Stars Lize. Přihlásil ses bez týmu, takže jsi v <strong>draftu volných hráčů</strong> — mezi lidmi, ze kterých si vedoucí doplňují soupisky.`)
+        + odstavec(`Vedoucím se seznam otevře <strong>${otevreni}</strong>, hned po uzávěrce přihlášek. Do té doby ho schválně neukazujeme, aby si nikdo nerozebral hráče dřív, než je jasné, kdo do soutěže nastoupí — takže když se do té doby nic neděje, zatím tě prostě nikdo nevidí.`)
+        + odstavec(`Do té doby tě nic nestojí. <strong>Hráčskou licenci ${licFee} Kč</strong> na sezónu platíš, teprve až tě někdo vezme do týmu.`)
         + ramecek(`<strong>Nechceš čekat? Virtuální vedoucí, ${balikCastka} Kč na sezónu.</strong><br>Tým ti složí liga z ostatních jednotlivců, sestavu si skládají hráči sami — hraje ten, kdo se na zápas přihlásí. V ceně startovné 500 Kč a licence ${licFee} Kč.`)
         + odstavec('Otevřený tým se skládá kolem čtrnácti lidí, takže než se první sejde, nějaký čas to potrvá. Když si to rozmyslíš dřív, než tě do týmu zařadíme, startovné se vrací.')
         + tlacitko('Podívat se na platby', '/platby')
@@ -464,12 +479,27 @@ Kdyby něco nešlo nebo sis to rozmyslel, stačí odpovědět na tenhle e-mail.`
  * Virtuálního vedoucího a nechat tým složit lize. Proto se taky neposílá
  * hodinu po registraci jako platební připomínka, ale až druhý den.
  */
-function nabidkaVstupuMail({ jmeno, castka = 800, licFee = 300, faze = 1 }) {
+function nabidkaVstupuMail({
+  jmeno, castka = 800, licFee = 300, faze = 1,
+  poolOtevren = sezona.draftOtevren(),
+}) {
   const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
-  const uvod = faze >= 2
-    ? 'pořád jsi u nás v draftu volných hráčů a zatím ti nikdo nenabídl místo.'
-    : 'jsi v draftu volných hráčů a zatím ti nikdo nenabídl místo. Nic se neděje, '
-    + 'týmy se teprve skládají.';
+  const otevreni = sezona.den(sezona.OTEVRENI_DRAFTU);
+
+  // Dokud je pool zamčený, nesmí zpráva znít jako „nikdo o tebe nestojí".
+  // Vedoucí hráče ještě nevidí, takže mu místo nabídnout ani nemůžou —
+  // a věta o tom, že se nikdo neozval, by z toho udělala jeho neúspěch.
+  const uvod = poolOtevren
+    ? (faze >= 2
+      ? 'pořád jsi u nás v draftu volných hráčů a zatím ti nikdo nenabídl místo.'
+      : 'jsi v draftu volných hráčů a zatím ti nikdo nenabídl místo. Nic se neděje, '
+        + 'týmy se teprve skládají.')
+    : (faze >= 2
+      ? `pořád jsi u nás v draftu volných hráčů. Vedoucím se seznam otevře ${otevreni}, `
+        + 'takže se do té doby nic dít nebude — zatím tě nikdo nevidí.'
+      : `jsi v draftu volných hráčů. Vedoucím se seznam otevře ${otevreni}, hned po `
+        + 'uzávěrce přihlášek, takže se do té doby nic dít nebude — není to tím, '
+        + 'že by o tebe nikdo nestál.');
   const zaver = faze >= 2
     ? 'Tohle je od nás poslední připomínka — v draftu zůstáváš dál a nic tím neztrácíš.'
     : 'V draftu zůstáváš tak jako tak a nic tě to nestojí.';

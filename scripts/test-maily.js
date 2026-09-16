@@ -59,6 +59,7 @@ mailer.posliBezpecne = async (to, zprava, kde) => {
   return { ok: true };
 };
 const upominky = require('../src/services/upominky');
+const sezona   = require('../src/utils/sezona');
 
 // ---------- pomocníci ----------
 
@@ -95,6 +96,17 @@ function projdi(nazev, zprava) {
     'a je v něm rozepsaná cena, ne jen výsledek');
   ok(/startovné se vrací/i.test(draft.text),
     'včetně toho, že startovné se při odstoupení vrací — na to se nesmí přijít až potom');
+
+  // Do otevření poolu hráče nevidí ani vedoucí. Slib „tvoje karta je vidět
+  // a vedoucí ti můžou poslat nabídku" byl proto do 16. 9. nepravda — a hráč
+  // z toho četl, že o něj nikdo nestojí.
+  ok(!/karta je vidět|můžou poslat nabídku/i.test(draft.text),
+    'hráč v draftu: neslibuje viditelnost, kterou do otevření poolu nemá');
+  ok(draft.text.includes(sezona.den(sezona.OTEVRENI_DRAFTU))
+    && draft.html.includes(sezona.den(sezona.OTEVRENI_DRAFTU)),
+    'a místo toho řekne, kdy se seznam vedoucím otevře');
+  ok(/licenci 300 Kč/i.test(draft.text) && /až tě někdo vezme do týmu/i.test(draft.text),
+    'a dopředu řekne, že licenci 300 Kč platí, teprve až ho někdo vezme');
 
   // --- 2. hráč v týmu ---
   const vTymu = mailer.registraceHracMail({ jmeno: 'Jan', tym: 'Draci' });
@@ -235,6 +247,18 @@ function projdi(nazev, zprava) {
   db.playerPayments.find(p => p.id === 'PP3').licStatus = 'PAID';
   await bezi(P1 + HODINA);
   ok(!bez().some(z => z.to === 'eva@test.cz'), 'zaplacené licenci už nechodí nic');
+
+  // --- 7b. nabídka do draftu nesmí znít jako neúspěch, dokud je pool zamčený ---
+  const zamcena = mailer.nabidkaVstupuMail({ jmeno: 'David', faze: 1, poolOtevren: false });
+  projdi('nabídka se zamčeným poolem', zamcena);
+  ok(!/nikdo nenabídl/i.test(zamcena.text),
+    'zamčený pool: netvrdí „nikdo ti nenabídl místo" — vedoucí ho ještě nevidí');
+  ok(zamcena.text.includes(sezona.den(sezona.OTEVRENI_DRAFTU)),
+    'a řekne, odkdy se něco dít může');
+
+  const otevrena = mailer.nabidkaVstupuMail({ jmeno: 'David', faze: 2, poolOtevren: true });
+  ok(/nikdo nenabídl/i.test(otevrena.text),
+    'otevřený pool: tam už věta o tom, že se nikdo neozval, sedí');
 
   // --- 8. denní okno: v noci se nepíše ---
   //
