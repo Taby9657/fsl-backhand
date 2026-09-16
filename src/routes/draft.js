@@ -210,11 +210,25 @@ router.post('/profile', requireAuth, async (req, res, next) => {
 
 // ────────────────────────────────────────────────────────────
 // PUT /draft/profile – aktualizovat profil
+//
+// **Tahle routa jen upravuje text; do poolu nikoho nevrací.** Návrat je
+// `POST` přes `zapisDoPoolu()`, a je to schválně: vstup do poolu posílá
+// notifikaci všem vedoucím, takže kdyby ho dělalo i ukládání změn, přišlo
+// by jim upozornění při každé opravě překlepu v biu. Oba klienty na to
+// jsou napsané — dokud je profil neaktivní, hlásí `hasProfile: false`
+// a odesílají `POST`.
+//
+// **Kdo sem přidá `isActive: true`, zapne tu spamovací smyčku.**
 // ────────────────────────────────────────────────────────────
 router.put('/profile', requireAuth, async (req, res, next) => {
   try {
     const player = await prisma.player.findUnique({ where: { userId: req.user.id } });
     if (!player) return res.status(404).json({ error: 'Hráčský profil nenalezen' });
+
+    // Stejná podmínka jako u `POST`. Přes klienty se sem hráč s týmem
+    // nedostane, ale mít ji jen na jedné ze dvou cest k témuž záznamu je
+    // přesně ta nesrovnalost, kterou příští změna promění v chybu.
+    if (player.teamId) return res.status(400).json({ error: 'Hráč je již v týmu' });
 
     const { bio, pubSkill, position } = req.body;
     let profile;
