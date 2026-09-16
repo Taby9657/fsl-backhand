@@ -403,10 +403,14 @@ function upominkaPlatbaMail({ jmeno, polozky, castka, faze = 1 }) {
   const radky = polozkyRadky(polozky);
 
   // Tón se stupňuje jen v tom, jak naléhavě zní — nikdy v tom, čím hrozí.
+  //
+  // Texty schválně **neříkají, kolik dní uplynulo**. Plán se od zavedení
+  // posunul už dvakrát a pokaždé by se musely přepisovat i tady; „včera ti
+  // prošla registrace" byla po změně plánu rovnou lež.
   const uvod = {
     1: 'registrace ti prošla, ale platba zatím ne. Visí na tobě:',
-    2: 'včera ti prošla registrace a platba pořád visí:',
-    3: 'týden se ti tu drží nezaplacená položka:',
+    2: 'platba na tvoji přihlášku pořád nedorazila:',
+    3: 'pořád se ti tu drží nezaplacená položka:',
   }[faze] ?? 'platba zatím nedorazila:';
 
   const zaver = {
@@ -463,7 +467,7 @@ Kdyby něco nešlo nebo sis to rozmyslel, stačí odpovědět na tenhle e-mail.`
 function nabidkaVstupuMail({ jmeno, castka = 800, licFee = 300, faze = 1 }) {
   const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
   const uvod = faze >= 2
-    ? 'jsi u nás týden v draftu volných hráčů a zatím ti nikdo nenabídl místo.'
+    ? 'pořád jsi u nás v draftu volných hráčů a zatím ti nikdo nenabídl místo.'
     : 'jsi v draftu volných hráčů a zatím ti nikdo nenabídl místo. Nic se neděje, '
     + 'týmy se teprve skládají.';
   const zaver = faze >= 2

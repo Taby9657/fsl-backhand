@@ -303,9 +303,16 @@ runLineupLock();
 setInterval(runLineupLock, LOCK_INTERVAL_MS);
 
 // ==================== PŘIPOMÍNKY NEZAPLACENÝCH POPLATKŮ ====================
-// Plán: hodina, den, týden, pak ticho. Nic se nemaže a hráč bez týmu
+// Plán: dva dny, devět dní, měsíc, pak ticho. Nic se nemaže a hráč bez týmu
 // dostává nabídku, ne upomínku — proč, je v `services/upominky.js`.
-const UPOMINKY_INTERVAL_MS = 15 * 60 * 1000;
+//
+// **Interval cronu není frekvence psaní.** Jeden člověk dostane za celou
+// přihlášku nejvýš tři zprávy; tohle je jen jak často se koukáme, jestli
+// někomu nezačala další fáze. Nejkratší úsek plánu jsou dva dny, takže
+// čtvrthodinové koukání (do 16. 9. 2026) nemělo co získat — a odesílá se
+// jen v denním okně 9:00–20:00, takže deset až jedenáct běhů denně
+// doopravdy něco dělá.
+const UPOMINKY_INTERVAL_MS = 60 * 60 * 1000;
 
 async function runUpominky() {
   try {

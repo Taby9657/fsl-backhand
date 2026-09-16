@@ -2,7 +2,7 @@
  * Plán upomínek — co komu a kdy chodí, když po registraci nezaplatí.
  *
  * ── Plán ────────────────────────────────────────────────────────────────
- *   hodina  →  den  →  týden  →  ticho
+ *   dva dny  →  devět dní  →  měsíc  →  ticho
  *
  * Jedna připomínka nestačila: kdo si ji přečte v práci a odloží ji na
  * večer, druhou šanci od nás nedostal. Tři jsou dost na to, aby se ozval
@@ -10,16 +10,23 @@
  * nepřijde** — kdo nereagoval třikrát, nepřesvědčí ho ani čtvrtý e-mail
  * a nezaplacené přihlášky vidí supervisor ve Správě hráčů a v Týmech.
  *
+ * **Do 16. 9. 2026 chodila první připomínka hodinu po registraci.** Bylo to
+ * moc brzo: přistála člověku ve schránce hned za uvítacím e-mailem, který
+ * říká přesně totéž, a vypadala jako upomínka za něco, co ještě nestihl
+ * ani přečíst. Dva dny jsou dost na to, aby uvítání doznělo, a málo na to,
+ * aby přihláška zapadla. Druhá fáze je devátý den schválně, ne sedmý —
+ * jinak by obě zprávy padly na stejný den v týdnu.
+ *
  * ── Komu se píše ────────────────────────────────────────────────────────
- *   · hráč v týmu bez zaplacené licence      → hodina, den, týden
- *   · tým bez zaplacené registrace (vedoucím) → hodina, den, týden
- *   · hráč bez týmu v draftu                  → den, týden
+ *   · hráč v týmu bez zaplacené licence      → 2 dny, 9 dní, 30 dní
+ *   · tým bez zaplacené registrace (vedoucím) → 2 dny, 9 dní, 30 dní
+ *   · hráč bez týmu v draftu                  → 3 dny, 14 dní
  *
  * **Hráč bez týmu nedostává upomínku, ale nabídku.** V draftu nic nedluží:
  * licenci potřebuje, teprve až ho někdo vezme. Chodí mu proto jiná zpráva —
  * že je pořád v draftu a že nemusí čekat, když nechce (`nabidkaVstupuMail`).
- * A nechodí hodinu po registraci: to by přistála hned za uvítacím e-mailem
- * a vypadala by jako upomínka za něco, co platit nemusí.
+ * A nechodí hned po registraci: to by přistála za uvítacím e-mailem a
+ * vypadala by jako upomínka za něco, co platit nemusí.
  *
  * ── Proč se nemaže ──────────────────────────────────────────────────────
  * Hrozba „zaplať, nebo tě smažeme" by byla lež: **převodem platba dorazí za
@@ -29,8 +36,16 @@
  *
  * ── Proč se neposílá dvakrát ────────────────────────────────────────────
  * `upominekPoslano` říká, kolikátá fáze je na řadě, `upominkaAt` kdy odešla
- * poslední. Cron běží každých 15 minut, takže „hodinu po registraci" je ve
- * skutečnosti 60 až 75 minut — na připomínku víc než dost.
+ * poslední. **Cron je jen budík, ne frekvence psaní** — že se každou hodinu
+ * kouká, jestli někomu nezačala další fáze, neznamená, že někomu každou
+ * hodinu píše. Nejkratší úsek plánu jsou dva dny, takže hodinová přesnost
+ * bohatě stačí.
+ *
+ * ── Denní okno ──────────────────────────────────────────────────────────
+ * Fáze se počítá od registrace, takže kdo se přihlásil ve tři ráno, by ve
+ * tři ráno dostal i připomínku. Odesílá se proto jen mezi **9:00 a 20:00
+ * pražského času**; co dozraje mimo okno, počká na jeho otevření. Plán se
+ * tím neposouvá — jen se nedoručuje v noci.
  */
 
 const prisma = require('../lib/prisma');
@@ -40,10 +55,27 @@ const HODINA = 60 * 60 * 1000;
 const DEN    = 24 * HODINA;
 
 /** Za jak dlouho po registraci odchází která fáze. Délka pole = kolik jich přijde. */
-const PLAN_PLATBA = [1 * HODINA, 1 * DEN, 7 * DEN];
+const PLAN_PLATBA = [2 * DEN, 9 * DEN, 30 * DEN];
 
-/** Hráč bez týmu dostane o jednu míň a začíná se až druhý den. */
-const PLAN_DRAFT = [1 * DEN, 7 * DEN];
+/** Hráč bez týmu dostane o jednu míň a začíná se později — nic nedluží. */
+const PLAN_DRAFT = [3 * DEN, 14 * DEN];
+
+/** Hodiny pražského času, mezi kterými se smí odesílat. */
+const OKNO_OD = 9;
+const OKNO_DO = 20;
+
+const PRAZSKA_HODINA = new Intl.DateTimeFormat('cs-CZ', {
+  timeZone: 'Europe/Prague', hour: 'numeric', hour12: false,
+});
+
+/**
+ * Je teď denní okno? Hodina se bere přes `Intl`, ne přes `getHours()` —
+ * server běží v UTC a proti Praze je o hodinu (v létě o dvě) vedle.
+ */
+function vOkne(ted) {
+  const hodina = Number(PRAZSKA_HODINA.format(ted));
+  return hodina >= OKNO_OD && hodina < OKNO_DO;
+}
 
 /**
  * Odkdy se upomínky posílají.
@@ -54,8 +86,14 @@ const PLAN_DRAFT = [1 * DEN, 7 * DEN];
  */
 const UPOMINKY_OD = new Date('2026-09-16T00:00:00Z');
 
-/** Kolik jich poslat za jeden průchod. Brzda pro případ, že se něco nastřádá. */
-const DAVKA = 50;
+/**
+ * Kolik jich poslat za jeden průchod. Brzda pro případ, že se něco nastřádá.
+ *
+ * Průchodů je od 16. 9. 2026 míň — jednou za hodinu, a jen v denním okně —
+ * takže strop musí být vyšší. Jedenáct běhů po padesáti by na nápor kolem
+ * uzávěrky přihlášek nestačilo.
+ */
+const DAVKA = 200;
 
 /** Je tahle fáze na řadě? `poslano` je počet už odeslaných zpráv. */
 function naRade(plan, poslano, registrace, ted) {
@@ -68,6 +106,9 @@ function naRade(plan, poslano, registrace, ted) {
  * záležel na tom, kolikátého zrovna je — a `UPOMINKY_OD` je pevné datum.
  */
 async function posliUpominky({ ted = new Date(), od = UPOMINKY_OD } = {}) {
+  // Mimo okno se ani nesahá do databáze — co dozrálo, počká na ráno.
+  if (!vOkne(ted)) return { hracu: 0, tymu: 0, draftu: 0, mimoOkno: true };
+
   const [hracu, tymu, draftu] = await Promise.all([
     upominkyHracum(ted, od),
     upominkyTymum(ted, od),
@@ -218,4 +259,7 @@ function zapisOdeslani(model, platba, ted) {
   });
 }
 
-module.exports = { posliUpominky, PLAN_PLATBA, PLAN_DRAFT, UPOMINKY_OD };
+module.exports = {
+  posliUpominky, vOkne,
+  PLAN_PLATBA, PLAN_DRAFT, UPOMINKY_OD, OKNO_OD, OKNO_DO,
+};

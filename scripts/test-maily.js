@@ -142,8 +142,13 @@ function projdi(nazev, zprava) {
     'místo toho říká věcný důsledek: bez licence se nenastupuje');
 
   // --- 7. plán: komu, kdy a kolikrát ---
+  //
+  // Plán je 2 / 9 / 30 dní (hráč, tým) a 3 / 14 dní (draft). Test počítá
+  // v konstantách z modulu, ne v natvrdo napsaných dnech — když se plán
+  // posune, nesmí se rozpadnout, jen se posunou i kontroly.
   reset();
   const ODKDY = new Date('2020-01-01');
+  // 12:00 pražského času — uvnitř okna 9:00–20:00, ať plán nezkoumá okno.
   const REG = new Date('2026-09-20T10:00:00Z');   // kdy se všichni zaregistrovali
   const po = (ms) => new Date(REG.getTime() + ms);
   const HODINA = 60 * 60 * 1000;
@@ -165,53 +170,98 @@ function projdi(nazev, zprava) {
   const bez = () => { const z = db.odeslane.slice(); db.odeslane.length = 0; return z; };
   const bezi = (ms) => upominky.posliUpominky({ ted: po(ms), od: ODKDY });
 
-  // Půl hodiny po registraci nemá odejít nic.
-  await bezi(HODINA / 2);
-  ok(bez().length === 0, 'půl hodiny po registraci nechodí nic');
+  const [P1, P2, P3] = upominky.PLAN_PLATBA;
+  const [D1, D2]     = upominky.PLAN_DRAFT;
 
-  // Hodina: hráč v týmu a vedoucí. Hráč bez týmu ne — ten nic nedluží.
+  // Hodinu po registraci nemá odejít nic — do 16. 9. 2026 tady chodila
+  // první připomínka a bylo to moc brzo.
   await bezi(HODINA);
-  const poHodine = bez();
-  ok(poHodine.some(z => z.to === 'jan@test.cz'), 'po hodině: hráč v týmu bez licence');
-  ok(poHodine.some(z => z.to === 'petr@test.cz'), 'po hodině: vedoucí bez zaplacené registrace');
-  ok(!poHodine.some(z => z.to === 'david@test.cz'),
-    'po hodině: hráči bez týmu nechodí nic — v draftu zatím nic neplatí');
-  ok(poHodine.every(z => /Ještě zbývá zaplatit/.test(z.subject)), 'a je to první fáze plánu');
+  ok(bez().length === 0, 'hodinu po registraci nechodí nic');
 
-  // Ještě jednou po dvou hodinách — druhá fáze je až za den, takže ticho.
-  await bezi(2 * HODINA);
-  ok(bez().length === 0, 'druhá fáze nepřijde dřív než za den');
+  // Těsně před první fází pořád ticho.
+  await bezi(P1 - HODINA);
+  ok(bez().length === 0, 'ani těsně před první fází');
 
-  // Den: druhá fáze platícím a první nabídka tomu v draftu.
-  await bezi(DEN);
-  const poDni = bez();
-  ok(poDni.some(z => z.to === 'jan@test.cz' && /Připomínka/.test(z.subject)),
-    'po dni: druhá připomínka hráči v týmu');
-  const nabidka = poDni.find(z => z.to === 'david@test.cz');
-  ok(!!nabidka, 'po dni: hráč v draftu dostane první zprávu');
+  // První fáze: hráč v týmu a vedoucí. Hráč bez týmu ne — ten nic nedluží.
+  await bezi(P1);
+  const prvni = bez();
+  ok(prvni.some(z => z.to === 'jan@test.cz'), 'první fáze: hráč v týmu bez licence');
+  ok(prvni.some(z => z.to === 'petr@test.cz'), 'první fáze: vedoucí bez zaplacené registrace');
+  ok(!prvni.some(z => z.to === 'david@test.cz'),
+    'hráči bez týmu ještě nechodí nic — v draftu zatím nic neplatí');
+  ok(prvni.every(z => /Ještě zbývá zaplatit/.test(z.subject)), 'a je to první fáze plánu');
+
+  // Druhá fáze je až za devět dní, takže mezitím ticho.
+  await bezi(P1 + 2 * HODINA);
+  ok(bez().length === 0, 'druhá fáze nepřijde hned po první');
+
+  // Draft se ozve později a jinak.
+  await bezi(D1);
+  const nabidka = bez().find(z => z.to === 'david@test.cz');
+  ok(!!nabidka, 'hráč v draftu dostane první zprávu vlastním tempem');
   ok(/draftu/i.test(nabidka.subject) && !/Visí na tobě/.test(nabidka.text),
     'a není to upomínka — je to nabídka Virtuálního vedoucího, nic nedluží');
 
-  // Týden: poslední fáze všem.
-  await bezi(7 * DEN);
-  const poTydnu = bez();
-  ok(poTydnu.some(z => z.to === 'jan@test.cz' && /Poslední/.test(z.subject)),
-    'po týdnu: poslední připomínka');
-  ok(poTydnu.some(z => /poslední připomínka/i.test(z.text) && z.to === 'david@test.cz'),
-    'a poslední nabídka i tomu v draftu');
+  // Druhá fáze platícím.
+  await bezi(P2);
+  ok(bez().some(z => z.to === 'jan@test.cz' && /Připomínka/.test(z.subject)),
+    'druhá připomínka hráči v týmu');
 
-  // Měsíc: plán je vyčerpaný, dál se mlčí.
-  await bezi(30 * DEN);
+  // Druhá (a poslední) nabídka do draftu.
+  await bezi(D2);
+  ok(bez().some(z => /poslední připomínka/i.test(z.text) && z.to === 'david@test.cz'),
+    'poslední nabídka tomu v draftu');
+
+  // Třetí a poslední fáze platícím.
+  await bezi(P3);
+  ok(bez().some(z => z.to === 'jan@test.cz' && /Poslední/.test(z.subject)),
+    'poslední připomínka');
+
+  // Dál se mlčí.
+  await bezi(P3 + 60 * DEN);
   ok(bez().length === 0, 'po vyčerpání plánu se přestane psát — čtvrtá zpráva nepřijde');
   ok(db.playerPayments.find(p => p.id === 'PP1').upominekPoslano === 3
     && db.playerPayments.find(p => p.id === 'PP2').upominekPoslano === 2,
     'počítadlo sedí: tři zprávy platícímu, dvě tomu v draftu');
 
+  // Žádná zpráva nesmí tvrdit, jak dlouho to trvá — plán se posouvá, texty ne.
+  ok(!/včera|týden se ti|jsi u nás týden/i.test(
+    [1, 2, 3].map(f => mailer.upominkaPlatbaMail({ polozky: [], castka: 0, faze: f }).text
+      + mailer.nabidkaVstupuMail({ faze: f }).text).join(' ')),
+    'texty upomínek neuvádějí počet dní — přežijou posun plánu');
+
   // Kdo zaplatí, vypadne z plánu.
   db.playerPayments.push(hrac('PP3', 'Eva', 'T1', 'eva@test.cz'));
   db.playerPayments.find(p => p.id === 'PP3').licStatus = 'PAID';
-  await bezi(2 * HODINA);
+  await bezi(P1 + HODINA);
   ok(!bez().some(z => z.to === 'eva@test.cz'), 'zaplacené licenci už nechodí nic');
+
+  // --- 8. denní okno: v noci se nepíše ---
+  //
+  // Fáze se počítá od registrace, takže kdo se přihlásil ve tři ráno, by ve
+  // tři ráno dostal i připomínku. Okno to posune na ráno, plán neposouvá.
+  ok(!upominky.vOkne(new Date('2026-09-20T01:00:00Z')), '3:00 pražského času je mimo okno');
+  ok(upominky.vOkne(new Date('2026-09-20T07:00:00Z')), '9:00 je v okně');
+  ok(upominky.vOkne(new Date('2026-09-20T17:59:00Z')), '19:59 ještě taky');
+  ok(!upominky.vOkne(new Date('2026-09-20T18:00:00Z')), '20:00 už ne');
+  // V zimě je Praha UTC+1 — hodina se bere přes Intl, ne přes getHours().
+  ok(!upominky.vOkne(new Date('2026-01-20T07:59:00Z')), 'v zimě 8:59 taky mimo okno');
+  ok(upominky.vOkne(new Date('2026-01-20T08:00:00Z')), 'a v zimě 9:00 v okně');
+
+  reset();
+  db.playerPayments.push(hrac('PP9', 'Noc', 'T1', 'noc@test.cz'));
+  const vNoci = await upominky.posliUpominky({
+    ted: new Date(REG.getTime() + P1 + 13 * HODINA), // 1:00 pražského času
+    od:  ODKDY,
+  });
+  ok(vNoci.mimoOkno === true && db.odeslane.length === 0,
+    'dozrálá připomínka v noci počká na ráno');
+  const rano = await upominky.posliUpominky({
+    ted: new Date(REG.getTime() + P1 + 22 * HODINA), // 10:00 pražského času
+    od:  ODKDY,
+  });
+  ok(rano.hracu === 1 && db.odeslane.some(z => z.to === 'noc@test.cz'),
+    'a ráno odejde');
 
   console.log(fail === 0 ? '\nVŠE PROŠLO' : `\n${fail} SELHALO`);
   process.exit(fail === 0 ? 0 : 1);
