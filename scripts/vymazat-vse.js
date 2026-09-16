@@ -130,6 +130,7 @@ const TABULKY = [
   ['supervisorRequest', 'žádosti na supervisora'],
   ['seasonTransition',  'naplánované přechody sezóny'],
   ['passwordReset',     'kódy pro obnovu hesla'],
+  ['onboardingStep',    'kroky v přihlášce (měření)'],
 ];
 
 /** `Match` → `match`, jak se model jmenuje na Prisma Clientu. */
