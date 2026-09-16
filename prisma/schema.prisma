@@ -1038,6 +1038,19 @@ model OnboardingStep {
   /// Zkrácená cesta hráče bez týmu — dva kroky místo čtyř.
   bezTymu  Boolean @default(false)
 
+  /// Jak dlouho byl krok vidět, v sekundách. Null, dokud ho člověk neopustí —
+  /// dopisuje se až při odchodu, takže rozdělaný krok ho nemá.
+  sekundy   Int?
+  /// Jak krok opustil: "klik" (šel dál v přihlášce), "jinam" (odešel jiným
+  /// odkazem na webu), "zavrel". Null, když se odchod nestihl odeslat.
+  odchod    String?
+  /// Kam až doscrolloval, v procentech výšky stránky (0-100). Stránka, která
+  /// se vejde na obrazovku, má 100.
+  scroll    Int?
+  /// Výška okna v px. Se `scroll` dohromady odpovídá na otázku, jestli vůbec
+  /// uviděl karty s rolemi — na 667px displeji jsou tři ze čtyř mimo obrazovku.
+  vyskaOkna Int?
+
   createdAt DateTime @default(now())
 
   @@unique([navsteva, krok])

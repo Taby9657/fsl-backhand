@@ -28,6 +28,9 @@ const KROKY = [
 
 const ROLE = ['player', 'manager', 'referee'];
 
+/** Jak člověk krok opustil. Mimo tenhle seznam se nic neuloží. */
+const ODCHODY = ['klik', 'jinam', 'zavrel'];
+
 /** Pořadí kroků v trychtýři. Mimo tenhle seznam se nic neuloží. */
 const POSTUP = {
   null:     ['role'],
@@ -46,7 +49,10 @@ const POSTUP = {
  * přestane platit** — každá si bude počítat svoje.
  */
 const OKNO_MS = 60 * 60 * 1000;
-const MAX_ZA_OKNO = 60;
+// 120, ne 60: od 16. 9. večer posílá web na každý krok dva požadavky --
+// příchod (`/krok`) a odchod (`/konec`). Strop zůstal stejně velkoryse nad
+// nejdelší cestou, je to brzda pro robota, ne kvóta pro člověka.
+const MAX_ZA_OKNO = 120;
 const historie = new Map();
 
 function prekrocenLimit(ip) {
@@ -101,6 +107,55 @@ router.post('/krok', async (req, res) => {
 });
 
 /**
+ * POST /api/onboarding/konec
+ *
+ * Dopíše k už zapsanému kroku, **jak dlouho na něm člověk byl a jak odešel**.
+ * Web to posílá jednou, při opuštění kroku.
+ *
+ * Proč to existuje: trychtýř uměl říct „ze 167 lidí šel dál 21", ale ne jestli
+ * těch 146 odešlo do dvou sekund (nechtěný proklik z reklamy), nebo si obrazovku
+ * přečetli a stejně nekliknuli (špatná obrazovka). To jsou dvě úplně různé
+ * diagnózy a každá se opravuje jinde.
+ *
+ * `sekundy: null` v podmínce znamená **první slovo platí**: když se stránka
+ * vrátí z bfcache a odejde podruhé, druhý odchod se zahodí. Jinak by se čas
+ * čtení přepsal časem, kdy se člověk jen mihl zpátky.
+ *
+ * Odpovídá vždycky 204, ze stejného důvodu jako `/krok`.
+ */
+router.post('/konec', async (req, res) => {
+  res.status(204).end();
+
+  try {
+    const { navsteva, krok, sekundy, odchod = null, scroll, vyskaOkna } = req.body ?? {};
+
+    if (typeof navsteva !== 'string' || !/^[0-9a-f-]{16,64}$/i.test(navsteva)) return;
+    if (typeof krok !== 'string' || !KROKY.includes(krok)) return;
+    if (odchod !== null && !ODCHODY.includes(odchod)) return;
+    if (prekrocenLimit(req.ip)) return;
+
+    /** Číslo z ciziny: cokoli mimo rozsah je nesmysl a uloží se null. */
+    const cislo = (v, max) => (
+      typeof v === 'number' && Number.isFinite(v) && v >= 0
+        ? Math.min(Math.round(v), max)
+        : null
+    );
+
+    await prisma.onboardingStep.updateMany({
+      where: { navsteva, krok, sekundy: null },
+      data: {
+        sekundy: cislo(sekundy, 3600),
+        odchod,
+        scroll: cislo(scroll, 100),
+        vyskaOkna: cislo(vyskaOkna, 10000),
+      },
+    });
+  } catch (err) {
+    console.error('[Onboarding] Odchod z kroku se nepodařilo uložit:', err?.message ?? err);
+  }
+});
+
+/**
  * GET /api/onboarding/trychtyr?hodin=24
  *
  * Kolik průchodů došlo na který krok. Veřejné schválně: jsou to holé počty bez
@@ -121,12 +176,50 @@ router.get('/trychtyr', async (req, res, next) => {
       (r) => r.role === role && r.krok === krok,
     )?._count?._all ?? 0;
 
+    /* Časy na krocích. Bere se to jedním dotazem a počítá v paměti: řádků je
+       řádově stovky za den a medián `groupBy` neumí. */
+    const merene = await prisma.onboardingStep.findMany({
+      where: { createdAt: { gte: od }, sekundy: { not: null } },
+      select: { role: true, krok: true, sekundy: true, scroll: true, odchod: true },
+    });
+
+    const median = (cisla) => {
+      if (!cisla.length) return null;
+      const s = [...cisla].sort((a, b) => a - b);
+      const p = Math.floor(s.length / 2);
+      return s.length % 2 ? s[p] : Math.round((s[p - 1] + s[p]) / 2);
+    };
+
+    /**
+     * Hranice 3 a 10 sekund nejsou nastavené od oka: do tří sekund člověk
+     * obrazovku nepřečte, takže je to nechtěný proklik; nad deset už četl
+     * a rozhodl se odejít. Mezi tím je šedá zóna, která se schválně nevykazuje
+     * jako ani jedno.
+     */
+    const casy = (role, krok) => {
+      const radky = merene.filter((r) => r.role === role && r.krok === krok);
+      if (!radky.length) return null;
+      const sekundy = radky.map((r) => r.sekundy);
+      const odchody = { klik: 0, jinam: 0, zavrel: 0, nevime: 0 };
+      for (const r of radky) odchody[r.odchod ?? 'nevime'] += 1;
+      return {
+        mereno: radky.length,
+        median: median(sekundy),
+        do3s: sekundy.filter((x) => x <= 3).length,
+        nad10s: sekundy.filter((x) => x > 10).length,
+        medianScroll: median(radky.map((r) => r.scroll).filter((x) => x !== null)),
+        odchody,
+      };
+    };
+
     const trychtyr = {};
     for (const [role, kroky] of Object.entries(POSTUP)) {
       const klic = role === 'null' ? 'vyberRole' : role;
+      const r = role === 'null' ? null : role;
       trychtyr[klic] = kroky.map((krok) => ({
         krok,
-        navstev: pocet(role === 'null' ? null : role, krok),
+        navstev: pocet(r, krok),
+        casy: casy(r, krok),
       }));
     }
 
