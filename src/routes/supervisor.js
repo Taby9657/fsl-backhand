@@ -305,10 +305,24 @@ router.put('/teams/:id/reject', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// POST /supervisor/teams – vytvoření týmu
+/**
+ * POST /supervisor/teams – vytvoření týmu supervisorem.
+ *
+ * **Tohle není registrace týmu.** `POST /teams` zakládá tým i s vedoucím,
+ * pozvánkovým kódem a předpisem registrace 3 000 Kč; tady vzniká tým, který
+ * žádného živého vedoucího nemá — typicky **otevřený tým**, do kterého
+ * supervisor zařazuje jednotlivce ručně ve Správě hráčů. Registraci proto
+ * neplatí (otevřený tým ji podle pravidel neplatí vůbec) a `regStatus`
+ * zůstává na výchozím `APPROVED`.
+ *
+ * **Přihláška do sezóny (`TeamSeason`) se zakládá tady.** Do 17. 9. 2026 se
+ * nezakládala a tým z adminu tím pádem v běžící sezóně vůbec nebyl —
+ * rozlosování ho nevidělo. Opravit se to nedalo ani jinudy: `POST
+ * /seasons/teams` sice existuje, ale web ho nikde nevolá.
+ */
 router.post('/teams', async (req, res, next) => {
   try {
-    const { name, abbr, division, color, colorSecondary, venue, conference } = req.body;
+    const { name, abbr, division, color, colorSecondary, venue, conference, isOpen } = req.body;
     if (!name || !abbr) {
       return res.status(400).json({ error: 'Chybí název nebo zkratka týmu' });
     }
@@ -329,6 +343,12 @@ router.post('/teams', async (req, res, next) => {
       });
     }
 
+    // Bez přihlášky do sezóny tým v soutěži není. Když liga sezónu nastavenou
+    // nemá, tým vznikne bez ní — přihlásit se dá později, jen o tom musí
+    // supervisor vědět, proto se to vrací v odpovědi jako `season`.
+    const season = await seasonSvc.currentSeason();
+    const doSezony = seasonSvc.SEASON_RE.test(season ?? '');
+
     const team = await prisma.team.create({
       data: {
         name,
@@ -338,19 +358,25 @@ router.post('/teams', async (req, res, next) => {
         colorSecondary:  colorSecondary || null,
         venue:      venue || null,
         conference: conference || null,
+        // Otevřený tým — skládá se z jednotlivců a nemá živého vedoucího.
+        // Dnes to nemění žádný limit (`SOUPISKA_OTEVRENY` je kopie běžné
+        // soupisky), je to příznak pro skládání otevřených týmů, až bude.
+        isOpen:     !!isOpen,
+        ...(doSezony ? { seasons: { create: { season } } } : {}),
       },
       include: { _count: { select: { players: true } } },
     });
-    res.status(201).json(team);
+    res.status(201).json({ ...team, season: doSezony ? season : null });
   } catch (err) { next(err); }
 });
 
 // PUT /supervisor/teams/:id – úprava týmu
 router.put('/teams/:id', async (req, res, next) => {
   try {
-    const { name, abbr, division, color, colorSecondary, venue, conference } = req.body;
+    const { name, abbr, division, color, colorSecondary, venue, conference, isOpen } = req.body;
     const data = {};
     if (name)                data.name       = name;
+    if (isOpen !== undefined) data.isOpen    = !!isOpen;
     if (abbr)                data.abbr       = abbr.toUpperCase();
     // Prázdný řetězec znamená "vyřadit z divize", proto !== undefined
     if (division !== undefined) data.division = division || null;
