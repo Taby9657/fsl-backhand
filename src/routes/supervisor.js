@@ -17,6 +17,7 @@ const prisma = require('../lib/prisma');
 const licence = require('../services/licence');
 const draftPool = require('../services/draftPool');
 const { slotZPostu } = require('../utils/posty');
+const { uploadLogo } = require('../utils/fileUpload');
 
 // Všechny endpointy v tomto souboru vyžadují supervisor roli
 router.use(requireSupervisor);
@@ -391,6 +392,38 @@ router.put('/teams/:id', async (req, res, next) => {
       include: { _count: { select: { players: true } } },
     });
     res.json(team);
+  } catch (err) { next(err); }
+});
+
+/**
+ * POST /supervisor/teams/:id/logo – nahrání loga supervisorem.
+ *
+ * `POST /teams/:id/logo` umí nahrát logo jen vedoucímu toho týmu, takže
+ * **tým bez vedoucího logo nikdy nedostal** — a to je přesně otevřený tým,
+ * který zakládá supervisor. Supervisor navíc logo nemohl nahrát ani žádnému
+ * jinému týmu, i když ho vedoucí poslal e-mailem.
+ */
+router.post('/teams/:id/logo', uploadLogo.single('logo'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Nebyl nahrán žádný soubor' });
+    const team = await prisma.team.update({
+      where: { id: req.params.id },
+      data:  { logoUrl: req.file.path },
+    });
+    res.json({ logoUrl: team.logoUrl });
+  } catch (err) { next(err); }
+});
+
+// DELETE /supervisor/teams/:id/logo – odebrání loga
+// Ruší jen odkaz v databázi; soubor v Cloudinary zůstává. Mazat cizí soubor
+// kvůli překliku by bylo nevratné a tým se stejně vrátí k písmenné značce.
+router.delete('/teams/:id/logo', async (req, res, next) => {
+  try {
+    const team = await prisma.team.update({
+      where: { id: req.params.id },
+      data:  { logoUrl: null },
+    });
+    res.json({ logoUrl: team.logoUrl });
   } catch (err) { next(err); }
 });
 
