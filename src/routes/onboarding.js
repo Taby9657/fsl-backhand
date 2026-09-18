@@ -19,6 +19,7 @@ const express = require('express');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
+const metaCapi = require('../utils/metaCapi');
 
 /** Slugy kroků, jak je zná `registrace/onboarding-client.tsx`. */
 const KROKY = [
@@ -152,6 +153,60 @@ router.post('/konec', async (req, res) => {
     });
   } catch (err) {
     console.error('[Onboarding] Odchod z kroku se nepodařilo uložit:', err?.message ?? err);
+  }
+});
+
+/**
+ * POST /api/onboarding/meta-konverze
+ *
+ * Serverová kopie konverzní události pro Metu. Web sem zavolá hned po
+ * dokončené přihlášce a pošle `eventId` — stejné, jaké v tu chvíli poslal
+ * pixel z prohlížeče. Meta si obě spáruje a započítá jednou.
+ *
+ * **Proč to nejde rovnou z `players.js`, kde hráč vzniká:** backend neví, jestli
+ * člověk dal souhlas s marketingovým měřením. Souhlas žije v prohlížeči a bez
+ * něj se Metě posílat nesmí nic. Volá se proto odsud, z prohlížeče, který to ví.
+ *
+ * Co se tím získá a co ne: **blokátory reklam tuhle cestu nezastaví** (jde na
+ * naši doménu, ne na `facebook.net`), takže registrace zablokovaným pixelem
+ * se započítá. Před zavřením karty ještě dřív, než požadavek odejde, to
+ * neochrání — web proto volá s `keepalive`.
+ *
+ * Odpovídá vždycky 204, ze stejného důvodu jako `/krok`: je to měření, ne
+ * součást registrace, a nesmí být na přihlášce vidět.
+ */
+router.post('/meta-konverze', async (req, res) => {
+  res.status(204).end();
+
+  try {
+    const { eventId, nazev = 'CompleteRegistration', souhlas, url, role } = req.body ?? {};
+
+    // Bez výslovného souhlasu se nikam nic neposílá. Chybějící pole je „ne".
+    if (souhlas !== true) return;
+    if (typeof eventId !== 'string' || !/^[\w-]{8,64}$/.test(eventId)) return;
+    if (nazev !== 'CompleteRegistration' && nazev !== 'Lead') return;
+    if (prekrocenLimit(req.ip)) return;
+
+    // `_fbp` a `_fbc` si pixel ukládá jako cookie na naší doméně, takže
+    // dorazí samy. Když souhlas není, nejsou — a to je v pořádku.
+    const cookies = req.headers.cookie ?? '';
+    const zCookie = (jmeno) => {
+      const m = cookies.match(new RegExp('(?:^|; )' + jmeno + '=([^;]+)'));
+      return m ? decodeURIComponent(m[1]) : undefined;
+    };
+
+    await metaCapi.posli({
+      nazev,
+      eventId,
+      url: typeof url === 'string' && url.startsWith('https://') ? url.slice(0, 500) : undefined,
+      ip: req.ip,
+      ua: req.headers['user-agent'],
+      fbp: zCookie('_fbp'),
+      fbc: zCookie('_fbc'),
+      vlastni: typeof role === 'string' && ROLE.includes(role) ? { content_category: role } : undefined,
+    });
+  } catch (err) {
+    console.error('[Onboarding] Konverzi se nepodařilo poslat Metě:', err?.message ?? err);
   }
 });
 
