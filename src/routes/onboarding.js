@@ -25,7 +25,24 @@ const metaCapi = require('../utils/metaCapi');
 const KROKY = [
   'role', 'kod', 'jmeno', 'dres', 'doplnky', 'draft',
   'tym', 'vzhled', 'ja', 'osobni', 'kontrola', 'hotovo',
+  // Ne krok, ale klik: viz ODKAZY níž.
+  'jak-funguje',
 ];
+
+/**
+ * Kliknutí, která se zapisují do téže tabulky, ale **nejsou krokem v cestě**.
+ *
+ * `jak-funguje` = odkaz „Nevíš, co vybrat? Jak liga funguje" na obrazovce
+ * výběru role. Bez něj se o odchodu vědělo jen `odchod: 'jinam'`, což je
+ * „odešel někam jinam na web" a nerozliší člověka, který si šel přečíst
+ * formát soutěže, od člověka, který odešel pryč.
+ *
+ * Schválně to **nemá vlastní tabulku**: je to jeden protokolární řádek se
+ * stejnou životností i stejnou (nulovou) osobní stopou jako kroky vedle něj.
+ * Kdo sem přidá další odkaz, ať ho přidá i do `KROKY` a do `POSTUP` **ne** —
+ * jinak se objeví v trychtýři jako krok, kterým není.
+ */
+const ODKAZY = ['jak-funguje'];
 
 const ROLE = ['player', 'manager', 'referee'];
 
@@ -278,13 +295,25 @@ router.get('/trychtyr', async (req, res, next) => {
       }));
     }
 
+    /* Kliky na odkazy se do počtu průchodů nezapočítávají. Dneska by to
+       vyšlo nastejno — na „Jak liga funguje" se dá kliknout jedině
+       z obrazovky výběru role, kde tentýž průchod už řádek `role` má —
+       ale platí to jen do chvíle, než tenhle způsob měření někdo použije
+       na stránce mimo přihlášku. Pak by `navstev` tiše narostlo a status
+       e-mail by hlásil průchody přihláškou, které se nestaly. */
     const navstev = await prisma.onboardingStep.findMany({
-      where: { createdAt: { gte: od } },
+      where: { createdAt: { gte: od }, krok: { notIn: ODKAZY } },
       distinct: ['navsteva'],
       select: { navsteva: true },
     });
 
-    res.json({ od, hodin, navstev: navstev.length, trychtyr });
+    /* Odkazy stojí vedle trychtýře, ne v něm: jsou to kliky, ne kroky, a
+       kdyby se přimíchaly mezi kroky, četly by se jako místo v cestě. */
+    const odkazy = Object.fromEntries(
+      ODKAZY.map((krok) => [krok, pocet(null, krok)]),
+    );
+
+    res.json({ od, hodin, navstev: navstev.length, trychtyr, odkazy });
   } catch (err) {
     next(err);
   }
