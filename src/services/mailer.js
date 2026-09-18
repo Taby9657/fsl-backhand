@@ -233,10 +233,10 @@ nemůže postavit do sestavy. Zápasy se pak platí zvlášť balíčkem startů
 
 Zaplatit jde kartou i převodem: ${WEB}/platby
 
-Jak se hraje: pět hráčů do pole a brankář, 3 × 15 minut hrubého času.
-Základní část 15 až 20 kol od listopadu do března, pak play-off, do kterého
-postupuje každý tým. Hraje se v Praze, halu upřesníme podle počtu
-přihlášených týmů.`
+Jak se hraje: pět hráčů do pole a brankář, 3 × 15 minut. Základní část má
+15 až 20 kol od listopadu do března, po ní jde play-off, do kterého postupuje
+každý tým. Základní část i předkolo se hrají na hrubý čas, od čtvrtfinále
+na čistý. Hraje se v Praze, halu upřesníme podle počtu přihlášených týmů.`
     : `${oslov}
 
 jsi zaregistrovaný ve Floorball Stars Lize. Přihlásil ses bez týmu, takže
@@ -263,10 +263,10 @@ Obojí najdeš tady: ${WEB}/platby
 Zápasy se platí zvlášť balíčkem startů — od 200 Kč za jeden po 3 000 Kč za
 dvacet, což vychází na 150 Kč za zápas. Kupuješ ho, až budeš vědět, že hraješ.
 
-Jak se hraje: pět hráčů do pole a brankář, 3 × 15 minut hrubého času.
-Základní část 15 až 20 kol od listopadu do března, pak play-off, do kterého
-postupuje každý tým. Hraje se v Praze, halu upřesníme podle počtu
-přihlášených týmů.`;
+Jak se hraje: pět hráčů do pole a brankář, 3 × 15 minut. Základní část má
+15 až 20 kol od listopadu do března, po ní jde play-off, do kterého postupuje
+každý tým. Základní část i předkolo se hrají na hrubý čas, od čtvrtfinále
+na čistý. Hraje se v Praze, halu upřesníme podle počtu přihlášených týmů.`;
 
   const html = obalka(
     tym ? 'Jsi v lize' : 'Jsi v draftu volných hráčů',
@@ -275,7 +275,7 @@ přihlášených týmů.`;
         + ramecek(`<strong>Hráčská licence ${licFee} Kč</strong> na sezónu. Bez ní tě vedoucí nemůže postavit do sestavy.`)
         + tlacitko('Zaplatit licenci', '/platby')
         + odstavec('Zápasy se platí zvlášť balíčkem startů — od 200 Kč za jeden po 3 000 Kč za dvacet, tedy 150 Kč za zápas.')
-        + odstavec('Hraje se pět do pole a brankář, 3 × 15 minut hrubého času. Základní část 15 až 20 kol od listopadu do března, pak play-off, do kterého postupuje každý tým. V Praze, halu upřesníme podle počtu přihlášených týmů.')
+        + odstavec('Hraje se pět do pole a brankář, 3 × 15 minut. Základní část má 15 až 20 kol od listopadu do března, po ní play-off, do kterého postupuje každý tým. Základní část i předkolo se hrají na hrubý čas, od čtvrtfinále na čistý. V Praze, halu upřesníme podle počtu přihlášených týmů.')
       : odstavec(`${oslov} jsi zaregistrovaný ve Floorball Stars Lize. Přihlásil ses bez týmu, takže jsi v <strong>draftu volných hráčů</strong> — mezi lidmi, ze kterých si vedoucí doplňují soupisky.`)
         + odstavec(`Vedoucím se seznam otevře <strong>${otevreni}</strong>, hned po uzávěrce přihlášek. Do té doby ho schválně neukazujeme, aby si nikdo nerozebral hráče dřív, než je jasné, kdo do soutěže nastoupí — takže když se do té doby nic neděje, zatím tě prostě nikdo nevidí.`)
         + odstavec(`Do té doby tě nic nestojí. <strong>Hráčskou licenci ${licFee} Kč</strong> na sezónu platíš, teprve až tě někdo vezme do týmu.`)
@@ -283,7 +283,7 @@ přihlášených týmů.`;
         + odstavec('Otevřený tým se skládá kolem čtrnácti lidí, takže než se první sejde, nějaký čas to potrvá. Když si to rozmyslíš dřív, než tě do týmu zařadíme, startovné se vrací.')
         + tlacitko('Podívat se na platby', '/platby')
         + odstavec('Zápasy se platí zvlášť balíčkem startů — od 200 Kč za jeden po 3 000 Kč za dvacet, tedy 150 Kč za zápas. Kupuješ ho, až budeš vědět, že hraješ.')
-        + odstavec('Hraje se pět do pole a brankář, 3 × 15 minut hrubého času. Základní část 15 až 20 kol od listopadu do března, pak play-off, do kterého postupuje každý tým. V Praze, halu upřesníme podle počtu přihlášených týmů.'),
+        + odstavec('Hraje se pět do pole a brankář, 3 × 15 minut. Základní část má 15 až 20 kol od listopadu do března, po ní play-off, do kterého postupuje každý tým. Základní část i předkolo se hrají na hrubý čas, od čtvrtfinále na čistý. V Praze, halu upřesníme podle počtu přihlášených týmů.'),
   );
 
   return { subject: tym ? `Jsi v lize — ${tym}` : 'Jsi v draftu volných hráčů', text, html };
@@ -318,10 +318,10 @@ Mezitím dvě věci:
 
 Zaplatit jde kartou i převodem, a klidně všechno najednou: ${WEB}/platby
 
-Jak se hraje: pět hráčů do pole a brankář, 3 × 15 minut hrubého času.
-Základní část 15 až 20 kol od listopadu do března, pak play-off, do kterého
-postupuje každý tým. Hraje se v Praze, halu upřesníme podle počtu
-přihlášených týmů.`;
+Jak se hraje: pět hráčů do pole a brankář, 3 × 15 minut. Základní část má
+15 až 20 kol od listopadu do března, po ní jde play-off, do kterého postupuje
+každý tým. Základní část i předkolo se hrají na hrubý čas, od čtvrtfinále
+na čistý. Hraje se v Praze, halu upřesníme podle počtu přihlášených týmů.`;
 
   const html = obalka(
     'Přihláška týmu přijata',
@@ -329,7 +329,7 @@ přihlášených týmů.`;
     + ramecek(`<strong>Pozvánkový kód pro spoluhráče</strong><br><span style="font-size:22px;font-weight:700;letter-spacing:2px">${kod}</span><br>Kdo ho zadá při registraci, přistane rovnou na vaší soupisce. Minimum je 9 hráčů do pole a 1 brankář, horní hranice není.`)
     + ramecek(`<strong>Registrace týmu ${castka} Kč</strong> na sezónu — jediné, co platí tým jako celek. Zápasy si platí každý hráč sám, po nikom nic nevybíráš. Jako vedoucí máš i hráčský profil, takže pro tebe platí i licence ${licFee} Kč.`)
     + tlacitko('Zaplatit', '/platby')
-    + odstavec('Hraje se pět do pole a brankář, 3 × 15 minut hrubého času. Základní část 15 až 20 kol od listopadu do března, pak play-off, do kterého postupuje každý tým. V Praze, halu upřesníme podle počtu přihlášených týmů.'),
+    + odstavec('Hraje se pět do pole a brankář, 3 × 15 minut. Základní část má 15 až 20 kol od listopadu do března, po ní play-off, do kterého postupuje každý tým. Základní část i předkolo se hrají na hrubý čas, od čtvrtfinále na čistý. V Praze, halu upřesníme podle počtu přihlášených týmů.'),
   );
 
   return { subject: `Přihláška týmu ${tym} přijata`, text, html };
@@ -354,14 +354,15 @@ a ozveme se ti.
 Nic neplatíš — poplatky se rozhodčích netýkají. Zbytek údajů (bankovní
 spojení a co patří na smlouvu) budeme řešit až po schválení, ne teď.
 
-Liga se hraje v Praze od listopadu do března, pět hráčů do pole a brankář,
-3 × 15 minut hrubého času.`;
+Hraje se v Praze, pět hráčů do pole a brankář, 3 × 15 minut. Základní část
+jde od listopadu do března, po ní play-off. Základní část i předkolo se hrají
+na hrubý čas, od čtvrtfinále na čistý — na to pozor při měření.`;
 
   const html = obalka(
     'Přihláška rozhodčího přijata',
     odstavec(`${oslov} díky za přihlášku mezi rozhodčí Floorball Stars Ligy. Projdeme ji a ozveme se ti.`)
     + odstavec('<strong>Nic neplatíš</strong> — poplatky se rozhodčích netýkají. Bankovní spojení a údaje na smlouvu budeme řešit až po schválení.')
-    + odstavec('Hraje se v Praze od listopadu do března, pět hráčů do pole a brankář, 3 × 15 minut hrubého času.'),
+    + odstavec('Hraje se v Praze, pět hráčů do pole a brankář, 3 × 15 minut. Základní část jde od listopadu do března, po ní play-off. Základní část i předkolo se hrají na hrubý čas, od čtvrtfinále na čistý — na to pozor při měření.'),
   );
 
   return { subject: 'Přihláška rozhodčího přijata', text, html };
