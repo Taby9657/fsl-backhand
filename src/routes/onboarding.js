@@ -21,41 +21,13 @@ const router = express.Router();
 const prisma = require('../lib/prisma');
 const metaCapi = require('../utils/metaCapi');
 
-/** Slugy kroků, jak je zná `registrace/onboarding-client.tsx`. */
-const KROKY = [
-  'role', 'kod', 'jmeno', 'dres', 'doplnky', 'draft',
-  'tym', 'vzhled', 'ja', 'osobni', 'kontrola', 'hotovo',
-  // Ne krok, ale klik: viz ODKAZY níž.
-  'jak-funguje',
-];
-
-/**
- * Kliknutí, která se zapisují do téže tabulky, ale **nejsou krokem v cestě**.
- *
- * `jak-funguje` = odkaz „Nevíš, co vybrat? Jak liga funguje" na obrazovce
- * výběru role. Bez něj se o odchodu vědělo jen `odchod: 'jinam'`, což je
- * „odešel někam jinam na web" a nerozliší člověka, který si šel přečíst
- * formát soutěže, od člověka, který odešel pryč.
- *
- * Schválně to **nemá vlastní tabulku**: je to jeden protokolární řádek se
- * stejnou životností i stejnou (nulovou) osobní stopou jako kroky vedle něj.
- * Kdo sem přidá další odkaz, ať ho přidá i do `KROKY` a do `POSTUP` **ne** —
- * jinak se objeví v trychtýři jako krok, kterým není.
- */
-const ODKAZY = ['jak-funguje'];
-
-const ROLE = ['player', 'manager', 'referee'];
-
-/** Jak člověk krok opustil. Mimo tenhle seznam se nic neuloží. */
-const ODCHODY = ['klik', 'jinam', 'zavrel'];
-
-/** Pořadí kroků v trychtýři. Mimo tenhle seznam se nic neuloží. */
-const POSTUP = {
-  null:     ['role'],
-  player:   ['kod', 'jmeno', 'dres', 'doplnky', 'draft', 'hotovo'],
-  manager:  ['tym', 'vzhled', 'ja', 'hotovo'],
-  referee:  ['osobni', 'kontrola', 'hotovo'],
-};
+/* Seznamy platných kroků, rolí a odchodů — a taky samotný výpočet
+   trychtýře — žijí od 18. 9. 2026 v `services/trychtyr.js`. Potřebuje je
+   i status e-mail, který si backend posílá sám, a dvě kopie téhož výpočtu
+   by se při první úpravě rozešly. */
+const {
+  KROKY, ROLE, ODCHODY, spocitejTrychtyr,
+} = require('../services/trychtyr');
 
 /**
  * Strop na IP: 60 kroků za hodinu.
@@ -235,85 +207,7 @@ router.post('/meta-konverze', async (req, res) => {
  */
 router.get('/trychtyr', async (req, res, next) => {
   try {
-    const hodin = Math.min(Math.max(parseInt(req.query.hodin, 10) || 24, 1), 24 * 30);
-    const od = new Date(Date.now() - hodin * 60 * 60 * 1000);
-
-    const radky = await prisma.onboardingStep.groupBy({
-      by: ['role', 'krok'],
-      where: { createdAt: { gte: od } },
-      _count: { _all: true },
-    });
-
-    const pocet = (role, krok) => radky.find(
-      (r) => r.role === role && r.krok === krok,
-    )?._count?._all ?? 0;
-
-    /* Časy na krocích. Bere se to jedním dotazem a počítá v paměti: řádků je
-       řádově stovky za den a medián `groupBy` neumí. */
-    const merene = await prisma.onboardingStep.findMany({
-      where: { createdAt: { gte: od }, sekundy: { not: null } },
-      select: { role: true, krok: true, sekundy: true, scroll: true, odchod: true },
-    });
-
-    const median = (cisla) => {
-      if (!cisla.length) return null;
-      const s = [...cisla].sort((a, b) => a - b);
-      const p = Math.floor(s.length / 2);
-      return s.length % 2 ? s[p] : Math.round((s[p - 1] + s[p]) / 2);
-    };
-
-    /**
-     * Hranice 3 a 10 sekund nejsou nastavené od oka: do tří sekund člověk
-     * obrazovku nepřečte, takže je to nechtěný proklik; nad deset už četl
-     * a rozhodl se odejít. Mezi tím je šedá zóna, která se schválně nevykazuje
-     * jako ani jedno.
-     */
-    const casy = (role, krok) => {
-      const radky = merene.filter((r) => r.role === role && r.krok === krok);
-      if (!radky.length) return null;
-      const sekundy = radky.map((r) => r.sekundy);
-      const odchody = { klik: 0, jinam: 0, zavrel: 0, nevime: 0 };
-      for (const r of radky) odchody[r.odchod ?? 'nevime'] += 1;
-      return {
-        mereno: radky.length,
-        median: median(sekundy),
-        do3s: sekundy.filter((x) => x <= 3).length,
-        nad10s: sekundy.filter((x) => x > 10).length,
-        medianScroll: median(radky.map((r) => r.scroll).filter((x) => x !== null)),
-        odchody,
-      };
-    };
-
-    const trychtyr = {};
-    for (const [role, kroky] of Object.entries(POSTUP)) {
-      const klic = role === 'null' ? 'vyberRole' : role;
-      const r = role === 'null' ? null : role;
-      trychtyr[klic] = kroky.map((krok) => ({
-        krok,
-        navstev: pocet(r, krok),
-        casy: casy(r, krok),
-      }));
-    }
-
-    /* Kliky na odkazy se do počtu průchodů nezapočítávají. Dneska by to
-       vyšlo nastejno — na „Jak liga funguje" se dá kliknout jedině
-       z obrazovky výběru role, kde tentýž průchod už řádek `role` má —
-       ale platí to jen do chvíle, než tenhle způsob měření někdo použije
-       na stránce mimo přihlášku. Pak by `navstev` tiše narostlo a status
-       e-mail by hlásil průchody přihláškou, které se nestaly. */
-    const navstev = await prisma.onboardingStep.findMany({
-      where: { createdAt: { gte: od }, krok: { notIn: ODKAZY } },
-      distinct: ['navsteva'],
-      select: { navsteva: true },
-    });
-
-    /* Odkazy stojí vedle trychtýře, ne v něm: jsou to kliky, ne kroky, a
-       kdyby se přimíchaly mezi kroky, četly by se jako místo v cestě. */
-    const odkazy = Object.fromEntries(
-      ODKAZY.map((krok) => [krok, pocet(null, krok)]),
-    );
-
-    res.json({ od, hodin, navstev: navstev.length, trychtyr, odkazy });
+    res.json(await spocitejTrychtyr(req.query.hodin));
   } catch (err) {
     next(err);
   }

@@ -356,4 +356,32 @@ if (process.env.NODE_ENV === 'production') {
   }, 3 * 60 * 1000);
 }
 
+// ==================== STATUS NÁBORU ====================
+// E-mail majiteli v 8:00, 14:00 a 20:00 pražského času. Do 18. 9. 2026 ho
+// skládal naplánovaný běh asistenta v cloudu a **dvakrát za dva dny přišel
+// prázdný** — jednou se úloha nespustila, podruhé si nástroj na stahování
+// vyžádal schválení adresy, které v běhu bez člověka nemá kdo potvrdit.
+//
+// **Interval budíku není frekvence psaní.** Kouká se každých pět minut,
+// ale odešle se nejvýš jednou za slot — rozhoduje o tom `jeCasPoslat()`
+// proti `Settings.statusNaboruPoslanoAt`, tedy proti databázi, ne proti
+// paměti procesu: po restartu by se z paměti zapomnělo, že status už šel.
+const STATUS_INTERVAL_MS = 5 * 60 * 1000;
+
+async function runStatusNaboru() {
+  try {
+    const { posliStatusNaboru } = require('./src/services/statusNaboru');
+    await posliStatusNaboru();
+  } catch (err) {
+    console.error('[Status] Chyba:', err.message);
+  }
+}
+
+// Dvě minuty po startu, ať se to nepotká s migracemi a prvním připojením
+// k databázi. Zmeškaný slot se tím neztratí — okno je celá hodina.
+setTimeout(() => {
+  runStatusNaboru();
+  setInterval(runStatusNaboru, STATUS_INTERVAL_MS);
+}, 2 * 60 * 1000);
+
 start();

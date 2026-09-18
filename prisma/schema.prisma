@@ -582,6 +582,13 @@ model Settings {
   bankSyncLastError   String?
   /// Kolikrát po sobě párování selhalo. Nula = poslední běh prošel.
   bankSyncFailStreak  Int       @default(0)
+
+  /// Kdy naposledy odešel status náboru (8:00 / 14:00 / 20:00).
+  ///
+  /// Drží se v databázi, ne v paměti procesu: restart Railway je běžná věc
+  /// a v paměti by se zapomnělo, že status už šel — majiteli by chodily dva
+  /// stejné e-maily za sebou. Viz `services/statusNaboru.js`.
+  statusNaboruPoslanoAt DateTime?
 }
 
 /// Soupiska týmu na sezónu — kdo za tým smí nastupovat.
