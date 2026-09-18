@@ -536,6 +536,93 @@ ${zaver}`;
 }
 
 /**
+ * Liga hráči složila tým — informativní zpráva před telefonátem.
+ *
+ * **Nic nechce a na nic neodkazuje.** Celá domluva proběhne telefonem, e-mail
+ * jen připraví půdu, aby hovor nepřišel z čistého nebe. Proto tu není tlačítko
+ * do plateb ani odkaz na košík: kdo by zaplatil hned, připraví se o hovor,
+ * ve kterém se řeší i to, jestli mu termíny sedí.
+ *
+ * Dvě verze podle postu. Věta o nedostatku brankářů se čte opačně podle toho,
+ * kdo ji dostane — hráč do pole v ní slyší „liga nemá gólmany", brankář
+ * „jsem žádaný". Proto ji verze pro pole neobsahuje vůbec.
+ *
+ * **Nikde se nesmí objevit, že je tým poskládaný z jednotlivců** — do losu
+ * 2. 11. 2026 to je obchodní informace, viz `fsl-otevreny-tym-zalozeni`.
+ * Formulace je „tým vedený přímo ligou (virtuální vedoucí)".
+ */
+function nabidkaTymuMail({
+  jmeno, brankar = false, castka = 500, standardni = 800,
+  denHovoru = 'v pondělí 21. 9.',
+}) {
+  const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
+
+  const uvod = 'do FSL ses přihlásil sám, bez týmu. Máme pro tebe dobrou zprávu: '
+    + 'tým jsme ti našli.';
+  const jakToChodi = 'Je to tým vedený přímo ligou (virtuální vedoucí) — sestavu '
+    + 'na zápasy skládáme my, ty se jen přihlásíš na termíny, které ti sedí. Halu, '
+    + 'rozhodčí, pořadatelskou službu i zdravotnický dozor zajišťuje liga, nic '
+    + 'z toho neřešíš.';
+
+  // Hráč do pole dostane čísla kádru, brankář místo nich důvod, proč je vzácný.
+  const post = brankar
+    ? 'Brankář je pozice, o kterou je v amatérském florbale největší nouze — '
+      + 'na každý tým jsou potřeba dva a shánějí se hůř než kdokoli jiný. '
+      + 'Tvoje místo v týmu je tím pádem jisté.'
+    : 'Tým bude mít kádr 18 hráčů do pole a 2 brankáře. Podle docházky se na '
+      + 'zápas reálně sejde zhruba 13 + 1, takže o hraní nouze nebude.';
+
+  const cena = `Protože jde o první tým tohoto typu v sezóně, máš vstup za ${castka} Kč `
+    + `místo standardních ${standardni} Kč.`;
+  const hovor = `Teď od tebe nic nepotřebujeme. Zavoláme ti ${denHovoru} a všechno `
+    + 'si v klidu projdeme — jaký tým to je, jak to bude vypadat a co bude dál. '
+    + 'Zabere to pár minut.';
+  const nahradni = 'Kdyby ti termín nevyšel nebo ti víc sedí jiný čas, stačí '
+    + 'odepsat na tenhle e-mail a zavoláme, kdy ti to vyhovuje.';
+  const patka = 'Sezóna 2026/27 startuje 9. 11., hraje se pondělí až čtvrtek '
+    + 'večer v Praze.';
+
+  const predmet = brankar
+    ? 'Máme pro tebe tým — a brankáře sháníme nejvíc'
+    : 'Máme pro tebe tým — ozveme se ti telefonem';
+
+  const text =
+`${oslov}
+
+${uvod}
+
+${jakToChodi}
+
+${post}
+
+${cena}
+
+${hovor}
+
+${nahradni}
+
+${patka}
+
+Jakub z FSL
+${supervisorAddress()}`;
+
+  const html = obalka(
+    'Máme pro tebe tým',
+    odstavec(`${oslov} ${uvod}`)
+    + odstavec(jakToChodi)
+    + odstavec(post)
+    + ramecek(`<strong>Vstup za ${castka} Kč</strong> místo standardních ${standardni} Kč — `
+      + 'protože jde o první tým tohoto typu v sezóně.')
+    + odstavec(hovor)
+    + odstavec(nahradni)
+    + odstavec(patka)
+    + odstavec(`Jakub z FSL<br>${supervisorAddress()}`),
+  );
+
+  return { subject: predmet, text, html };
+}
+
+/**
  * Odeslání, které nesmí položit to, kvůli čemu se volá.
  *
  * Registrace se nesmí rozbít proto, že Resend zrovna neodpovídá — člověk
@@ -567,4 +654,5 @@ module.exports = {
   platbaPrijataMail,
   upominkaPlatbaMail,
   nabidkaVstupuMail,
+  nabidkaTymuMail,
 };

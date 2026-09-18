@@ -8,15 +8,17 @@ const { stavParovani } = require('../services/bankSync');
 const { KATEGORIE } = require('./requests');
 const {
   sendMail,
+  posliBezpecne,
   supervisorAddress,
   odpovedNaZpravuMail,
+  nabidkaTymuMail,
 } = require('../services/mailer');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
 const licence = require('../services/licence');
 const draftPool = require('../services/draftPool');
-const { slotZPostu } = require('../utils/posty');
+const { slotZPostu, jeBrankar } = require('../utils/posty');
 const { uploadLogo } = require('../utils/fileUpload');
 
 // Všechny endpointy v tomto souboru vyžadují supervisor roli
@@ -1431,6 +1433,95 @@ router.post('/notify', async (req, res, next) => {
     const items = userIds.map(userId => ({ userId, title, body, screen: screen || null }));
     await createNotifications(items);
     res.json({ sent: items.length });
+  } catch (err) { next(err); }
+});
+
+// ==================== NABÍDKA TÝMU HRÁČŮM BEZ TÝMU ====================
+
+/**
+ * Rozešle informativní e-mail "liga ti složila tým" hráčům bez týmu.
+ *
+ * **Výchozí chování je náhled, ne odeslání.** Bez `poslat: true` endpoint
+ * jen vrátí, komu by zpráva šla — rozeslání na desítky lidí se nedá vzít
+ * zpět a seznam si musí člověk napřed přečíst.
+ *
+ * Komu už odešla, poznáme podle `Player.teamOfferMailAt`, takže druhé
+ * spuštění doplní jen nové lidi. Brankáři dostanou jinou verzi textu;
+ * post se bere z draftu, teprve pak z profilu — v draftu ho člověk vyplňoval
+ * vědomě, `Player.position` má výchozí hodnotu "Útočník".
+ */
+router.post('/nabidka-tymu', async (req, res, next) => {
+  try {
+    const {
+      poslat = false, castka = 500, standardni = 800,
+      denHovoru = 'v pondělí 21. 9.', limit = 200, playerIds,
+    } = req.body ?? {};
+
+    const hraci = await prisma.player.findMany({
+      where: {
+        teamId:          null,
+        teamOfferMailAt: null,
+        userId:          { not: null },
+        ...(playerIds?.length ? { id: { in: playerIds } } : {}),
+      },
+      select: {
+        id: true, firstName: true, lastName: true, position: true,
+        user:         { select: { email: true } },
+        draftProfile: { select: { position: true } },
+      },
+      orderBy: { createdAt: 'asc' },
+      take:    Math.min(Number(limit) || 200, 500),
+    });
+
+    const prijemci = hraci
+      .filter((h) => h.user?.email)
+      .map((h) => ({
+        id:      h.id,
+        jmeno:   h.firstName,
+        email:   h.user.email,
+        brankar: jeBrankar(h.draftProfile?.position ?? h.position),
+      }));
+
+    const bezMailu = hraci.length - prijemci.length;
+
+    if (!poslat) {
+      return res.json({
+        nahled:    true,
+        celkem:    prijemci.length,
+        brankaru:  prijemci.filter((p) => p.brankar).length,
+        doPole:    prijemci.filter((p) => !p.brankar).length,
+        bezMailu,
+        prijemci,
+      });
+    }
+
+    let odeslano = 0;
+    const selhalo = [];
+
+    for (const p of prijemci) {
+      const zprava = nabidkaTymuMail({
+        jmeno: p.jmeno, brankar: p.brankar, castka, standardni, denHovoru,
+      });
+      const vysledek = await posliBezpecne(
+        p.email,
+        { ...zprava, replyTo: supervisorAddress() },
+        'nabidka-tymu',
+      );
+
+      // Zapisujeme jen po úspěchu — komu se e-mail neodeslal, ten musí zůstat
+      // ve frontě pro další běh, jinak o něj tiše přijdeme.
+      if (vysledek.ok) {
+        await prisma.player.update({
+          where: { id: p.id },
+          data:  { teamOfferMailAt: new Date() },
+        });
+        odeslano += 1;
+      } else {
+        selhalo.push({ email: p.email, duvod: vysledek.reason });
+      }
+    }
+
+    res.json({ nahled: false, odeslano, selhalo, bezMailu });
   } catch (err) { next(err); }
 });
 
