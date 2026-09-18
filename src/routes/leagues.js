@@ -11,6 +11,7 @@
 
 const express = require('express');
 const { requireSupervisor, optionalAuth, isSupervisorUser } = require('../middleware/auth');
+const { sezonaZacala } = require('../utils/sezona');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -82,6 +83,10 @@ router.get('/teams', optionalAuth, async (req, res, next) => {
   try {
     const season = req.query.season || await aktualniSezona();
     const jeSupervisor = isSupervisorUser(req.user);
+
+    // Do startu sezóny jsou účastníci neveřejní — tahle routa je druhý způsob,
+    // jak se k seznamu týmů dostat (viz `routes/teams.js`).
+    if (!sezonaZacala() && !jeSupervisor) return res.json([]);
 
     // Jen týmy přihlášené do téhle sezóny — tým bez přihlášky do soutěže nepatří
     const prihlasky = await prisma.teamSeason.findMany({

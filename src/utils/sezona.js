@@ -27,6 +27,18 @@ const KONEC_PRIHLASEK = new Date('2026-11-01T23:59:59+01:00');
 const OTEVRENI_DRAFTU = new Date('2026-11-01T00:00:00+01:00');
 
 /**
+ * Start sezóny — do té doby je seznam účastníků neveřejný.
+ *
+ * Web od 18. 9. 2026 stránku `/tymy` schovává, jenže to je zámek v UI:
+ * endpoint `/teams` vracel seznam i s divizí komukoliv, kdo znal adresu API.
+ * Utajení musí umět backend, jinak je to jen zábrana proti náhodnému
+ * návštěvníkovi a proti Googlu.
+ *
+ * **Kdo mění tohle datum, mění ho i v `fsl-web/src/lib/sezona.ts`** (SEZONA.start).
+ */
+const START_SEZONY = new Date('2026-11-09T00:00:00+01:00');
+
+/**
  * Datum bez roku: „1. 11."
  *
  * Formátuje se **natvrdo v pražském pásmu**, ne lokálními gettery. Railway
@@ -50,4 +62,18 @@ function draftOtevren(ted = new Date()) {
   return ted.getTime() >= OTEVRENI_DRAFTU.getTime();
 }
 
-module.exports = { KONEC_PRIHLASEK, OTEVRENI_DRAFTU, den, draftOtevren };
+/**
+ * Začala sezóna? Do té doby jsou účastníci (týmy i hráči) neveřejní.
+ *
+ * Pravidlo, které z toho plyne pro routy: **týmy vidí jen supervisor**
+ * (a lidé z toho týmu svůj vlastní), **hráče vidí jen přihlášený** — vedoucí
+ * musí umět složit soupisku a hráče k tomu potřebuje najít.
+ */
+function sezonaZacala(ted = new Date()) {
+  return ted.getTime() >= START_SEZONY.getTime();
+}
+
+module.exports = {
+  KONEC_PRIHLASEK, OTEVRENI_DRAFTU, START_SEZONY,
+  den, draftOtevren, sezonaZacala,
+};

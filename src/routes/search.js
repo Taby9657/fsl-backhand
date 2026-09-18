@@ -1,16 +1,26 @@
 const express = require('express');
 
+const { optionalAuth, isSupervisorUser } = require('../middleware/auth');
+const { sezonaZacala } = require('../utils/sezona');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
 
 // GET /search?q=xxx – globální vyhledávání hráčů, týmů, rozhodčích
-router.get('/', async (req, res, next) => {
+router.get('/', optionalAuth, async (req, res, next) => {
   try {
     const { q = '' } = req.query;
     const term = q.trim();
 
     if (term.length < 2) return res.json({ players: [], teams: [], referees: [] });
+
+    // Vyhledávání je druhá cesta k témuž: dotaz na jedno písmeno vrátí
+    // prakticky celý seznam. Do startu sezóny tedy platí stejné pravidlo —
+    // nepřihlášený nedostane nic, týmy jen supervisor.
+    const zacala = sezonaZacala();
+    const jeSupervisor = isSupervisorUser(req.user);
+    if (!zacala && !req.user) return res.json({ players: [], teams: [], referees: [] });
+    const tymyVen = zacala || jeSupervisor;
 
     const words = term.trim().split(/\s+/);
 
@@ -45,17 +55,19 @@ router.get('/', async (req, res, next) => {
         orderBy: [{ lastName: 'asc' }],
       }),
 
-      prisma.team.findMany({
-        where: {
-          OR: [
-            { name: { contains: term, mode: 'insensitive' } },
-            { abbr: { contains: term, mode: 'insensitive' } },
-          ],
-        },
-        select: { id: true, name: true, abbr: true, color: true, division: true },
-        take: 8,
-        orderBy: { name: 'asc' },
-      }),
+      tymyVen
+        ? prisma.team.findMany({
+            where: {
+              OR: [
+                { name: { contains: term, mode: 'insensitive' } },
+                { abbr: { contains: term, mode: 'insensitive' } },
+              ],
+            },
+            select: { id: true, name: true, abbr: true, color: true, division: true },
+            take: 8,
+            orderBy: { name: 'asc' },
+          })
+        : [],
 
       prisma.referee.findMany({
         where: {

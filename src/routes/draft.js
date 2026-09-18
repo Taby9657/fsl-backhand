@@ -1,6 +1,7 @@
 const express = require('express');
 
-const { requireAuth, optionalAuth } = require('../middleware/auth');
+const { requireAuth, optionalAuth, isSupervisorUser } = require('../middleware/auth');
+const { draftOtevren } = require('../utils/sezona');
 const { uploadDraftVideo, cloudinary } = require('../utils/fileUpload');
 const { createNotification, createNotifications } = require('./notifications');
 
@@ -127,6 +128,12 @@ async function processExpiredWindows() {
 // ────────────────────────────────────────────────────────────
 router.get('/', optionalAuth, async (req, res, next) => {
   try {
+    // Zámek draftu byl do 18. 9. 2026 jen ve webu a v `lib/sezona.ts` to bylo
+    // napsané jako známá slabina: endpoint zůstával veřejný, takže kdo ho
+    // znal, seznam volných hráčů si vytáhl a mohl je rozebírat dřív, než je
+    // jasné, kdo do soutěže nastoupí. Teď drží i tady.
+    if (!draftOtevren() && !isSupervisorUser(req.user)) return res.json([]);
+
     const isManager = (req.user?.manager ?? []).length > 0;
 
     const profiles = await prisma.draftProfile.findMany({
@@ -329,6 +336,12 @@ router.get('/:playerId', optionalAuth, async (req, res, next) => {
       ? await prisma.player.findUnique({ where: { userId: req.user.id } })
       : null;
     const isOwnProfile  = !!myPlayer && myPlayer.id === req.params.playerId;
+
+    // Do otevření draftu vidí cizí kartu jen supervisor — jinak by schovaný
+    // seznam obešel přímý odkaz. Svůj vlastní profil vidí hráč vždycky.
+    if (!draftOtevren() && !isOwnProfile && !isSupervisorUser(req.user)) {
+      return res.status(404).json({ error: 'Profil nenalezen' });
+    }
 
     const profile = await prisma.draftProfile.findUnique({
       where: { playerId: req.params.playerId },

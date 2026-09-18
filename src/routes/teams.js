@@ -5,6 +5,7 @@ const { createNotification } = require('./notifications');
 const { uploadLogo } = require('../utils/fileUpload');
 const { verejnyHrac, verejnyZaznamTymu, VEREJNY_TYM } = require('../utils/verejneUdaje');
 const { slotZPostu, porovnejNaSoupisce } = require('../utils/posty');
+const { sezonaZacala } = require('../utils/sezona');
 const { v4: uuidv4 } = require('uuid');
 
 const router = express.Router();
@@ -25,6 +26,11 @@ const kredit = require('../services/kredit');
 router.get('/', optionalAuth, async (req, res, next) => {
   try {
     const jeSupervisor = isSupervisorUser(req.user);
+
+    // Do startu sezóny je seznam účastníků neveřejný a nedostane ho ani
+    // přihlášený uživatel — jen supervisor. Viz `utils/sezona.js`.
+    if (!sezonaZacala() && !jeSupervisor) return res.json([]);
+
     const teams = await prisma.team.findMany({
       ...(jeSupervisor
         ? { include: { _count: { select: { players: true } } } }
@@ -41,6 +47,10 @@ router.get('/', optionalAuth, async (req, res, next) => {
 // ven jdou názvy, ne počty — kolik týmů v divizi je, patří supervisorovi.
 router.get('/divisions', optionalAuth, async (req, res, next) => {
   try {
+    // Číselník divizí prozrazuje, kolik a jakých skupin liga má — do startu
+    // sezóny tedy ven nejde, stejně jako seznam týmů.
+    if (!sezonaZacala() && !isSupervisorUser(req.user)) return res.json([]);
+
     const divisions = await prisma.team.groupBy({
       by: ['division', 'conference'],
       _count: { division: true },
@@ -66,6 +76,20 @@ function verejnyTym(team) {
   };
 }
 
+/**
+ * Smí volající vůbec vědět, že tenhle tým existuje?
+ *
+ * Do startu sezóny ne — kromě supervisora a lidí z toho týmu. Bez tohohle by
+ * schovaný seznam obešel přímý odkaz na `/teams/<id>` i se soupiskou.
+ */
+function smiVidetTym(user, teamId) {
+  if (sezonaZacala()) return true;
+  if (!user) return false;
+  if (isSupervisorUser(user)) return true;
+  if ((user.manager ?? []).some(m => m.teamId === teamId)) return true;
+  return user.player?.teamId === teamId;
+}
+
 /** Vedoucí daného týmu nebo supervisor — jen ti smí vidět plný detail. */
 function vidiDetaily(user, teamId) {
   if (!user) return false;
@@ -78,6 +102,12 @@ function vidiDetaily(user, teamId) {
 // vedoucí týmu a supervisor i platby a kontakty.
 router.get('/:id', optionalAuth, async (req, res, next) => {
   try {
+    // Stejná odpověď jako u neexistujícího týmu — ať se z ní nedá vyčíst,
+    // že tým existuje.
+    if (!smiVidetTym(req.user, req.params.id)) {
+      return res.status(404).json({ error: 'Tým nenalezen' });
+    }
+
     const team = await prisma.team.findUnique({
       where: { id: req.params.id },
       include: {

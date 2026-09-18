@@ -4,6 +4,7 @@ const { requireAuth, optionalAuth, isSupervisorUser } = require('../middleware/a
 const { uploadPhoto } = require('../utils/fileUpload');
 const { verejnyHrac } = require('../utils/verejneUdaje');
 const vekSvc = require('../utils/vek');
+const { sezonaZacala } = require('../utils/sezona');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
@@ -116,9 +117,15 @@ function vidiOsobniUdaje(user, player) {
   return player.teamId ? (user.manager ?? []).some(m => m.teamId === player.teamId) : false;
 }
 
-// GET /players – seznam všech hráčů (veřejné)
-router.get('/', async (req, res, next) => {
+// GET /players – seznam všech hráčů
+//
+// Do startu sezóny ho nepřihlášený nedostane: než se liga rozlosuje, je to
+// prostě seznam lidí, kteří se přihlásili. Přihlášenému zůstává — vedoucí
+// potřebuje hráče najít, aby složil soupisku.
+router.get('/', optionalAuth, async (req, res, next) => {
   try {
+    if (!sezonaZacala() && !req.user) return res.json([]);
+
     const { teamId, licensed } = req.query;
     const players = await prisma.player.findMany({
       where: {
@@ -166,6 +173,12 @@ router.get('/my/stats', requireAuth, async (req, res, next) => {
 // hráč sám, vedoucí jeho týmu a supervisor.
 router.get('/:id', optionalAuth, async (req, res, next) => {
   try {
+    // Do startu sezóny platí totéž co pro seznam — a stejná odpověď jako
+    // u neexistujícího hráče, ať se z ní nedá nic vyčíst.
+    if (!sezonaZacala() && !req.user) {
+      return res.status(404).json({ error: 'Hráč nenalezen' });
+    }
+
     const player = await prisma.player.findUnique({
       where: { id: req.params.id },
       include: {
