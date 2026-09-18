@@ -80,6 +80,19 @@ function isSupervisorUser(user) {
   return ids.includes(user.id);
 }
 
+/**
+ * Týmy, ke kterým má uživatel vztah — vede je, nebo v nich hraje.
+ *
+ * Používá se tam, kde se něco ukazuje „jen pro svoje": do startu sezóny
+ * vidí vedoucí soupisku svého týmu, ne cizí. Viz `utils/sezona.js`.
+ */
+function mojeTymy(user) {
+  if (!user) return [];
+  const ids = (user.manager ?? []).map(m => m.teamId);
+  if (user.player?.teamId) ids.push(user.player.teamId);
+  return [...new Set(ids)];
+}
+
 async function requireSupervisor(req, res, next) {
   await requireAuth(req, res, async () => {
     if (!isSupervisorUser(req.user)) {
@@ -105,4 +118,4 @@ function issueToken(userId) {
   });
 }
 
-module.exports = { requireAuth, optionalAuth, requireSupervisor, requireManager, issueToken, isSupervisorUser };
+module.exports = { requireAuth, optionalAuth, requireSupervisor, requireManager, issueToken, isSupervisorUser, mojeTymy };

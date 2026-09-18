@@ -1,6 +1,6 @@
 const express = require('express');
 
-const { requireAuth, requireManager, optionalAuth, isSupervisorUser } = require('../middleware/auth');
+const { requireAuth, requireManager, optionalAuth, isSupervisorUser, mojeTymy } = require('../middleware/auth');
 const { createNotification } = require('./notifications');
 const { uploadLogo } = require('../utils/fileUpload');
 const { verejnyHrac, verejnyZaznamTymu, VEREJNY_TYM } = require('../utils/verejneUdaje');
@@ -86,8 +86,7 @@ function smiVidetTym(user, teamId) {
   if (sezonaZacala()) return true;
   if (!user) return false;
   if (isSupervisorUser(user)) return true;
-  if ((user.manager ?? []).some(m => m.teamId === teamId)) return true;
-  return user.player?.teamId === teamId;
+  return mojeTymy(user).includes(teamId);
 }
 
 /** Vedoucí daného týmu nebo supervisor — jen ti smí vidět plný detail. */

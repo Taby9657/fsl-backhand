@@ -1,6 +1,6 @@
 const express = require('express');
 
-const { optionalAuth, isSupervisorUser } = require('../middleware/auth');
+const { optionalAuth, isSupervisorUser, mojeTymy } = require('../middleware/auth');
 const { sezonaZacala } = require('../utils/sezona');
 
 const router = express.Router();
@@ -15,12 +15,21 @@ router.get('/', optionalAuth, async (req, res, next) => {
     if (term.length < 2) return res.json({ players: [], teams: [], referees: [] });
 
     // Vyhledávání je druhá cesta k témuž: dotaz na jedno písmeno vrátí
-    // prakticky celý seznam. Do startu sezóny tedy platí stejné pravidlo —
-    // nepřihlášený nedostane nic, týmy jen supervisor.
+    // prakticky celý seznam. Do startu sezóny tedy platí stejné pravidlo jako
+    // ve výpisech — týmy jen supervisor, hráči jen ze svého týmu.
+    // Rozhodčí se neomezují, ti mají vlastní veřejnou stránku.
     const zacala = sezonaZacala();
     const jeSupervisor = isSupervisorUser(req.user);
-    if (!zacala && !req.user) return res.json({ players: [], teams: [], referees: [] });
     const tymyVen = zacala || jeSupervisor;
+    const tymyUzivatele = mojeTymy(req.user);
+    const jaHrac = req.user?.player?.id;
+    const omezeniHracu = tymyVen
+      ? null
+      : { OR: [
+          ...(tymyUzivatele.length ? [{ teamId: { in: tymyUzivatele } }] : []),
+          ...(jaHrac ? [{ id: jaHrac }] : []),
+          ...(tymyUzivatele.length || jaHrac ? [] : [{ id: { in: [] } }]),
+        ]};
 
     const words = term.trim().split(/\s+/);
 
@@ -45,7 +54,9 @@ router.get('/', optionalAuth, async (req, res, next) => {
 
     const [players, teams, referees] = await Promise.all([
       prisma.player.findMany({
-        where: playerWhere(words),
+        where: omezeniHracu
+          ? { AND: [playerWhere(words), omezeniHracu] }
+          : playerWhere(words),
         select: {
           id: true, firstName: true, lastName: true,
           jersey: true, position: true, photoUrl: true,
