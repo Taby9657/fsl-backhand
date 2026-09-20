@@ -357,7 +357,8 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 // ==================== STATUS NÁBORU ====================
-// E-mail majiteli v 8:00, 14:00 a 20:00 pražského času. Do 18. 9. 2026 ho
+// E-mail majiteli každé dvě hodiny od 8:00 do 22:00 pražského času;
+// v 8:00 a ve 20:00 plný report, jinak jen změna od posledně. Do 18. 9. 2026 ho
 // skládal naplánovaný běh asistenta v cloudu a **dvakrát za dva dny přišel
 // prázdný** — jednou se úloha nespustila, podruhé si nástroj na stahování
 // vyžádal schválení adresy, které v běhu bez člověka nemá kdo potvrdit.

@@ -47,6 +47,32 @@ const POSTUP = {
  */
 const ODKAZY = ['jak-funguje'];
 
+/**
+ * Karty na obrazovce výběru role a podle čeho se pozná, že na ně někdo
+ * klikl.
+ *
+ * Role sama nestačí: **dvě ze čtyř karet vedou na roli `player`** — „Nemám
+ * tým" (hráč se nabídne v draftu) a „Mám kód od vedoucího" (naskočí rovnou
+ * na soupisku). V trychtýři se obě slévaly do jednoho čísla, takže nešlo
+ * poznat, která nabídka lidi zajímá.
+ *
+ * Rozliší je vstupní krok a příznak `bezTymu`:
+ *
+ * - `kod`   → přišel s kódem; na tuhle kartu se klikne jen odsud;
+ * - `jmeno` + `bezTymu: true` → karta „Nemám tým". Hráč s kódem projde
+ *   `jmeno` taky, ale s `bezTymu: false`, takže se sem nepočítá;
+ * - `tym`, `osobni` → vedoucí a rozhodčí, každý má svou cestu sám pro sebe.
+ *
+ * Názvy sedí s `registrace/role-karty.tsx`. Kdo přejmenuje kartu na webu,
+ * ať to přepíše i tady, jinak bude report mluvit o kartě, která neexistuje.
+ */
+const KARTY = [
+  { klic: 'nemam-tym', nazev: 'Nemám tým', role: 'player', krok: 'jmeno', bezTymu: true },
+  { klic: 'mam-kod', nazev: 'Mám kód od vedoucího', role: 'player', krok: 'kod', bezTymu: null },
+  { klic: 'vedouci', nazev: 'Jsem vedoucí týmu', role: 'manager', krok: 'tym', bezTymu: null },
+  { klic: 'rozhodci', nazev: 'Chci být rozhodčí', role: 'referee', krok: 'osobni', bezTymu: null },
+];
+
 function median(cisla) {
   if (!cisla.length) return null;
   const s = [...cisla].sort((a, b) => a - b);
@@ -132,7 +158,28 @@ async function spocitejTrychtyr(hodin = 24) {
     ODKAZY.map((krok) => [krok, pocet(null, krok)]),
   );
 
-  return { od, hodin: h, navstev: navstev.length, trychtyr, odkazy };
+  /* Na kterou kartu se kliklo. Zvlášť dotazem, protože jako jediné potřebuje
+     rozlišit `bezTymu` — kdyby se o něj rozšířil hlavní `groupBy`, rozpadly
+     by se tím všechny kroky na dvojice řádků. */
+  const vstupy = await prisma.onboardingStep.groupBy({
+    by: ['role', 'krok', 'bezTymu'],
+    where: {
+      createdAt: { gte: od },
+      OR: KARTY.map(({ role, krok }) => ({ role, krok })),
+    },
+    _count: { _all: true },
+  });
+
+  const karty = KARTY.map((k) => ({
+    klic: k.klic,
+    nazev: k.nazev,
+    pocet: vstupy
+      .filter((r) => r.role === k.role && r.krok === k.krok
+        && (k.bezTymu === null || r.bezTymu === k.bezTymu))
+      .reduce((a, r) => a + r._count._all, 0),
+  }));
+
+  return { od, hodin: h, navstev: navstev.length, trychtyr, odkazy, karty };
 }
 
-module.exports = { KROKY, ROLE, ODCHODY, POSTUP, ODKAZY, median, spocitejTrychtyr };
+module.exports = { KROKY, ROLE, ODCHODY, POSTUP, ODKAZY, KARTY, median, spocitejTrychtyr };

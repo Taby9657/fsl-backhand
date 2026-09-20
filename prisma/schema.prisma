@@ -583,12 +583,22 @@ model Settings {
   /// Kolikrát po sobě párování selhalo. Nula = poslední běh prošel.
   bankSyncFailStreak  Int       @default(0)
 
-  /// Kdy naposledy odešel status náboru (8:00 / 14:00 / 20:00).
+  /// Kdy naposledy odešel status náboru (každé 2 h od 8:00 do 22:00).
   ///
   /// Drží se v databázi, ne v paměti procesu: restart Railway je běžná věc
   /// a v paměti by se zapomnělo, že status už šel — majiteli by chodily dva
-  /// stejné e-maily za sebou. Viz `services/statusNaboru.js`.
+  /// stejné e-maily za sebou. Slouží zároveň jako hranice pro krátký
+  /// report („co přibylo od posledně"). Viz `services/statusNaboru.js`.
   statusNaboruPoslanoAt DateTime?
+
+  /// Cíl registrací na jeden konkrétní den a den, na který platí
+  /// (`2026-09-20` v pražském čase).
+  ///
+  /// Stanoví se ve večerním reportu jako sedmidenní průměr + 20 %. Den se
+  /// ukládá spolu s číslem schválně: bez něj by nedotažený včerejší cíl
+  /// tiše platil dál a ráno by se proti němu měřil nový den.
+  statusNaboruCil    Int?
+  statusNaboruCilDen String?
 }
 
 /// Soupiska týmu na sezónu — kdo za tým smí nastupovat.
