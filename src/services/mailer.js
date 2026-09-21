@@ -626,6 +626,96 @@ ${supervisorAddress()}`;
 }
 
 /**
+ * Hráče zařadil do týmu někdo jiný než on sám.
+ *
+ * Chodí při každém zařazení, i při přesunu mezi týmy — je to jediné místo,
+ * kde se člověk dozví, co pro něj zařazení znamená za peníze. U otevřeného
+ * týmu je to vstupní balík, který mu zařazení rovnou vloží do košíku;
+ * u klubového týmu jen hráčská licence.
+ *
+ * `castka` je vždycky to, co se platí teď. Nula znamená, že je zaplaceno —
+ * a to se musí napsat, ne mlčet, jinak člověk hledá, kde má platit.
+ */
+function zarazeniDoTymuMail({
+  jmeno,
+  tym,
+  otevreny   = false,
+  castka     = 0,
+  licFee     = 300,
+  licVBaliku = true,
+  entryFee   = 500,
+}) {
+  const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
+  const starty = 'Zápasy se platí zvlášť balíčkem startů — od 200 Kč za jeden '
+    + 'po 3 000 Kč za dvacet, tedy 150 Kč za zápas. Kupuješ ho, až budeš vědět, '
+    + 'že hraješ.';
+
+  // Otevřený tým je tým vedený přímo ligou. Že je poskládaný z jednotlivců,
+  // se ven nepíše — e-mail se dá přeposlat dál.
+  const coJeOtevreny = 'Je to tým vedený přímo ligou — takzvaný virtuální '
+    + 'vedoucí. Nikdo nesvolává ani neshání halu, to dělá liga; sestavu na '
+    + 'zápas si skládají hráči sami, hraje ten, kdo se přihlásí.';
+
+  let jadroText;
+  let jadroHtml;
+
+  if (otevreny && castka > 0) {
+    const rozpis = licVBaliku
+      ? `V ceně je startovné ${entryFee} Kč a hráčská licence ${licFee} Kč.`
+      : `Hráčskou licenci máš zaplacenou, takže platíš jen startovné ${entryFee} Kč.`;
+    jadroText =
+`${coJeOtevreny}
+
+Do košíku jsme ti vložili vstupní balík Virtuální vedoucí za ${castka} Kč na
+sezónu. ${rozpis} Bez něj tě do sestavy postavit nemůžeme.
+
+Zaplatit jde kartou i převodem: ${WEB}/platby`;
+    jadroHtml = odstavec(coJeOtevreny)
+      + ramecek(`<strong>Virtuální vedoucí — ${castka} Kč</strong> na sezónu, už ti leží v košíku.<br>${rozpis}`)
+      + tlacitko('Zaplatit v košíku', '/platby');
+  } else if (otevreny) {
+    jadroText =
+`${coJeOtevreny}
+
+Vstupní balík máš zaplacený, takže teď neplatíš nic dalšího.`;
+    jadroHtml = odstavec(coJeOtevreny)
+      + ramecek('<strong>Vstupní balík máš zaplacený</strong> — teď neplatíš nic dalšího.');
+  } else if (castka > 0) {
+    jadroText =
+`Zbývá ti zaplatit hráčskou licenci ${castka} Kč na sezónu. Bez ní tě vedoucí
+nemůže postavit do sestavy.
+
+Zaplatit jde kartou i převodem: ${WEB}/platby`;
+    jadroHtml = ramecek(`<strong>Hráčská licence ${castka} Kč</strong> na sezónu. Bez ní tě vedoucí nemůže postavit do sestavy.`)
+      + tlacitko('Zaplatit licenci', '/platby');
+  } else {
+    jadroText = 'Hráčskou licenci máš zaplacenou, takže teď neplatíš nic dalšího.';
+    jadroHtml = ramecek('<strong>Hráčskou licenci máš zaplacenou</strong> — teď neplatíš nic dalšího.');
+  }
+
+  const text =
+`${oslov}
+
+liga tě zařadila do týmu ${tym} a jsi na jeho soupisce.
+
+${jadroText}
+
+${starty}
+
+Když ti zařazení nesedí, napiš nám na ${supervisorAddress()} — dá se to vrátit.`;
+
+  const html = obalka(
+    `Jsi v týmu ${tym}`,
+    odstavec(`${oslov} liga tě zařadila do týmu <strong>${tym}</strong> a jsi na jeho soupisce.`)
+    + jadroHtml
+    + odstavec(starty)
+    + odstavec(`Když ti zařazení nesedí, napiš nám na <a href="mailto:${supervisorAddress()}" style="color:#8a6d2f">${supervisorAddress()}</a> — dá se to vrátit.`),
+  );
+
+  return { subject: `Jsi v týmu ${tym}`, text, html };
+}
+
+/**
  * Odeslání, které nesmí položit to, kvůli čemu se volá.
  *
  * Registrace se nesmí rozbít proto, že Resend zrovna neodpovídá — člověk
@@ -658,4 +748,5 @@ module.exports = {
   upominkaPlatbaMail,
   nabidkaVstupuMail,
   nabidkaTymuMail,
+  zarazeniDoTymuMail,
 };

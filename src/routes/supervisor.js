@@ -12,12 +12,14 @@ const {
   supervisorAddress,
   odpovedNaZpravuMail,
   nabidkaTymuMail,
+  zarazeniDoTymuMail,
 } = require('../services/mailer');
 
 const router = express.Router();
 const prisma = require('../lib/prisma');
 const licence = require('../services/licence');
 const draftPool = require('../services/draftPool');
+const kosik = require('../services/kosik');
 const { slotZPostu, jeBrankar } = require('../utils/posty');
 const { uploadLogo } = require('../utils/fileUpload');
 
@@ -717,10 +719,53 @@ router.put('/players/:id/team', async (req, res, next) => {
       })));
     }
 
+    // Zařazení do otevřeného týmu je zároveň vstup do soutěže. Položku
+    // „Virtuální vedoucí" musí do košíku položit ten, kdo zařazení dělá —
+    // hráč s týmem si ji sám přidat nemůže (`409 HAS_TEAM`), a bez ní by
+    // vstupní poplatek nikdo nikdy nezaplatil.
+    let balik = null;
+    if (tym.isOpen) {
+      try { balik = await kosik.vstupniBalik(hrac.id, sezonaTymu); }
+      catch (err) { console.error('[správa hráčů] Vstupní balík do košíku selhal:', err.message); }
+    }
+
+    // E-mail chodí při každém zařazení, i při přesunu mezi týmy: člověka do
+    // týmu posadil někdo jiný a tohle je jediné místo, kde se dozví, co ho
+    // to stojí. Přes `posliBezpecne`, aby spadlý Resend neshodil zařazení,
+    // které v databázi už proběhlo.
+    if (hrac.userId) {
+      const ucet = await prisma.user.findUnique({
+        where: { id: hrac.userId }, select: { email: true },
+      });
+      const platba = await prisma.playerPayment.findUnique({ where: { playerId: hrac.id } });
+      const licFee = platba?.licFee ?? 300;
+      const castka = tym.isOpen
+        ? (balik?.amount ?? 0)
+        : (platba?.licStatus === 'PAID' ? 0 : licFee);
+      await posliBezpecne(
+        ucet?.email,
+        zarazeniDoTymuMail({
+          jmeno:      hrac.firstName,
+          tym:        tym.name,
+          otevreny:   tym.isOpen,
+          castka,
+          licFee,
+          licVBaliku: balik?.licVBaliku ?? false,
+          entryFee:   kosik.STARTOVNE,
+        }),
+        'zařazení do týmu',
+      );
+    }
+
     const vysledek = await prisma.player.findUnique({
       where: { id: hrac.id }, select: HRAC_PRO_SPRAVU,
     });
-    res.json({ ...vysledek, season: sezonaTymu });
+    res.json({
+      ...vysledek,
+      season: sezonaTymu,
+      // Web ukazuje, co se stalo navíc: kolik hráči přibylo v košíku.
+      vstupniBalik: balik?.ok ? { amount: balik.amount, licVBaliku: balik.licVBaliku } : null,
+    });
   } catch (err) { next(err); }
 });
 

@@ -173,9 +173,10 @@ router.get('/me', requireAuth, async (req, res, next) => {
       teamPayment:   platbaTymuProSezonu(teamPayment, sezona),
       fines,
       openEntry,
-      // Balík se nabízí jen tomu, kdo tým nemá — vedoucí i kmenový hráč
-      // platí licenci.
-      openEntryOffer: !!player && !player.teamId && openEntry?.status !== 'PAID'
+      // Balík se nabízí tomu, kdo tým nemá, a hráči otevřeného týmu, kterému
+      // zařazení vstup teprve předepsalo — vedoucí i kmenový hráč klubového
+      // týmu platí licenci.
+      openEntryOffer: !!player && (!player.teamId || player.team?.isOpen) && openEntry?.status !== 'PAID'
         ? {
             amount: kosik.STARTOVNE + (player.payment?.licStatus === 'PAID'
               ? 0
@@ -536,13 +537,17 @@ async function pripravPolozku(req, sezona) {
 
     const hrac = await prisma.player.findUnique({
       where:  { id: cilovy },
-      select: { teamId: true, payment: true },
+      select: { teamId: true, payment: true, team: { select: { isOpen: true } } },
     });
     if (!hrac) return { error: 'Hráč nenalezen', code: 'NO_PLAYER', status: 404 };
 
-    // Balík je cesta do soutěže pro toho, kdo tým nemá. Kdo tým má, platí
-    // licenci — startovné by u něj bylo za nic.
-    if (hrac.teamId) {
+    // Balík je cesta do soutěže pro toho, kdo klubový tým nemá. Kdo ho má,
+    // platí licenci — startovné by u něj bylo za nic.
+    //
+    // **Hráč v otevřeném týmu je výjimka.** Zařazením do něj mu balík do
+    // košíku položí supervisor; kdyby si ho odtamtud vyhodil, musí mít jak
+    // se k němu vrátit — jinak by v týmu seděl bez zaplaceného vstupu.
+    if (hrac.teamId && !hrac.team?.isOpen) {
       return {
         error: 'Balík „Virtuální vedoucí" je pro hráče bez týmu. Máš tým, takže platíš jen licenci.',
         code:  'HAS_TEAM', status: 409,

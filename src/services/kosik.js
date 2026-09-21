@@ -111,6 +111,66 @@ async function pridej(userId, season, data, tx = prisma) {
   return { ok: true, item, cartId: cart.id };
 }
 
+/**
+ * Vstupní balík „Virtuální vedoucí" do košíku hráče, kterého do otevřeného
+ * týmu zařadil někdo jiný než on sám.
+ *
+ * Běžnou cestou (`POST /payments/cart/items`) si ho hráč s týmem přidat
+ * nemůže — vrací se `409 HAS_TEAM`. Zařazení do otevřeného týmu je ale
+ * právě ten vstup do soutěže, za který se balík platí, takže ho tam musí
+ * položit ten, kdo zařazení dělá.
+ *
+ * **Košík je hráčův, ne supervisorův** — platí ho ten, koho se týká.
+ *
+ * Licenci, kterou má hráč v košíku samostatně, tohle nevyhazuje: balík se
+ * v tom případě přidá jen jako startovné a licence se zaplatí vlastní
+ * položkou. Součet je stejný a z košíku nikomu nezmizí, co si tam dal sám.
+ */
+async function vstupniBalik(hracId, season, tx = prisma) {
+  if (!season) return { ok: false, code: 'NO_SEASON' };
+
+  const hrac = await tx.player.findUnique({
+    where:  { id: hracId },
+    select: { id: true, userId: true, payment: true },
+  });
+  if (!hrac)         return { ok: false, code: 'NO_PLAYER' };
+  // Hráč založený vedoucím přes pozvánku účet mít nemusí — pak není čí
+  // košík plnit a nemá to kam dojít ani e-mailem.
+  if (!hrac.userId)  return { ok: false, code: 'NO_ACCOUNT' };
+
+  const uz = await tx.openEntry.findUnique({
+    where: { playerId_season: { playerId: hracId, season } },
+  });
+  if (uz?.status === 'PAID') return { ok: false, code: 'ALREADY_PAID' };
+
+  const cart       = await zaloz(hrac.userId, season, tx);
+  const maLicenci  = hrac.payment?.licStatus === 'PAID';
+  const licFee     = hrac.payment?.licFee ?? 300;
+  const licVKosiku = (cart.items ?? []).some(
+    i => i.kind === 'PLAYER_LICENSE' && i.playerId === hracId,
+  );
+  const licVBaliku = !maLicenci && !licVKosiku;
+  const amount     = STARTOVNE + (licVBaliku ? licFee : 0);
+
+  const pridano = await pridej(
+    hrac.userId, season,
+    { kind: 'OPEN_ENTRY', playerId: hracId, amount, season },
+    tx,
+  );
+  if (!pridano.ok) {
+    // Balík už v košíku je. Cena se bere z položky, ne z dnešního ceníku —
+    // e-mail musí říct tu částku, kterou člověk v košíku doopravdy vidí.
+    return {
+      ok: false, code: pridano.code, item: pridano.item,
+      amount: pridano.item?.amount ?? amount,
+      licVBaliku: (pridano.item?.amount ?? amount) > STARTOVNE,
+      licFee,
+    };
+  }
+
+  return { ok: true, item: pridano.item, amount, licVBaliku, licFee };
+}
+
 /** Odebere položku z otevřeného košíku. Zaplacený košík se nemění. */
 async function odeber(userId, itemId, tx = prisma) {
   const item = await tx.cartItem.findUnique({
@@ -412,6 +472,6 @@ async function vrat(cartId) {
 }
 
 module.exports = {
-  STARTOVNE, JEDNOU, nazev, sklonuj, otevreny, zaloz, soucet, pridej, odeber,
+  STARTOVNE, JEDNOU, nazev, sklonuj, otevreny, zaloz, soucet, pridej, vstupniBalik, odeber,
   zauctuj, zauctujPolozku, vrat,
 };

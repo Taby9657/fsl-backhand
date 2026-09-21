@@ -115,6 +115,35 @@ function projdi(nazev, zprava) {
   ok(!/Virtuální vedoucí/.test(vTymu.text),
     'a balík se mu nenabízí — ten je pro toho, kdo tým nemá');
 
+  // --- 2b. zařazení do týmu supervisorem ---
+  const zarazenOtevreny = mailer.zarazeniDoTymuMail({
+    jmeno: 'Martin', tym: 'FSL Open A', otevreny: true, castka: 800, licVBaliku: true,
+  });
+  projdi('zařazení do otevřeného týmu', zarazenOtevreny);
+  ok(/FSL Open A/.test(zarazenOtevreny.subject) && /FSL Open A/.test(zarazenOtevreny.text),
+    'zařazení: zpráva jmenuje tým už v předmětu');
+  ok(/800 Kč/.test(zarazenOtevreny.text) && /košíku/.test(zarazenOtevreny.text),
+    'a říká rovnou, že balík za 800 Kč už leží v košíku — jinak ho nikdo nenajde');
+  ok(/startovné 500 Kč a hráčská licence 300 Kč/.test(zarazenOtevreny.text),
+    'a co je uvnitř, ať to nevypadá jako poplatek navíc k licenci');
+  ok(!/z jednotlivců|poskládan/i.test(zarazenOtevreny.text),
+    'ale neprozrazuje, že je tým poskládaný z jednotlivců — zpráva se dá přeposlat');
+
+  const zarazenSLicenci = mailer.zarazeniDoTymuMail({
+    jmeno: 'Martin', tym: 'FSL Open A', otevreny: true, castka: 500, licVBaliku: false,
+  });
+  ok(/500 Kč/.test(zarazenSLicenci.text) && !/800/.test(zarazenSLicenci.text),
+    'kdo licenci zaplatil, nevidí ve zprávě 800 Kč — platí jen startovné');
+
+  const zarazenKlub = mailer.zarazeniDoTymuMail({ jmeno: 'Jan', tym: 'Draci', castka: 300 });
+  projdi('zařazení do klubového týmu', zarazenKlub);
+  ok(/licenci 300 Kč/.test(zarazenKlub.text) && !/Virtuální vedoucí/.test(zarazenKlub.text),
+    'u klubového týmu se řeší jen licence, žádný balík');
+
+  const zarazenZaplaceno = mailer.zarazeniDoTymuMail({ jmeno: 'Jan', tym: 'Draci', castka: 0 });
+  ok(/neplatíš nic dalšího/.test(zarazenZaplaceno.text),
+    'a kdo má zaplaceno, se to dozví — mlčení posílá člověka hledat, kde má platit');
+
   // --- 3. vedoucí ---
   const vedouci = mailer.registraceVedouciMail({ jmeno: 'Petr', tym: 'Draci', kod: 'FSL-DR-1234' });
   projdi('vedoucí', vedouci);

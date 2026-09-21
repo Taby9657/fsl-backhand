@@ -30,6 +30,8 @@ function novaDb() {
       T1: { id: 'T1', name: 'Draci',     abbr: 'DRA', isOpen: false, regStatus: 'APPROVED' },
       T2: { id: 'T2', name: 'Zamítnutý', abbr: 'ZAM', isOpen: false, regStatus: 'REJECTED' },
       T3: { id: 'T3', name: 'Orli',      abbr: 'ORL', isOpen: false, regStatus: 'APPROVED' },
+      // Otevřený tým — zařazení do něj je zároveň vstup do soutěže.
+      T4: { id: 'T4', name: 'FSL Open A', abbr: 'OPA', isOpen: true, regStatus: 'APPROVED' },
     },
     soupisky: [{ playerId: 'P3', teamId: 'T1', season: '2026/27', slot: 'FIELD', isHome: true }],
     draftProfily: [
@@ -46,16 +48,21 @@ function novaDb() {
     ],
     // Předpisy licencí. P2 má zaplaceno — takového hráče smazat nejde.
     platby: [
-      { playerId: 'P1', licPaidAmount: 0,   superPaidAmount: 0 },
-      { playerId: 'P2', licPaidAmount: 300, superPaidAmount: 0 },
-      { playerId: 'P3', licPaidAmount: 0,   superPaidAmount: 0 },
-      { playerId: 'P4', licPaidAmount: 0,   superPaidAmount: 0 },
+      { playerId: 'P1', licFee: 300, licStatus: 'PENDING', licPaidAmount: 0,   superPaidAmount: 0 },
+      { playerId: 'P2', licFee: 300, licStatus: 'PAID',    licPaidAmount: 300, superPaidAmount: 0 },
+      { playerId: 'P3', licFee: 300, licStatus: 'PENDING', licPaidAmount: 0,   superPaidAmount: 0 },
+      { playerId: 'P4', licFee: 300, licStatus: 'PENDING', licPaidAmount: 0,   superPaidAmount: 0 },
     ],
     // Historie v zápasech — drží hráče před smazáním.
     starty_v_zapasech: [{ playerId: 'P3' }],
     // Kdo za který tým odehrál — řídí, jestli se smí soupiska zrušit.
     starty: new Map([['P3|T1', 2]]),
     oznameni: [],
+    // Košík hráče, vstupy do otevřených týmů a odeslaná pošta.
+    kosiky: [],
+    polozkyKosiku: [],
+    vstupy: [],
+    maily: [],
   };
 }
 
@@ -66,12 +73,15 @@ const dalsiId = (p) => `${p}${++idSeq}`;
 const fakePrisma = {
   $transaction: async (fn) => fn(fakePrisma),
   player: {
-    findUnique: async ({ where, include }) => {
+    // Vztahy se dotahují přes `include` i přes `select` — `vstupniBalik`
+    // si hráče bere selectem a bez tohohle by mu předpis licence chyběl.
+    findUnique: async ({ where, include, select }) => {
       const p = db.players.find(x => x.id === where.id) ?? null;
-      if (!p || !include) return p;
+      const vztahy = include ?? select;
+      if (!p || !vztahy) return p;
       const s = { ...p };
-      if (include.payment) s.payment = db.platby.find(x => x.playerId === p.id) ?? null;
-      if (include.user)    s.user    = db.users.find(u => u.id === p.userId) ?? null;
+      if (vztahy.payment) s.payment = db.platby.find(x => x.playerId === p.id) ?? null;
+      if (vztahy.user)    s.user    = db.users.find(u => u.id === p.userId) ?? null;
       return s;
     },
     delete: async ({ where }) => {
@@ -121,10 +131,37 @@ const fakePrisma = {
   },
   referee: { count: async () => 0 },
   user: {
+    findUnique: async ({ where }) => db.users.find(x => x.id === where.id) ?? null,
     delete: async ({ where }) => {
       const u = db.users.find(x => x.id === where.id);
       db.users = db.users.filter(x => x.id !== where.id);
       return u;
+    },
+  },
+  playerPayment: {
+    findUnique: async ({ where }) => db.platby.find(x => x.playerId === where.playerId) ?? null,
+  },
+  openEntry: {
+    findUnique: async ({ where }) => db.vstupy.find(v =>
+      v.playerId === where.playerId_season.playerId
+      && v.season === where.playerId_season.season) ?? null,
+  },
+  cart: {
+    findFirst: async ({ where }) => {
+      const c = db.kosiky.find(x => x.userId === where.userId && x.status === where.status);
+      return c ? { ...c, items: db.polozkyKosiku.filter(i => i.cartId === c.id) } : null;
+    },
+    create: async ({ data }) => {
+      const c = { id: dalsiId('C'), status: 'PENDING', ...data };
+      db.kosiky.push(c);
+      return c;
+    },
+  },
+  cartItem: {
+    create: async ({ data }) => {
+      const i = { id: dalsiId('CI'), ...data };
+      db.polozkyKosiku.push(i);
+      return i;
     },
   },
   matchEvent:    { count: async () => 0 },
@@ -206,7 +243,16 @@ Module._load = function (request) {
   if (request.endsWith('services/standings')) return {};
   if (request.endsWith('services/bankSync')) return { stavParovani: async () => ({ zdrave: true }) };
   if (request.endsWith('services/mailer')) {
-    return { sendMail: async () => {}, supervisorAddress: () => 'info@fsl.cz', odpovedNaZpravuMail: () => ({}) };
+    return {
+      sendMail: async () => {},
+      supervisorAddress: () => 'info@fsl.cz',
+      odpovedNaZpravuMail: () => ({}),
+      nabidkaTymuMail: () => ({ subject: '', text: '' }),
+      // Text se tady nerenderuje — testuje se, co do zprávy pošle routa.
+      // Jak vypadá, hlídá `test:maily`.
+      zarazeniDoTymuMail: (p) => ({ subject: `Jsi v týmu ${p.tym}`, text: '', parametry: p }),
+      posliBezpecne: async (to, zprava) => { db.maily.push({ to, ...zprava }); return { ok: true }; },
+    };
   }
   if (request.endsWith('middleware/auth')) {
     const pustDal = (req, res, next) => (req.user ? next() : res.status(401).json({ error: 'test: chybí uživatel' }));
@@ -281,6 +327,12 @@ const server = app.listen(0, async () => {
   ok(db.oznameni.some(o => o.userId === 'U9' && /Nový hráč/.test(o.title)),
     'vedoucí týmu taky');
 
+  const mailKlub = db.maily.find(m => m.to === 'volny@test.cz');
+  ok(mailKlub?.parametry.otevreny === false && mailKlub?.parametry.castka === 300,
+    'a přijde mu e-mail, že je v týmu, s licencí 300 Kč — oznámení v appce nestačí');
+  ok(db.polozkyKosiku.length === 0,
+    'u klubového týmu se do košíku nic nedává — platí se jen licence');
+
   // --- brankář si drží slot ---
   const brankar = await volej('/supervisor/players/P2/team', { teamId: 'T3', jersey: 1 });
   ok(brankar.status === 200, 'brankáře jde zařadit taky');
@@ -315,6 +367,30 @@ const server = app.listen(0, async () => {
   const odchodDoPoolu = await volej('/supervisor/players/P2/team', { teamId: null, doPoolu: true });
   ok(odchodDoPoolu.status === 200 && db.draftProfily.find(d => d.playerId === 'P2').isActive === true,
     'na výslovné přání se vrátí mezi volné hráče');
+
+  // --- otevřený tým: zařazení je zároveň vstup do soutěže ---
+  const doOtevreneho = await volej('/supervisor/players/P1/team', { teamId: 'T4', jersey: 17 });
+  ok(doOtevreneho.status === 200, 'do otevřeného týmu jde hráče zařadit taky');
+  const polozka = db.polozkyKosiku.find(i => i.playerId === 'P1' && i.kind === 'OPEN_ENTRY');
+  ok(polozka?.amount === 800,
+    'a rovnou mu do košíku spadne balík Virtuální vedoucí za 800 Kč — sám si ho přidat nemůže');
+  ok(db.kosiky.find(c => c.id === polozka?.cartId)?.userId === 'U1',
+    'košík je hráčův, ne supervisorův — platí ten, koho se poplatek týká');
+  ok(doOtevreneho.telo.vstupniBalik?.amount === 800, 'a odpověď to řekne i webu');
+  const mailOtevreny = db.maily.find(m => m.to === 'volny@test.cz' && m.parametry.otevreny);
+  ok(mailOtevreny?.parametry.castka === 800 && mailOtevreny?.parametry.licVBaliku === true,
+    'e-mail nese tu samou částku i to, že je v ní licence — jinak by ji člověk platil podruhé');
+
+  const znovu = await volej('/supervisor/players/P1/team', { teamId: 'T4', jersey: 18 });
+  ok(znovu.status === 200
+    && db.polozkyKosiku.filter(i => i.playerId === 'P1' && i.kind === 'OPEN_ENTRY').length === 1,
+    'opakované zařazení balík do košíku nepřidá podruhé');
+
+  const brankarDoOtevreneho = await volej('/supervisor/players/P2/team', { teamId: 'T4', jersey: 1 });
+  ok(brankarDoOtevreneho.telo.vstupniBalik?.amount === 500,
+    'kdo má licenci zaplacenou, platí jen startovné 500 Kč');
+  const mailBrankar = db.maily.find(m => m.to === 'brankar@test.cz' && m.parametry.otevreny);
+  ok(mailBrankar?.parametry.licVBaliku === false, 'a e-mail mu licenci neúčtuje podruhé');
 
   // --- odchod hráče, který už odehrál ---
   const sStarty = await volej('/supervisor/players/P3/team', { teamId: null });
