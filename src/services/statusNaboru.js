@@ -25,6 +25,17 @@
  * **Každá dokončená registrace jakékoli role** — hráč, vedoucí (tým) i
  * rozhodčí. Tak si to majitel nastavil 18. 9. 2026.
  *
+ * ── Celkový cíl ─────────────────────────────────────────────────────────
+ * Od 21. 9. 2026 má nábor **jeden celkový cíl k uzávěrce** místo dosavadní
+ * abstrakce „5 registrací denně": 250 hráčů do pole, 25 brankářů, 6 týmů
+ * a 10 rozhodčích. Majitel chce jako první věc v e-mailu vidět **jak
+ * daleko jsme**, ne tempo — proto je postup k cíli nahoře a zbytek pod
+ * čarou. Viz `CIL` níž.
+ *
+ * **Brankáři se počítají mimo těch 250**, ne z nich: gólman je úzké hrdlo
+ * celé ligy (bez dvou na tým se zápas nehraje), takže se sleduje zvlášť,
+ * aby se neschoval v hromadě hráčů do pole.
+ *
  * ── Cíl na další den ────────────────────────────────────────────────────
  * **Průměr za posledních 7 dní plus 20 %**, zaokrouhleno nahoru. Majitel
  * to 19. 9. vybral proti dvěma jiným variantám (pevných 5 denně a dopočet
@@ -40,6 +51,7 @@
 const prisma = require('../lib/prisma');
 const { sendMail } = require('./mailer');
 const { spocitejTrychtyr } = require('./trychtyr');
+const { jeBrankar } = require('../utils/posty');
 
 /**
  * Kam status chodí.
@@ -60,8 +72,24 @@ const ZACATEK = new Date('2026-09-15T00:00:00+02:00');
 /** Uzávěrka přihlášek. Do tohohle dne se má dlouhodobý cíl stihnout. */
 const UZAVERKA = new Date('2026-11-01T23:59:59+01:00');
 
-/** Dlouhodobý cíl majitele: 5 registrací denně za celé období náboru. */
-const CIL_DENNE = 5;
+/**
+ * Celkový cíl náboru k uzávěrce. Nastavil majitel 21. 9. 2026.
+ *
+ * **`hraci` jsou hráči do pole, brankáři jsou navíc** — dohromady tedy 275
+ * hráčů. Kdyby se to mělo číst obráceně (25 gólmanů uvnitř 250), stačí
+ * změnit tyhle dvě čísla; zbytek souboru počítá z nich.
+ *
+ * `tymy` se do „celkem lidí" nesčítají — je to jiná jednotka.
+ */
+const CIL = {
+  hraci: 250,
+  brankari: 25,
+  tymy: 6,
+  rozhodci: 10,
+};
+
+/** Kolik lidí je celkem potřeba zaregistrovat. Týmy sem schválně nepatří. */
+const CIL_LIDI = CIL.hraci + CIL.brankari + CIL.rozhodci;
 
 /** O kolik se zvedá sedmidenní průměr při stanovení cíle na zítřek. */
 const PRIRAZKA = 0.2;
@@ -210,7 +238,7 @@ async function sesbirej(poslednePoslano = null, cilNaDnes = null) {
   const hodinOdMinule = Math.max(1, Math.ceil((ted - odMinule) / (60 * 60 * 1000)));
 
   const [
-    tymu, hracu, hracuVDraftu, rozhodcich, hracuSLicenci,
+    tymu, hracu, hracuVDraftu, rozhodcich, hracuSLicenci, posty,
     za24h, dnes, vcera, za7dni, odZacatkuR, odPosledne,
     trychtyr, trychtyrOdMinule,
   ] = await Promise.all([
@@ -219,6 +247,12 @@ async function sesbirej(poslednePoslano = null, cilNaDnes = null) {
     prisma.player.count({ where: { teamId: null } }),
     prisma.referee.count(),
     prisma.player.count({ where: { licensed: true } }),
+
+    /* Brankáře nejde spočítat dotazem: `Player.position` je volný text, ve
+       kterém se potkávají kódy (`GK`) i česká slova (`Brankář`) — viz
+       `utils/posty.js`. Proto se vytáhnou jen posty a přepočítají v paměti.
+       Při řádech stovek hráčů je to jeden malý dotaz, ne problém. */
+    prisma.player.findMany({ select: { position: true } }),
 
     registraciOd(pred24h),
     registraciOd(dnesOd),
@@ -244,9 +278,20 @@ async function sesbirej(poslednePoslano = null, cilNaDnes = null) {
   const prumer7 = za7dni.celkem / dnuVOkne;
 
   const prumerCelkem = odZacatkuR.celkem / dnuBehem;
-  const cilCelkem = CIL_DENNE * dnuCelkem;
-  const chybi = Math.max(0, cilCelkem - odZacatkuR.celkem);
+
+  /* Postup k cíli se měří **proti celé databázi**, ne proti tomu, co přibylo
+     od začátku propagace. Otázka „jak daleko jsme" se ptá na to, kolik lidí
+     liga má — ne kolik jich přivedla reklama. */
+  const brankaru = posty.filter((p) => jeBrankar(p.position)).length;
+  const hracuDoPole = Math.max(0, hracu - brankaru);
+  const lidiHotovo = hracu + rozhodcich;
+  const chybi = Math.max(0, CIL_LIDI - lidiHotovo);
   const potrebaDenne = dnuZbyva > 0 ? chybi / dnuZbyva : null;
+
+  /* Kam to dojde, když se tempo nezmění. Tohle je ta nepříjemná věta —
+     schválně se počítá z průměru od začátku propagace, ne ze sedmidenního,
+     aby jedním dobrým dnem neposkočila. */
+  const odhad = Math.round(lidiHotovo + prumerCelkem * dnuZbyva);
 
   /* Cíl na zítřek: sedmidenní průměr + 20 %, nahoru, nejmíň 1. Nula by
      znamenala „stačí nic", což není cíl. */
@@ -257,12 +302,23 @@ async function sesbirej(poslednePoslano = null, cilNaDnes = null) {
     hlavni: jeHlavni(ted),
     odMinule,
     hodinOdMinule,
-    databaze: { tymu, hracu, hracuVDraftu, rozhodcich, hracuSLicenci },
+    databaze: { tymu, hracu, hracuDoPole, brankaru, hracuVDraftu, rozhodcich, hracuSLicenci },
     za24h, dnes, vcera, odPosledne,
     cil: { dnes: cilNaDnes, zitra: cilZitra, prumer7, dnuVOkne },
+    postup: {
+      polozky: [
+        { nazev: 'hráči do pole', hotovo: hracuDoPole, cil: CIL.hraci },
+        { nazev: 'brankáři', hotovo: brankaru, cil: CIL.brankari },
+        { nazev: 'týmy', hotovo: tymu, cil: CIL.tymy },
+        { nazev: 'rozhodčí', hotovo: rozhodcich, cil: CIL.rozhodci },
+      ],
+      lidiHotovo, lidiCil: CIL_LIDI, chybi, potrebaDenne, odhad,
+      podil: (lidiHotovo / CIL_LIDI) * 100,
+      podilOdhadu: (odhad / CIL_LIDI) * 100,
+    },
     tempo: {
       odZacatku: odZacatkuR.celkem, dnuBehem, dnuZbyva, dnuCelkem,
-      prumer: prumerCelkem, cilDlouhodoby: CIL_DENNE, cilCelkem, chybi, potrebaDenne,
+      prumer: prumerCelkem, chybi, potrebaDenne,
     },
     trychtyr,
     trychtyrOdMinule,
@@ -275,6 +331,47 @@ const cislo1 = (x) => (x === null || x === undefined ? '—' : x.toFixed(1).repl
 
 /** `+3` / `0` — u změn je znaménko informace, ne ozdoba. */
 const seZnamenkem = (x) => (x > 0 ? `+${x}` : `${x}`);
+
+/**
+ * Pruh postupu. **Plní se po pěti procentech** (20 dílků) — jemnější dělení
+ * by u jednociferných procent stejně nebylo poznat a v proporcionálním
+ * písmu poštovního klienta by se rozjelo.
+ */
+function pruh(hotovo, cil, sirka = 20) {
+  const dilku = cil > 0 ? Math.round(Math.min(1, hotovo / cil) * sirka) : 0;
+  /* Jeden dílek i při rozdělaném prvním procentu: nula dílků vedle „1 %"
+     vypadá jako chyba. Prázdno zůstane prázdné jen při skutečné nule. */
+  const plnych = hotovo > 0 ? Math.max(1, dilku) : 0;
+  return '#'.repeat(plnych) + '.'.repeat(sirka - plnych);
+}
+
+/**
+ * Blok „jak daleko jsme" — první věc v e-mailu. Sloupce se zarovnávají
+ * podle nejdelší položky, ať jdou čísla číst pod sebou.
+ */
+function blokPostupu(p, dnuZbyva) {
+  const sirkaNazvu = Math.max(...p.polozky.map((x) => x.nazev.length));
+  const sirkaHotovo = Math.max(...p.polozky.map((x) => String(x.hotovo).length));
+  const sirkaCile = Math.max(...p.polozky.map((x) => String(x.cil).length));
+
+  const radky = p.polozky.map((x) => {
+    const procent = x.cil > 0 ? Math.round((x.hotovo / x.cil) * 100) : 0;
+    return `  ${x.nazev.padEnd(sirkaNazvu)}  ${String(x.hotovo).padStart(sirkaHotovo)}`
+      + ` / ${String(x.cil).padStart(sirkaCile)}  ${String(procent).padStart(3)} %`
+      + `  ${pruh(x.hotovo, x.cil)}`;
+  });
+
+  const tempoVeta = p.potrebaDenne === null
+    ? '  po uzávěrce'
+    : `  chybí ${p.chybi} lidí = ${cislo1(p.potrebaDenne)}/den po zbytek náboru`;
+
+  return `POSTUP K CÍLI (do 1. 11. 2026, zbývá ${dnuZbyva} dní)
+${radky.join('\n')}
+  ${'celkem lidí'.padEnd(sirkaNazvu)}  ${String(p.lidiHotovo).padStart(sirkaHotovo)}`
+    + ` / ${String(p.lidiCil).padStart(sirkaCile)}  ${String(Math.round(p.podil)).padStart(3)} %
+${tempoVeta}
+  při dosavadním tempu to do uzávěrky bude ~${p.odhad} lidí (${Math.round(p.podilOdhadu)} % cíle)`;
+}
 
 /**
  * Jeden krok trychtýře jako řádek. Kroky, na kterých nikdo nebyl, se
@@ -376,8 +473,12 @@ function teloPlne(d) {
 
   return `Status náboru, ${prazskeDatum(d.ted)} ${prazskyCas(d.ted)} — plný report.
 
+${blokPostupu(d.postup, tempo.dnuZbyva)}
+
+───────────────────────── detail ─────────────────────────
+
 REGISTRACE V DATABÁZI
-  týmy ${db.tymu}, hráči ${db.hracu} (z toho ${db.hracuVDraftu} v draftu), rozhodčí ${db.rozhodcich}
+  hráči ${db.hracu} (z toho ${db.brankaru} brankářů, ${db.hracuVDraftu} v draftu)
   zaplacených licencí: ${db.hracuSLicenci}
 
 DNEŠEK PROTI CÍLI
@@ -390,11 +491,9 @@ POROVNÁNÍ
   posledních 24 h: ${za24h.celkem}
   průměr 7 dní:    ${cislo1(cil.prumer7)}/den
 
-DLOUHODOBÉ TEMPO PROTI CÍLI ${tempo.cilDlouhodoby}/DEN
+TEMPO OD ZAČÁTKU PROPAGACE
   od 15. 9. celkem ${tempo.odZacatku} registrací za ${tempo.dnuBehem} dní
-  průměr ${cislo1(tempo.prumer)}/den
-  do 1. 11. zbývá ${tempo.dnuZbyva} dní, chybí ${tempo.chybi} registrací
-  = ${cislo1(tempo.potrebaDenne)}/den po zbytek náboru
+  průměr ${cislo1(tempo.prumer)}/den, potřeba ${cislo1(tempo.potrebaDenne)}/den
 
 TRYCHTÝŘ PŘIHLÁŠKY (24 h)
   průchodů přihláškou: ${trychtyr.navstev}
@@ -426,7 +525,7 @@ NÁVŠTĚVNOST
 
 /** Krátký report — jen co se změnilo od posledního e-mailu. */
 function teloKratke(d) {
-  const { odPosledne, dnes, cil, trychtyrOdMinule } = d;
+  const { odPosledne, dnes, cil, postup, tempo, trychtyrOdMinule } = d;
   const v = volbaRole(trychtyrOdMinule);
   /* V krátkém reportu jen karty, na které se za tu dobu kliklo. Čtyři nuly
      každé dvě hodiny by byly jen šum — od toho je plný report. */
@@ -436,8 +535,12 @@ function teloKratke(d) {
     ? `${dnes.celkem} z ${cil.dnes}, zbývá ${Math.max(0, cil.dnes - dnes.celkem)}`
     : `${dnes.celkem} (cíl na dnešek nestanoven)`;
 
+  /* I krátký report začíná postupem — jedním řádkem. Majitel se ptá na
+     „jak daleko jsme" a odpověď nemá čekat na osmou hodinu. */
   return `Status náboru, ${prazskeDatum(d.ted)} ${prazskyCas(d.ted)} — změna za ${d.hodinOdMinule} h.
 
+  cíl: ${postup.lidiHotovo} z ${postup.lidiCil} lidí (${Math.round(postup.podil)} %), `
+    + `týmy ${d.databaze.tymu} z ${CIL.tymy}, zbývá ${tempo.dnuZbyva} dní
   nové registrace: ${odPosledne.celkem}`
     + (odPosledne.celkem > 0
       ? ` (hráči ${odPosledne.hracu}, vedoucí ${odPosledne.tymu}, rozhodčí ${odPosledne.rozhodcich})`
@@ -529,6 +632,8 @@ module.exports = {
   telo,
   teloPlne,
   teloKratke,
+  blokPostupu,
+  pruh,
   diagnoza,
   jeCasPoslat,
   jeHlavni,
@@ -540,7 +645,8 @@ module.exports = {
   prazskyKlicDne,
   ZACATEK,
   UZAVERKA,
-  CIL_DENNE,
+  CIL,
+  CIL_LIDI,
   SLOTY,
   HLAVNI_SLOTY,
 };
