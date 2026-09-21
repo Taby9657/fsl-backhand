@@ -91,6 +91,29 @@ const CIL = {
 /** Kolik lidí je celkem potřeba zaregistrovat. Týmy sem schválně nepatří. */
 const CIL_LIDI = CIL.hraci + CIL.brankari + CIL.rozhodci;
 
+/**
+ * Mezicíle — **plán schválně není rovná čára.**
+ *
+ * Majitel čeká, že se největší počet lidí sežene na konci, a u amatérských
+ * lig je to rozumná domněnka: uzávěrka je spouštěč a lidé se hlásí na
+ * poslední chvíli. Rovnoměrné dělení cíle by proto hlásilo poplach už
+ * v září, kdy žádný není.
+ *
+ * **Domněnka se tím ale nestává nenapadnutelnou — právě naopak.** Plán
+ * s ní počítá dopředu a tím ji dělá testovatelnou: v každém okamžiku je
+ * vidět, jestli jsme nad nejbližším kontrolním bodem, nebo pod ním. Zjistit
+ * 1. 11., že vlna neměla co násobit, je pozdě.
+ *
+ * Křivka je zadní: do 5. 10. teprve pětina, do 20. 10. polovina, zbylá
+ * třetina v posledních pěti dnech.
+ */
+const MEZICILE = [
+  { datum: '2026-10-05', podil: 0.20 },
+  { datum: '2026-10-20', podil: 0.50 },
+  { datum: '2026-10-27', podil: 0.65 },
+  { datum: '2026-11-01', podil: 1.00 },
+];
+
 /** O kolik se zvedá sedmidenní průměr při stanovení cíle na zítřek. */
 const PRIRAZKA = 0.2;
 
@@ -174,6 +197,45 @@ function zacatekDne(kdy = new Date()) {
 /** Půlnoc předchozího pražského dne. Přes 12 h zpět, ať DST nevadí. */
 function zacatekVcerejska(kdy = new Date()) {
   return zacatekDne(new Date(zacatekDne(kdy).getTime() - 12 * 60 * 60 * 1000));
+}
+
+/**
+ * Poslední okamžik pražského dne zadaného jako `2026-10-05`.
+ *
+ * Poledne UTC padne do správného pražského dne v letním i zimním čase, a na
+ * začátek dalšího dne se skáče přes 36 h — stejný trik jako u `zacatekVcerejska`,
+ * ze stejného důvodu: přičíst 24 h by 25. 10. skončilo o hodinu vedle.
+ */
+function konecPrazskehoDne(isoDatum) {
+  const [r, m, d] = isoDatum.split('-').map(Number);
+  const zacatek = zacatekDne(new Date(Date.UTC(r, m - 1, d, 12, 0, 0)));
+  const dalsi = zacatekDne(new Date(zacatek.getTime() + 36 * 60 * 60 * 1000));
+  return new Date(dalsi.getTime() - 1000);
+}
+
+/** `2026-10-05` → `5. 10.` */
+function kratkeDatum(isoDatum) {
+  const [, m, d] = isoDatum.split('-').map(Number);
+  return `${d}. ${m}.`;
+}
+
+/**
+ * Nejbližší mezicíl, kterého se ještě dá dosáhnout, a jak na něm stojíme.
+ * Po posledním kontrolním bodu vrací `null` — nábor tou dobou skončil.
+ */
+function nejblizsiMezicil(ted, lidiHotovo) {
+  for (const m of MEZICILE) {
+    const konec = konecPrazskehoDne(m.datum);
+    if (konec <= ted) continue;
+    const cil = Math.round(m.podil * CIL_LIDI);
+    const dnu = Math.max(1, Math.ceil((konec - ted) / DEN_MS));
+    const chybi = Math.max(0, cil - lidiHotovo);
+    return {
+      datum: m.datum, podil: m.podil, cil, dnu, chybi,
+      rozdil: lidiHotovo - cil, denne: chybi / dnu,
+    };
+  }
+  return null;
 }
 
 /**
@@ -288,10 +350,11 @@ async function sesbirej(poslednePoslano = null, cilNaDnes = null) {
   const chybi = Math.max(0, CIL_LIDI - lidiHotovo);
   const potrebaDenne = dnuZbyva > 0 ? chybi / dnuZbyva : null;
 
-  /* Kam to dojde, když se tempo nezmění. Tohle je ta nepříjemná věta —
-     schválně se počítá z průměru od začátku propagace, ne ze sedmidenního,
-     aby jedním dobrým dnem neposkočila. */
-  const odhad = Math.round(lidiHotovo + prumerCelkem * dnuZbyva);
+  /* Místo odhadu „kam to dojde při dosavadním tempu" se hlásí **nejbližší
+     mezicíl**. Rovná čára by u zadní křivky lhala oběma směry: v září by
+     strašila a v půlce října uklidňovala. Kontrolní bod se ptá na jedinou
+     věc, která se dá dnes zodpovědět — jsme nad plánem, nebo pod ním. */
+  const mezicil = nejblizsiMezicil(ted, lidiHotovo);
 
   /* Cíl na zítřek: sedmidenní průměr + 20 %, nahoru, nejmíň 1. Nula by
      znamenala „stačí nic", což není cíl. */
@@ -312,9 +375,8 @@ async function sesbirej(poslednePoslano = null, cilNaDnes = null) {
         { nazev: 'týmy', hotovo: tymu, cil: CIL.tymy },
         { nazev: 'rozhodčí', hotovo: rozhodcich, cil: CIL.rozhodci },
       ],
-      lidiHotovo, lidiCil: CIL_LIDI, chybi, potrebaDenne, odhad,
+      lidiHotovo, lidiCil: CIL_LIDI, chybi, potrebaDenne, mezicil,
       podil: (lidiHotovo / CIL_LIDI) * 100,
-      podilOdhadu: (odhad / CIL_LIDI) * 100,
     },
     tempo: {
       odZacatku: odZacatkuR.celkem, dnuBehem, dnuZbyva, dnuCelkem,
@@ -370,7 +432,26 @@ ${radky.join('\n')}
   ${'celkem lidí'.padEnd(sirkaNazvu)}  ${String(p.lidiHotovo).padStart(sirkaHotovo)}`
     + ` / ${String(p.lidiCil).padStart(sirkaCile)}  ${String(Math.round(p.podil)).padStart(3)} %
 ${tempoVeta}
-  při dosavadním tempu to do uzávěrky bude ~${p.odhad} lidí (${Math.round(p.podilOdhadu)} % cíle)`;
+${vetaMezicile(p.mezicil)}`;
+}
+
+/**
+ * Jak stojíme proti nejbližšímu kontrolnímu bodu. **Dva tvary schválně:**
+ * když jsme nad plánem, zajímá nás o kolik; když pod, zajímá nás, jaké tempo
+ * to znamená — to je číslo, se kterým se dá něco udělat.
+ */
+function vetaMezicile(m) {
+  if (!m) return '  poslední mezicíl je za námi';
+  const hlavicka = `  mezicíl ${kratkeDatum(m.datum)}: ${m.cil} lidí `
+    + `(${Math.round(m.podil * 100)} % cíle), zbývá ${m.dnu} dní`;
+  if (m.chybi === 0) return `${hlavicka}\n    splněno, ${seZnamenkem(m.rozdil)} proti plánu`;
+
+  /* Dovětek o vlně dává smysl jen u průběžných bodů. U posledního (to je
+     sama uzávěrka) by tvrdil, že se čeká na něco, co už nepřijde. */
+  const dovetek = m.podil < 1
+    ? '; plán počítá s tím, že většina lidí přijde až před uzávěrkou'
+    : ' — tohle je uzávěrka, dál se čekat nedá';
+  return `${hlavicka}\n    chybí ${m.chybi} = ${cislo1(m.denne)}/den${dovetek}`;
 }
 
 /**
@@ -540,7 +621,14 @@ function teloKratke(d) {
   return `Status náboru, ${prazskeDatum(d.ted)} ${prazskyCas(d.ted)} — změna za ${d.hodinOdMinule} h.
 
   cíl: ${postup.lidiHotovo} z ${postup.lidiCil} lidí (${Math.round(postup.podil)} %), `
-    + `týmy ${d.databaze.tymu} z ${CIL.tymy}, zbývá ${tempo.dnuZbyva} dní
+    + `týmy ${d.databaze.tymu} z ${CIL.tymy}, zbývá ${tempo.dnuZbyva} dní`
+    + (postup.mezicil
+      ? `\n  mezicíl ${kratkeDatum(postup.mezicil.datum)}: ${postup.mezicil.cil}`
+        + (postup.mezicil.chybi === 0
+          ? ` (splněno, ${seZnamenkem(postup.mezicil.rozdil)})`
+          : ` (chybí ${postup.mezicil.chybi})`)
+      : '')
+    + `
   nové registrace: ${odPosledne.celkem}`
     + (odPosledne.celkem > 0
       ? ` (hráči ${odPosledne.hracu}, vedoucí ${odPosledne.tymu}, rozhodčí ${odPosledne.rozhodcich})`
@@ -633,6 +721,9 @@ module.exports = {
   teloPlne,
   teloKratke,
   blokPostupu,
+  vetaMezicile,
+  nejblizsiMezicil,
+  konecPrazskehoDne,
   pruh,
   diagnoza,
   jeCasPoslat,
@@ -647,6 +738,7 @@ module.exports = {
   UZAVERKA,
   CIL,
   CIL_LIDI,
+  MEZICILE,
   SLOTY,
   HLAVNI_SLOTY,
 };
