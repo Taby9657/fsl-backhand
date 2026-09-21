@@ -132,12 +132,19 @@ async function odeber(userId, itemId, tx = prisma) {
  * bylo zaplaceno (dvojí platba).
  */
 async function zauctujPolozku(item, { method, stripeId }, tx = prisma) {
-  const spolecne = { method, ...(stripeId ? { stripeId } : {}) };
+  // `method` má OpenEntry, TeamPayment, MatchPack i Fine. PlayerPayment ho
+  // nemá — licence má vlastní `licMethod` a superlicence sloupec na metodu
+  // nemá vůbec (viz schema.prisma). Jeden společný objekt pro všechny modely
+  // proto nestačí: rozsypaný do playerPayment shodil celou transakci na
+  // `Unknown argument \`method\`` a platba se nezaúčtovala.
+  const spolecne      = { method, ...(stripeId ? { stripeId } : {}) };
+  const spolecneLic   = { licMethod: method, ...(stripeId ? { stripeId } : {}) };
+  const spolecneSuper = { ...(stripeId ? { stripeId } : {}) };
 
   if (item.kind === 'PLAYER_LICENSE') {
     const zapis = await tx.playerPayment.updateMany({
       where: { playerId: item.playerId, licStatus: { not: 'PAID' } },
-      data:  { licStatus: 'PAID', licPaidAt: new Date(), licPaidAmount: item.amount, ...spolecne },
+      data:  { licStatus: 'PAID', licPaidAt: new Date(), licPaidAmount: item.amount, ...spolecneLic },
     });
     if (zapis.count === 0) return false;
     await tx.player.update({ where: { id: item.playerId }, data: { licensed: true } });
@@ -149,7 +156,7 @@ async function zauctujPolozku(item, { method, stripeId }, tx = prisma) {
       where: { playerId: item.playerId, superStatus: { not: 'PAID' } },
       data:  {
         superStatus: 'PAID', superPaidAt: new Date(), superLic: true,
-        superPaidAmount: item.amount, ...spolecne,
+        superPaidAmount: item.amount, ...spolecneSuper,
       },
     });
     return zapis.count > 0;
@@ -209,7 +216,7 @@ async function zauctujPolozku(item, { method, stripeId }, tx = prisma) {
     if (licCastka > 0) {
       await tx.playerPayment.updateMany({
         where: { playerId: item.playerId, licStatus: { not: 'PAID' } },
-        data:  { licStatus: 'PAID', licPaidAt: new Date(), licPaidAmount: licCastka, ...spolecne },
+        data:  { licStatus: 'PAID', licPaidAt: new Date(), licPaidAmount: licCastka, ...spolecneLic },
       });
       await tx.player.update({ where: { id: item.playerId }, data: { licensed: true } });
     }
