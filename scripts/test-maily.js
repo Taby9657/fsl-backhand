@@ -82,10 +82,42 @@ function projdi(nazev, zprava) {
   ok(!!zprava.subject && !!zprava.text && !!zprava.html, `${nazev}: má předmět, text i HTML`);
 }
 
+// ---------- oslovení ----------
+
+/**
+ * Jméno leží v databázi tak, jak ho člověk napsal do přihlášky — „jan".
+ * Do zprávy ale nesmí jít ani malým písmenem, ani v prvním pádě.
+ */
+function osloveniTesty() {
+  const jmena = require('../src/utils/jmena');
+  const dvojice = [
+    ['jan', 'Jane'], ['JAN', 'Jane'],
+    ['Petr', 'Petře'], ['Alexandr', 'Alexandře'], ['Dalibor', 'Dalibore'],
+    ['Tomáš', 'Tomáši'], ['Ondřej', 'Ondřeji'], ['Alex', 'Alexi'],
+    ['Marek', 'Marku'], ['Zdeněk', 'Zdeňku'], ['Vojtěch', 'Vojtěchu'],
+    ['Pavel', 'Pavle'], ['Karel', 'Karle'], ['Daniel', 'Danieli'],
+    ['Jakub', 'Jakube'], ['Martin', 'Martine'], ['Václav', 'Václave'],
+    ['Jana', 'Jano'], ['Tereza', 'Terezo'], ['Honza', 'Honzo'],
+    ['Lucie', 'Lucie'], ['Jiří', 'Jiří'], ['Ivo', 'Ivo'], ['René', 'René'],
+    // Ženská jména na souhlásku pravidla nepoznají, tak je nechávají být:
+    // „Ahoj Dagmar" je nepěkné, „Ahoj Dagmaro" je chyba.
+    ['Dagmar', 'Dagmar'], ['Ester', 'Ester'], ['Nikol', 'Nikol'],
+  ];
+  const spatne = dvojice.filter(([vstup, cekam]) => jmena.vokativ(vstup) !== cekam);
+  ok(spatne.length === 0,
+    `oslovení: ${dvojice.length} jmen v pátém pádě${spatne.length ? ` — selhalo: ${spatne.map(([v]) => v).join(', ')}` : ''}`);
+  ok(jmena.osloveni('') === 'Ahoj,' && jmena.osloveni(null) === 'Ahoj,',
+    'a bez jména se oslovuje bez jména, ne „Ahoj undefined"');
+  ok(jmena.osloveni('jan novák') === 'Ahoj Jane,',
+    'a když někdo napíše do jména i příjmení, oslovuje se jen křestním');
+}
+
 // ---------- testy ----------
 
 (async () => {
   reset();
+
+  osloveniTesty();
 
   // --- 1. hráč bez týmu ---
   const draft = mailer.registraceHracMail({ jmeno: 'David', tym: null });

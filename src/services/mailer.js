@@ -8,6 +8,9 @@
  */
 
 const sezona = require('../utils/sezona');
+// Jméno leží v databázi tak, jak ho člověk napsal — „jan". Velké písmeno
+// i pátý pád řeší tenhle modul, ne šablony.
+const jmena = require('../utils/jmena');
 
 const RESEND_URL = 'https://api.resend.com/emails';
 
@@ -217,7 +220,7 @@ const tlacitko = (text, cesta) =>
  * **a** že si může vzít Virtuálního vedoucího a nechat tým složit lize.
  */
 function registraceHracMail({ jmeno, tym, licFee = 300, balikCastka = 800 }) {
-  const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
+  const oslov = jmena.osloveni(jmeno);
   // Do otevření poolu hráče nevidí ani vedoucí. Kdo to neví, čeká na nabídku,
   // která z principu nemůže přijít, a bere to jako že o něj nikdo nestojí.
   const otevreni = sezona.den(sezona.OTEVRENI_DRAFTU);
@@ -299,7 +302,7 @@ přihlášených týmů.`;
  * jediné místo, kde vedoucí dostane pozvánkový kód písemně.
  */
 function registraceVedouciMail({ jmeno, tym, kod, castka = 3000, licFee = 300 }) {
-  const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
+  const oslov = jmena.osloveni(jmeno);
 
   const text =
 `${oslov}
@@ -346,7 +349,7 @@ přihlášených týmů.`;
  * schválení — a e-mail je to místo, kde se to má říct dopředu.
  */
 function registraceRozhodciMail({ jmeno }) {
-  const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
+  const oslov = jmena.osloveni(jmeno);
 
   const text =
 `${oslov}
@@ -384,7 +387,7 @@ function polozkyRadky(polozky) {
  * spárování. Proto se tu neuvádí nic o DPH: liga není plátce.
  */
 function platbaPrijataMail({ jmeno, polozky, castka, prevodem }) {
-  const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
+  const oslov = jmena.osloveni(jmeno);
   const radky = polozkyRadky(polozky);
 
   const text =
@@ -418,7 +421,7 @@ ${WEB}/platby`;
  * by se mazali lidé, kteří zaplatili.
  */
 function upominkaPlatbaMail({ jmeno, polozky, castka, faze = 1 }) {
-  const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
+  const oslov = jmena.osloveni(jmeno);
   const radky = polozkyRadky(polozky);
 
   // Tón se stupňuje jen v tom, jak naléhavě zní — nikdy v tom, čím hrozí.
@@ -487,7 +490,7 @@ function nabidkaVstupuMail({
   jmeno, castka = 800, licFee = 300, faze = 1,
   poolOtevren = sezona.draftOtevren(),
 }) {
-  const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
+  const oslov = jmena.osloveni(jmeno);
   const otevreni = sezona.den(sezona.OTEVRENI_DRAFTU);
 
   // Dokud je pool zamčený, nesmí zpráva znít jako „nikdo o tebe nestojí".
@@ -558,7 +561,7 @@ function nabidkaTymuMail({
   jmeno, brankar = false, castka = 500, standardni = 800,
   denHovoru = 'v pondělí 21. 9.',
 }) {
-  const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
+  const oslov = jmena.osloveni(jmeno);
 
   const uvod = 'do FSL ses přihlásil sám, bez týmu. Máme pro tebe dobrou zprávu: '
     + 'tým jsme ti našli.';
@@ -645,7 +648,7 @@ function zarazeniDoTymuMail({
   licVBaliku = true,
   entryFee   = 500,
 }) {
-  const oslov = jmeno ? `Ahoj ${jmeno},` : 'Ahoj,';
+  const oslov = jmena.osloveni(jmeno);
   const starty = 'Zápasy se platí zvlášť balíčkem startů — od 200 Kč za jeden '
     + 'po 3 000 Kč za dvacet, tedy 150 Kč za zápas. Kupuješ ho, až budeš vědět, '
     + 'že hraješ.';
