@@ -20,6 +20,7 @@
  *   8. Vrácení peněz zruší všechny položky a zbytek balíčku.
  */
 const Module = require('module');
+const { hlidacPoli } = require('./lib/pole-modelu');
 
 // ---------- mock databáze ----------
 
@@ -138,6 +139,28 @@ const fakePrisma = {
   referralUse:  { findUnique: async () => null, update: async () => ({}) },
   referralCode: { findUnique: async () => null },
 };
+
+// ---------- mock hlídá názvy sloupců ----------
+//
+// Mock bral dřív jakýkoli název pole, takže `method` místo `licMethod`
+// prošlo testy a spadlo až na produkci u první reálné platby. Zápisy proto
+// projdou proti `schema.prisma` — stejná kontrola, jakou dělá Prisma.
+const overPole = hlidacPoli();
+const ZAPISY   = ['create', 'update', 'updateMany', 'upsert'];
+
+for (const [model, api] of Object.entries(fakePrisma)) {
+  if (model.startsWith('$') || typeof api !== 'object') continue;
+  for (const op of ZAPISY) {
+    if (typeof api[op] !== 'function') continue;
+    const puvodni = api[op].bind(api);
+    api[op] = async (args = {}) => {
+      for (const kde of ['data', 'create', 'update']) {
+        if (args[kde]) overPole(model, args[kde]);
+      }
+      return puvodni(args);
+    };
+  }
+}
 
 const orig = Module._load;
 Module._load = function (request) {
