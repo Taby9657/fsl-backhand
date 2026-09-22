@@ -146,15 +146,16 @@ router.get('/conversations', requireAuth, async (req, res, next) => {
     /**
      * Jak se konverzace jmenuje v seznamu.
      *
-     * Vlákno s ligou se jmenuje jinak podle toho, kdo se dívá: hráč vidí
-     * „Liga", supervisor jméno člověka, který píše — jinak by měl frontu
-     * plnou stejně pojmenovaných řádků.
+     * Vlákno podpory se jmenuje jinak podle toho, kdo se dívá: **hráč vidí
+     * „Panda"** — píše jí a ona to, co nemá v pravomoci, předá dál —
+     * a supervisor jméno člověka, který píše, jinak by měl frontu plnou
+     * stejně pojmenovaných řádků.
      */
     function nazev(k) {
       if (k.kind === 'TEAM') return nazvyTymu[k.teamId] ?? 'Tým';
       if (k.kind === 'PANDA') return 'Panda';
       if (k.kind === 'SUPPORT') {
-        if (k.ownerPlayerId === hrac.id) return 'Liga';
+        if (k.ownerPlayerId === hrac.id) return 'Panda';
         const p = majitelPodleId[k.ownerPlayerId];
         return p ? `${p.firstName} ${p.lastName}` : 'Hráč';
       }
@@ -183,9 +184,13 @@ router.get('/conversations', requireAuth, async (req, res, next) => {
         kind: k.kind,
         teamId: k.teamId,
         nazev: nazev(k),
+        // Protějšek nese avatar do seznamu. U vlastního vlákna podpory je to
+        // Panda — tím se v seznamu pozná dřív než podle jména.
         protejsek: k.kind === 'DIRECT'
           ? chat.autorProKlienta(protejsekPodleKonverzace[k.id] ?? null)
-          : null,
+          : (k.kind === 'SUPPORT' && k.ownerPlayerId === hrac.id)
+            ? chat.autorProKlienta(null)
+            : null,
         cekaNaLigu: k.waitingSupervisor,
         dueAt: k.dueAt,
         lastMessageAt: k.lastMessageAt,
