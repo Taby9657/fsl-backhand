@@ -82,5 +82,53 @@ je('uzaverka kdyz je malo lidi',
    SABLONY.UZAVERKA({ stav: '6/9', sejdeSe: false, brankari: 0 }).includes('bez brankáře'), true);
 je('den D pise dnes', SABLONY.DEN_D({ zapas, hala: null, stav: '9/9' }).startsWith('Dnes'), true);
 
+
+console.log('\nLos zapisovatele');
+const zapisovatel = require('../src/services/zapisovatel');
+
+const sestava = [
+  { playerId: 'g1', isGoalkeeper: true },
+  { playerId: 'p1', isGoalkeeper: false },
+  { playerId: 'p2', isGoalkeeper: false },
+  { playerId: 'p3', isGoalkeeper: false },
+];
+const prihlaseni = [
+  { playerId: 'g1', brankar: true },
+  { playerId: 'p1', brankar: false },
+  { playerId: 'p2', brankar: false },
+  { playerId: 'p9', brankar: false },
+];
+
+je('sestava ma prednost pred prihlaskami',
+   zapisovatel.kandidati({ sestava, prihlaseni }).join(','), 'p1,p2,p3');
+je('brankar v brane se nelosuje',
+   zapisovatel.kandidati({ sestava, prihlaseni }).includes('g1'), false);
+je('bez sestavy se bere z prihlasenych',
+   zapisovatel.kandidati({ sestava: [], prihlaseni }).join(','), 'p1,p2,p9');
+je('nikdy z cele soupisky - kdo se neprihlasil, neni kandidat',
+   zapisovatel.kandidati({ sestava: [], prihlaseni }).includes('p3'), false);
+je('vyrazeny vedoucim je venku',
+   zapisovatel.kandidati({ sestava, prihlaseni, vyrazeni: ['p2'] }).join(','), 'p1,p3');
+je('kdo uz vylosovany byl, podruhe nejde',
+   zapisovatel.kandidati({ sestava, prihlaseni, drive: ['p1'] }).join(','), 'p2,p3');
+je('kdyz nezbyde nikdo, vrati se prazdno',
+   zapisovatel.kandidati({ sestava, prihlaseni, drive: ['p1', 'p2', 'p3'] }).length, 0);
+je('prazdny zapas nikoho nevylosuje', zapisovatel.vyber([]), 'null');
+je('vyber sahne do seznamu', zapisovatel.vyber(['p1', 'p2'], () => 1), 'p2');
+
+const prvni = zapisovatel.textKarty({ jmeno: 'Petr Novák', drawNo: 1, pocetKandidatu: 9 });
+je('prvni los necisluje', prvni.startsWith('Los zapisovatele:'), true);
+je('prvni los rekne, z kolika se losovalo', prvni.includes('z 9 hráčů'), true);
+
+const druhy = zapisovatel.textKarty({
+  jmeno: 'Martin Kříž', drawNo: 2, pocetKandidatu: 8,
+  predchozi: 'Petr Novák', duvod: 'nedorazil',
+});
+je('druhy los nese poradi', druhy.includes('č. 2'), true);
+je('druhy los ukaze, kdo vysel predtim', druhy.includes('Petr Novák'), true);
+je('a taky proc se losovalo znovu', druhy.includes('nedorazil'), true);
+je('jeden kandidat se sklonuje',
+   zapisovatel.textKarty({ jmeno: 'A B', drawNo: 1, pocetKandidatu: 1 }).includes('z 1 hráče'), true);
+
 console.log(`\n${ok} v poradku, ${chyb} spatne\n`);
 process.exit(chyb === 0 ? 0 : 1);
