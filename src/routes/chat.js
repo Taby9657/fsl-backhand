@@ -14,6 +14,7 @@ const router  = express.Router();
 const prisma = require('../lib/prisma');
 const { requireAuth } = require('../middleware/auth');
 const chat = require('../services/chat');
+const linka = require('../services/panda-linka');
 const seasonSvc = require('../services/seasonTransition');
 const { createNotification } = require('./notifications');
 
@@ -291,6 +292,26 @@ router.post('/conversations/:id/messages', requireAuth, async (req, res, next) =
       }
     } else {
       await prisma.conversation.update({ where: { id: konverzace.id }, data });
+    }
+
+    // Doptávání se ve vlákně s Pandou projde stejnou první linkou jako první
+    // zpráva. Bez tohohle by Panda odpověděla jen na to, co člověk napsal
+    // formulářem, a na druhou otázku ve stejném okně by mlčela — což zvenčí
+    // vypadá jako rozbitý chat.
+    if (
+      konverzace.kind === 'SUPPORT' &&
+      !jeSupervisor &&
+      hrac.id &&
+      konverzace.ownerPlayerId === hrac.id
+    ) {
+      const cerstva = await prisma.conversation.findUnique({ where: { id: konverzace.id } });
+      await linka.obsluz({
+        konverzace: cerstva ?? konverzace,
+        hrac,
+        text,
+        zpravaId: zprava.id,
+        maPrilohu: Boolean(attachmentIds?.length),
+      });
     }
 
     const podleId = await autori([zprava]);

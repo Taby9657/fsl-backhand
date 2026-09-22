@@ -130,5 +130,59 @@ je('a taky proc se losovalo znovu', druhy.includes('nedorazil'), true);
 je('jeden kandidat se sklonuje',
    zapisovatel.textKarty({ jmeno: 'A B', drawNo: 1, pocetKandidatu: 1 }).includes('z 1 hráče'), true);
 
+
+console.log('\nPanda - prvni linka');
+const linka = require('../src/services/panda-linka');
+
+const akce = (text, opts) => linka.rozhodni({ text, ...(opts ?? {}) }).akce;
+const kat  = (text, opts) => linka.rozhodni({ text, ...(opts ?? {}) }).kategorie;
+
+// --- na co Panda odpovida sama ---
+je('kde se hraje', kat('kde se bude hrat'), 'kde-se-hraje');
+je('kdy zacina sezona', kat('kdy zacina sezona'), 'terminy');
+je('cena licence', kat('kolik stoji licence'), 'cena-licence');
+je('cena zapasu je balicek, ne licence', kat('kolik stoji zapas'), 'balicky');
+je('jak zaplatit', kat('jak muzu zaplatit'), 'jak-platit');
+je('nemam tym', kat('nemam tym co s tim'), 'nemam-tym');
+je('uzaverka sestavy', kat('kdy se zavira sestava'), 'prihlaseni-na-zapas');
+je('starty nepropadaji', kat('propadaji mi starty'), 'starty-propadaji');
+je('odhlaseni ze zapasu', kat('jak se odhlasim ze zapasu'), 'odhlaseni-ze-zapasu');
+je('hostovani', kat('muzu hrat za dva tymy'), 'superlicence');
+je('zapisovatel', kat('kdo bude zapisovat zapas'), 'zapisovatel');
+je('pozdrav nejde do fronty', akce('ahoj'), 'ODPOVED');
+je('pozdrav ma svou kategorii', kat('dobry den'), 'pozdrav');
+
+// --- co jde vzdycky na cloveka ---
+je('moje platba je pro supervisora',
+   kat('zaplatil jsem balicek a porad mi to pise nezaplaceno'), 'penize');
+je('tvrdy seznam prebije znalost',
+   kat('kolik stoji licence? uz jsem ji zaplatil a nesedi to'), 'penize');
+je('zraneni', kat('co kdyz se zranim'), 'zraneni');
+je('stiznost na hrace neni zraneni', kat('spoluhrac me urazel v chatu'), 'jiny-hrac');
+je('spor', kat('mame spor s rozhodcim'), 'spor');
+je('trest', kat('hrozi nam kontumace'), 'trest');
+je('osobni udaje', kat('chci zrusit ucet'), 'osobni-udaje');
+je('novinar', kat('jsem novinar a chci rozhovor'), 'media');
+je('kdo chce cloveka, dostane cloveka', kat('predej to lize'), 'chce-cloveka');
+je('obrazek bez textu Panda necte', kat('', { maPrilohu: true }), 'priloha');
+je('vagni dotaz jde dal', akce('dotaz na platby'), 'ESKALACE');
+je('nesmysl jde dal', kat('xyzzy'), 'nezatrideno');
+
+// --- sportovni hala neni spor ---
+je('sport neni spor', kat('sportovni hala kde'), 'kde-se-hraje');
+
+// --- odpoved vzdycky nese zdroj a cestu k cloveku ---
+const odp = linka.rozhodni({ text: 'kolik stoji licence' });
+je('odpoved nese zdroj', linka.textOdpovedi(odp).includes('Ceník'), true);
+je('odpoved nabizi cloveka', linka.textOdpovedi(odp).includes('předej to lize'), true);
+je('odpoved nese cislo z ceniku', odp.odpoved.includes('300 Kč'), true);
+
+// --- termin se rika dnem, ne datem ---
+je('ve stredu, ne stredu', linka.vDen(new Date('2026-09-23T12:00:00Z')), 've středu 23. 9.');
+je('v pondeli', linka.vDen(new Date('2026-09-21T12:00:00Z')), 'v pondělí 21. 9.');
+je('ve ctvrtek', linka.vDen(new Date('2026-09-24T12:00:00Z')), 've čtvrtek 24. 9.');
+je('v sobotu', linka.vDen(new Date('2026-09-26T12:00:00Z')), 'v sobotu 26. 9.');
+je('slib nese den', linka.textEskalace(new Date('2026-09-23T12:00:00Z')).includes('ve středu'), true);
+
 console.log(`\n${ok} v poradku, ${chyb} spatne\n`);
 process.exit(chyb === 0 ? 0 : 1);

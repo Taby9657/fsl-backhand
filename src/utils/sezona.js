@@ -39,6 +39,18 @@ const OTEVRENI_DRAFTU = new Date('2026-11-01T00:00:00+01:00');
 const START_SEZONY = new Date('2026-11-09T00:00:00+01:00');
 
 /**
+ * Rozlosování. Po něm vzniká rozpis, tabulka i soupisky — a teprve pak se
+ * dá říct, kde se který zápas hraje.
+ */
+const LOS = new Date('2026-11-02T00:00:00+01:00');
+
+/** Název ročníku, hrací dny a čas. Panda je cituje, ať mluví jako web. */
+const NAZEV = '2026/27';
+const MESTO = 'Praze';
+const HRACI_DNY = 'pondělí až čtvrtek';
+const HRACI_CAS = '18:00 a 22:00';
+
+/**
  * Datum bez roku: „1. 11."
  *
  * Formátuje se **natvrdo v pražském pásmu**, ne lokálními gettery. Railway
@@ -74,6 +86,7 @@ function sezonaZacala(ted = new Date()) {
 }
 
 module.exports = {
-  KONEC_PRIHLASEK, OTEVRENI_DRAFTU, START_SEZONY,
+  KONEC_PRIHLASEK, OTEVRENI_DRAFTU, START_SEZONY, LOS,
+  NAZEV, MESTO, HRACI_DNY, HRACI_CAS,
   den, draftOtevren, sezonaZacala,
 };
