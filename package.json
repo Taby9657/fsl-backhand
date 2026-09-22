@@ -25,7 +25,8 @@
     "reset:vse": "node scripts/vymazat-vse.js",
     "supervisor": "node scripts/udelat-supervisora.js",
     "test:vek": "node scripts/test-vek.js",
-    "test:maily": "node scripts/test-maily.js"
+    "test:maily": "node scripts/test-maily.js",
+    "test:chat": "node scripts/test-chat.js"
   },
   "dependencies": {
     "@prisma/client": "^5.14.0",

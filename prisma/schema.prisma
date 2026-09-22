@@ -49,6 +49,8 @@ model Team {
   /// Otevřený tým — skládá se z jednotlivců, nemá živého vedoucího a sestavu
   /// si hráči tvoří sami přihlášením. Viz fsl-pravidla-souteze.md.
   isOpen     Boolean  @default(false)
+  /// Vypínač Pandy. Drží ho vedoucí; u isOpen týmů jen FULL.
+  pandaMode  PandaMode @default(LEADER)
   regStatus   String   @default("APPROVED") // PENDING | APPROVED | REJECTED | APPEALING
   regNote     String?  // supervisor: důvod zamítnutí / poznámka ke schválení
   regAppeal   String?  // vedoucí: odvolání / zpětná reakce
@@ -108,6 +110,9 @@ model Player {
   photoUrl    String?
   licensed      Boolean  @default(false)
   isSupervisor  Boolean  @default(false)
+
+  /// Kdo mi smí psát: REQUESTS = cizí pošle žádost, NONE = nikdo cizí.
+  dmPolicy      DmPolicy @default(REQUESTS)
 
   /// Kdy hráči odešel informativní e-mail "liga ti složila tým".
   /// Prázdno = ještě neodešel. Brání druhému rozeslání témuž člověku.
@@ -1076,4 +1081,288 @@ model OnboardingStep {
 
   @@unique([navsteva, krok])
   @@index([createdAt])
+}
+
+
+// ==================== CHAT A PANDA ====================
+//
+// Přidáno 21. 9. 2026. Zadání: `fsl-panda-ai-zadani-2026-09-21.md`.
+//
+// Dvě věci, které se tu nesmí ztratit:
+//
+// 1. **Týmová konverzace nemá sezónu.** `applyNewSeason()` maže soupisky,
+//    chatu se nesmí dotknout — historie týmu přežívá ročník.
+// 2. **Žádné relace na Player a Team.** Zprávy musí přežít smazání účtu
+//    (ve skupinové konverzaci se jen odpojí od totožnosti), takže se tu
+//    schválně nic nekaskáduje a drží se jen id.
+
+enum ConversationKind { TEAM DIRECT PANDA SUPPORT }
+enum MessageKind      { TEXT SYSTEM CARD }
+
+/// Nosný sloup: rozhoduje o umlčení i o tom, jestli se pošle e-mail.
+/// PROVOZNI = sestava, platba, uzávěrka. Vypnout se nedá.
+enum MessageClass     { PROVOZNI SPOLECENSKA }
+
+enum ChatRequestStatus { PENDING ACCEPTED DECLINED }
+enum ReportTarget      { MESSAGE PROFILE }
+enum ReportState       { NEW REVIEWED DISMISSED ACTIONED }
+enum SanctionKind      { MUTE NO_STRANGER_DM TEAM_CHAT_REMOVAL PHOTO_REMOVAL }
+enum PandaEventState   { SENT SKIPPED }
+
+/// OFF = Panda mlčí úplně | LEADER = píše jen vedoucímu (výchozí)
+/// FULL = píše celému týmu. U isOpen týmů je povolená jen FULL.
+/// Na SUPPORT vlákna ani na losování tohle nemá vliv.
+enum PandaMode         { OFF LEADER FULL }
+
+/// REQUESTS = cizí člověk pošle žádost o chat, spoluhráči píšou rovnou.
+/// NONE = "nechci zprávy od cizích". Varianta OPEN se záměrně nenabízí.
+enum DmPolicy          { REQUESTS NONE }
+
+enum PickSource        { ROTATION DRAW MANUAL }
+enum PreviewState      { DRAFT APPROVED PUBLISHED DISCARDED EXPIRED }
+
+model Conversation {
+  id            String           @id @default(uuid())
+  kind          ConversationKind
+  teamId        String?          // jen TEAM — bez sezóny, chat je trvalý
+  ownerPlayerId String?          // jen SUPPORT a PANDA — čí vlákno to je
+  createdAt     DateTime         @default(now())
+  lastMessageAt DateTime         @default(now())
+
+  /// "Čeká na ligu" je příznak na konverzaci, ne tabulka tiketů.
+  /// Shodí ho odpověď supervisora, nic jiného se neklikne.
+  waitingSupervisor Boolean   @default(false)
+  /// Konec NÁSLEDUJÍCÍHO dne v Europe/Prague. Počítá se v pražském čase,
+  /// ne v UTC — jinak zpráva z 23:50 padne o den vedle.
+  dueAt             DateTime?
+  escalCategory     String?
+  escalReason       String?
+  overdueNotifiedAt DateTime?
+
+  @@unique([teamId])
+  @@unique([ownerPlayerId, kind])
+  @@index([waitingSupervisor, dueAt])
+  @@index([lastMessageAt])
+}
+
+model ConversationMember {
+  id             String    @id @default(uuid())
+  conversationId String
+  playerId       String
+  isSupervisor   Boolean   @default(false)
+  addedById      String?
+  joinedAt       DateTime  @default(now())
+  /// Odebraný člen ztrácí přístup k historii. Jeho zprávy ostatním zůstávají
+  /// a provozní zprávy k zápasu mu chodí dál soukromě.
+  removedAt      DateTime?
+  lastReadAt     DateTime?
+  /// Umlčí JEN společenské zprávy od Pandy.
+  mutedSocial    Boolean   @default(false)
+
+  @@unique([conversationId, playerId])
+  @@index([playerId])
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  /// null = Panda. Fotka autora se sem NEKOPÍRUJE, drží se u hráče.
+  authorPlayerId String?
+  fromSupervisor Boolean      @default(false)
+  kind           MessageKind  @default(TEXT)
+  class          MessageClass @default(SPOLECENSKA)
+  body           String
+  payload        Json?
+  replyToId      String?
+  editedAt       DateTime?
+  /// Smazaná zpráva mizí všem, ale text zůstává v databázi — jinak nejde
+  /// posoudit nahlášení něčeho, co pisatel hned smazal.
+  deletedAt      DateTime?
+  deletedById    String?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+/// Zatím výhradně obrázky. Žádná videa, žádné dokumenty.
+model MessageAttachment {
+  id        String   @id @default(uuid())
+  messageId String
+  url       String
+  thumbUrl  String
+  mime      String
+  bytes     Int
+  width     Int
+  height    Int
+  createdAt DateTime @default(now())
+
+  @@index([messageId])
+}
+
+model MessageReaction {
+  messageId String
+  playerId  String
+  emoji     String
+  createdAt DateTime @default(now())
+
+  @@id([messageId, playerId, emoji])
+  @@index([messageId])
+}
+
+/// Žádost o chat: jedna zpráva, víc jich poslat nejde.
+model ChatRequest {
+  id           String            @id @default(uuid())
+  fromPlayerId String
+  toPlayerId   String
+  body         String
+  status       ChatRequestStatus @default(PENDING)
+  createdAt    DateTime          @default(now())
+
+  @@unique([fromPlayerId, toPlayerId])
+  @@index([toPlayerId, status])
+}
+
+/// Blokace platí mezi hráči, NIKDY vůči lize — na supervisora se dostane každý.
+model ChatBlock {
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+
+  @@id([blockerId, blockedId])
+}
+
+model ChatReport {
+  id         String       @id @default(uuid())
+  target     ReportTarget @default(MESSAGE)
+  messageId  String?      // null, když se hlásí profil
+  reporterId String
+  subjectId  String
+  reason     String
+  state      ReportState  @default(NEW)
+  caseId     String?
+  createdAt  DateTime     @default(now())
+
+  @@unique([messageId, reporterId])
+  @@index([state, createdAt])
+}
+
+/// Podklad, který sesbírá Panda. NEOBSAHUJE návrh trestu — o následku
+/// rozhoduje člověk.
+model ModerationCase {
+  id        String      @id @default(uuid())
+  subjectId String
+  summary   String
+  evidence  Json
+  stats     Json
+  state     ReportState @default(NEW)
+  decidedBy String?
+  decidedAt DateTime?
+  createdAt DateTime    @default(now())
+
+  @@index([state, createdAt])
+}
+
+/// Sankci smí založit jen supervisor. Panda tenhle nástroj nemá.
+model ChatSanction {
+  id        String       @id @default(uuid())
+  playerId  String
+  kind      SanctionKind
+  teamId    String?      // jen u TEAM_CHAT_REMOVAL
+  reason    String       // povinné, ukáže se i potrestanému
+  until     DateTime?    // null = do odvolání
+  createdBy String
+  revokedAt DateTime?
+  createdAt DateTime     @default(now())
+
+  @@index([playerId, until])
+}
+
+/// Idempotence Pandiných zpráv. Vlastní tabulka schválně: vypnutá Panda
+/// událost ZAHODÍ (SKIPPED) a zprávu nevyrobí — bez toho by po zapnutí
+/// vysypala týden zameškaných zpráv naráz.
+model PandaEvent {
+  key       String          @id
+  teamId    String?
+  state     PandaEventState
+  messageId String?
+  createdAt DateTime        @default(now())
+
+  @@index([teamId, createdAt])
+}
+
+/// Audit: co Panda udělala, s čím a jestli to šlo vrátit.
+model PandaAction {
+  id         String    @id @default(uuid())
+  kind       String
+  teamId     String?
+  playerId   String?
+  matchId    String?
+  input      Json
+  result     Json?
+  ok         Boolean   @default(true)
+  revertedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([teamId, createdAt])
+}
+
+/// Hraju / Nemůžu. Obecné, ne jen pro otevřené týmy — klubový vedoucí
+/// ho využije stejně.
+model MatchSignup {
+  matchId   String
+  playerId  String
+  playing   Boolean
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([matchId, playerId])
+  @@index([matchId, playing])
+}
+
+/// Kdo píše zápis. Každý pokus je vlastní řádek — losování musí jít po
+/// zápase dohledat, jinak se z losu stane výběr.
+model MatchScorekeeper {
+  id            String     @id @default(uuid())
+  matchId       String
+  teamId        String
+  playerId      String
+  source        PickSource
+  drawNo        Int        @default(0)
+  candidates    Json
+  excluded      Json?
+  requestedById String?
+  assignedAt    DateTime   @default(now())
+  replacedAt    DateTime?
+  replaceReason String?
+
+  @@index([matchId, teamId])
+}
+
+/// Podklad k preview od supervizora — volný text z vlákna s Pandou.
+model MatchNote {
+  id        String   @id @default(uuid())
+  matchId   String
+  authorId  String
+  body      String
+  usedInId  String?
+  createdAt DateTime @default(now())
+
+  @@index([matchId, createdAt])
+}
+
+/// Jeden text pro oba týmy, ne dvě verze. Nesmí sáhnout na MatchSignup —
+/// kdo se nepřihlásil, je vnitřní věc týmu.
+model MatchPreview {
+  id          String       @id @default(uuid())
+  matchId     String       @unique
+  body        String
+  sources     Json
+  state       PreviewState @default(DRAFT)
+  approvedBy  String?
+  approvedAt  DateTime?
+  publishedAt DateTime?
+  expiresAt   DateTime
+  createdAt   DateTime     @default(now())
+
+  @@index([state, expiresAt])
 }

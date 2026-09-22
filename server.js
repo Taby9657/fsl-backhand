@@ -25,6 +25,8 @@ const seasonRoutes = require('./src/routes/seasons');
 const licenceRoutes = require('./src/routes/licence');
 const draftRoutes        = require('./src/routes/draft');
 const { processExpiredWindows } = require('./src/routes/draft');
+const chatRoutes    = require('./src/routes/chat');
+const supportRoutes = require('./src/routes/support');
 const searchRoutes       = require('./src/routes/search');
 const requestRoutes      = require('./src/routes/requests');
 const onboardingRoutes   = require('./src/routes/onboarding');
@@ -162,6 +164,9 @@ app.use('/api/seasons',      seasonRoutes);
 app.use('/api/licence',      licenceRoutes);
 app.use('/api/draft',        draftRoutes);
 app.use('/api/search',       searchRoutes);
+// Chat a „napsat lize" — obojí jen pro přihlášené s hráčským profilem.
+app.use('/api/chat',         chatRoutes);
+app.use('/api/support',      supportRoutes);
 
 // Zprávy supervisorovi z webu — dotazy i hlášení chyb, od přihlášených
 // i nepřihlášených.
