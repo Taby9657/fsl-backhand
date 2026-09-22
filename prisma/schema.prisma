@@ -1096,31 +1096,74 @@ model OnboardingStep {
 //    (ve skupinové konverzaci se jen odpojí od totožnosti), takže se tu
 //    schválně nic nekaskáduje a drží se jen id.
 
-enum ConversationKind { TEAM DIRECT PANDA SUPPORT }
-enum MessageKind      { TEXT SYSTEM CARD }
-
+enum ConversationKind {
+  TEAM
+  DIRECT
+  PANDA
+  SUPPORT
+}
+enum MessageKind {
+  TEXT
+  SYSTEM
+  CARD
+}
 /// Nosný sloup: rozhoduje o umlčení i o tom, jestli se pošle e-mail.
 /// PROVOZNI = sestava, platba, uzávěrka. Vypnout se nedá.
-enum MessageClass     { PROVOZNI SPOLECENSKA }
-
-enum ChatRequestStatus { PENDING ACCEPTED DECLINED }
-enum ReportTarget      { MESSAGE PROFILE }
-enum ReportState       { NEW REVIEWED DISMISSED ACTIONED }
-enum SanctionKind      { MUTE NO_STRANGER_DM TEAM_CHAT_REMOVAL PHOTO_REMOVAL }
-enum PandaEventState   { SENT SKIPPED }
-
+enum MessageClass {
+  PROVOZNI
+  SPOLECENSKA
+}
+enum ChatRequestStatus {
+  PENDING
+  ACCEPTED
+  DECLINED
+}
+enum ReportTarget {
+  MESSAGE
+  PROFILE
+}
+enum ReportState {
+  NEW
+  REVIEWED
+  DISMISSED
+  ACTIONED
+}
+enum SanctionKind {
+  MUTE
+  NO_STRANGER_DM
+  TEAM_CHAT_REMOVAL
+  PHOTO_REMOVAL
+}
+enum PandaEventState {
+  SENT
+  SKIPPED
+}
 /// OFF = Panda mlčí úplně | LEADER = píše jen vedoucímu (výchozí)
 /// FULL = píše celému týmu. U isOpen týmů je povolená jen FULL.
 /// Na SUPPORT vlákna ani na losování tohle nemá vliv.
-enum PandaMode         { OFF LEADER FULL }
-
+enum PandaMode {
+  OFF
+  LEADER
+  FULL
+}
 /// REQUESTS = cizí člověk pošle žádost o chat, spoluhráči píšou rovnou.
 /// NONE = "nechci zprávy od cizích". Varianta OPEN se záměrně nenabízí.
-enum DmPolicy          { REQUESTS NONE }
-
-enum PickSource        { ROTATION DRAW MANUAL }
-enum PreviewState      { DRAFT APPROVED PUBLISHED DISCARDED EXPIRED }
-
+enum DmPolicy {
+  REQUESTS
+  NONE
+}
+enum PickSource {
+  ROTATION
+  DRAW
+  MANUAL
+}
+enum PreviewState {
+  DRAFT
+  APPROVED
+  PUBLISHED
+  DISCARDED
+  EXPIRED
+}
 model Conversation {
   id            String           @id @default(uuid())
   kind          ConversationKind
