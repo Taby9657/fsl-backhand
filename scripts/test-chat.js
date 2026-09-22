@@ -66,5 +66,21 @@ je('bez brankare se nezacne', chat.MIN_BRANKARU, 1);
 je('uzaverka bere i retezec', chat.uzaverka('2026-11-12T18:00:00Z').getTime(),
    new Date('2026-11-10T18:00:00Z').getTime());
 
+
+console.log('\nSablony Pandy');
+const { SABLONY, kdy } = require('../src/services/panda-texty');
+const zapas = { date: new Date('2026-11-12T17:00:00Z') };   // 18:00 v Praze
+
+je('cas se pise prazsky', kdy(zapas.date).includes('18:00'), true);
+je('otevreni zve do Meho tymu',
+   SABLONY.OTEVRENO({ zapas, hala: 'Sokolovna' }).includes('Sokolovna'), true);
+je('chybejici brankar nese stav',
+   SABLONY.CHYBI_BRANKAR({ stav: '7/9' }).includes('7/9'), true);
+je('uzaverka kdyz se sejde',
+   SABLONY.UZAVERKA({ stav: '10/9', sejdeSe: true, brankari: 2 }).includes('Sejdeme se'), true);
+je('uzaverka kdyz je malo lidi',
+   SABLONY.UZAVERKA({ stav: '6/9', sejdeSe: false, brankari: 0 }).includes('bez brankáře'), true);
+je('den D pise dnes', SABLONY.DEN_D({ zapas, hala: null, stav: '9/9' }).startsWith('Dnes'), true);
+
 console.log(`\n${ok} v poradku, ${chyb} spatne\n`);
 process.exit(chyb === 0 ? 0 : 1);

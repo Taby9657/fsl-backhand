@@ -311,6 +311,36 @@ async function runLineupLock() {
 runLineupLock();
 setInterval(runLineupLock, LOCK_INTERVAL_MS);
 
+
+// ==================== PANDA: ZPRÁVY KOLEM ZÁPASU ====================
+// D-7 otevření přihlašování, chybějící brankář, uzávěrka 48 h před výkopem
+// a ráno v den zápasu. Texty zatím skládá pevná šablona — žádný model.
+//
+// **Interval je budík, ne frekvence psaní.** Každá událost se zapíše do
+// `PandaEvent` a vyrobí se jednou; hodinové koukání jen hlídá, jestli
+// někomu nenastal další práh. Když cron hodinu vynechá, zpráva odejde se
+// zpožděním, ne nikdy.
+//
+// Vypnutá Panda (`Team.pandaMode = OFF`) událost **zahodí**, neodloží —
+// jinak by po zapnutí vysypala týden zpráv naráz.
+const PANDA_INTERVAL_MS = 60 * 60 * 1000;
+
+async function runPanda() {
+  try {
+    const { zpracujZapasy } = require('./src/services/panda');
+    const vysledek = await zpracujZapasy();
+    if (vysledek.odeslano > 0) {
+      console.log(`[Panda] ${vysledek.odeslano} zpráv k ${vysledek.zapasu} zápasům.`);
+    }
+  } catch (err) {
+    console.error('[Panda] Chyba:', err.message);
+  }
+}
+setTimeout(() => {
+  runPanda();
+  setInterval(runPanda, PANDA_INTERVAL_MS);
+}, 45 * 1000);
+
 // ==================== PŘIPOMÍNKY NEZAPLACENÝCH POPLATKŮ ====================
 // Plán: dva dny, devět dní, měsíc, pak ticho. Nic se nemaže a hráč bez týmu
 // dostává nabídku, ne upomínku — proč, je v `services/upominky.js`.

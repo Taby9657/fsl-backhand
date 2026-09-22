@@ -215,6 +215,21 @@ async function vlaknoSLigou(playerId) {
   return nova;
 }
 
+/** Soukromé vlákno hráče s Pandou. Jedno na hráče. */
+async function vlaknoSPandou(playerId) {
+  const je = await prisma.conversation.findUnique({
+    where: { ownerPlayerId_kind: { ownerPlayerId: playerId, kind: 'PANDA' } },
+  });
+  if (je) return je;
+  const nova = await prisma.conversation.create({
+    data: { kind: 'PANDA', ownerPlayerId: playerId },
+  });
+  await prisma.conversationMember.create({
+    data: { conversationId: nova.id, playerId },
+  });
+  return nova;
+}
+
 /** Přímá konverzace dvou lidí. Hledá se podle dvojice členů. */
 async function primaKonverzace(a, b) {
   const kandidati = await prisma.conversationMember.findMany({
@@ -369,6 +384,6 @@ module.exports = {
   prazskeCasti, offsetPrahy, konecDalsihoDne,
   sankce, maSankci,
   muzePsat, hraliProtiSobe,
-  tymovaKonverzace, vlaknoSLigou, primaKonverzace, jeClen,
+  tymovaKonverzace, vlaknoSLigou, vlaknoSPandou, primaKonverzace, jeClen,
   autorProKlienta, BARVY,
 };
