@@ -11,7 +11,14 @@
  *      hráč, trest, média, „chci člověka") → člověk. Sem se model neptá ani
  *      v E2: trefa znamená eskalaci, i kdyby odpověď v ceníku stála.
  *   3. **Znalost s dostatečnou jistotou** → odpoví a vlákno nikoho nečeká.
- *   4. **Cokoli jiného** → člověk. Nevědět je dovolené, vymýšlet ne.
+ *   4. **Jazykový model**, pokud je zapnutý, dostane tytéž znalosti jako
+ *      podklad a smí z nich odpovědět na otázku, kterou porovnávání slov
+ *      netrefilo. Nesmí ale nic přidat — hlídá se to zvlášť, viz
+ *      `panda-model.js`. Bez klíče se tenhle krok přeskočí.
+ *   5. **Cokoli jiného** → člověk. Nevědět je dovolené, vymýšlet ne.
+ *
+ * **Model je až čtvrtý, a to je celý vtip.** Běží až za tvrdým seznamem,
+ * takže se k penězům, sporu ani trestu nedostane, ať se splete jakkoli.
  *
  * **Jedna odchylka od zadání, vědomá.** V zadání stojí „dokud konverzace
  * čeká, Panda mlčí". Platí to na slib („předala jsem to lize") — ten se
@@ -24,6 +31,7 @@
 const prisma = require('../lib/prisma');
 const chat = require('./chat');
 const znalosti = require('./panda-znalosti');
+const model = require('./panda-model');
 const { createNotifications } = require('../routes/notifications');
 
 /* ───────────────────────────── termín slovy ────────────────────────────── */
@@ -140,20 +148,52 @@ function textEskalace(dueAt) {
  * @param {boolean} p.maPrilohu
  */
 async function obsluz({ konverzace, hrac, text, zpravaId = null, maPrilohu = false }) {
-  const rozhodnuti = rozhodni({ text, maPrilohu });
+  let rozhodnuti = rozhodni({ text, maPrilohu });
+
+  // Model dostane slovo jen tam, kde porovnávání slov nic nenašlo — tedy
+  // nikdy u tvrdého seznamu a nikdy u zprávy jen s obrázkem.
+  if (rozhodnuti.kategorie === 'nezatrideno' && model.dostupny()) {
+    const odModelu = await model.zeptejSe(text);
+    if (odModelu) {
+      rozhodnuti = {
+        akce: 'ODPOVED',
+        kategorie: odModelu.klic || 'model',
+        duvod: `model odpověděl z podkladu ${odModelu.klic || 'neurčeno'}`,
+        odpoved: odModelu.odpoved,
+        zdroj: 'Pravidla a ceník FSL',
+        zdrojDat: 'model',
+      };
+    }
+  }
   const jmeno = `${hrac.firstName ?? ''} ${hrac.lastName ?? ''}`.trim() || 'Hráč';
 
-  // Audit: co Panda viděla a jak se rozhodla. Bez toho nejde po měsíci
-  // říct, jestli se eskaluje moc, nebo málo.
-  const zapisAudit = (vysledek) => prisma.pandaAction.create({
-    data: {
-      kind: 'triage',
-      playerId: hrac.id ?? null,
-      input: { text: String(text ?? '').slice(0, 500), maPrilohu },
-      result: { ...rozhodnuti, odpoved: undefined, ...vysledek },
-      ok: true,
-    },
-  }).catch(() => {});
+  // Audit má dvě vrstvy a obě jsou k něčemu jinému. `PandaAction` drží, co
+  // Panda **viděla** — včetně textu, kvůli pozdějšímu sporu. `TriageLog`
+  // drží jen **jak se rozhodla**, zato v podobě, ze které jde po měsíci
+  // spočítat, jestli se eskaluje moc, nebo málo.
+  const zapisAudit = async (vysledek) => {
+    await prisma.pandaAction.create({
+      data: {
+        kind: 'triage',
+        playerId: hrac.id ?? null,
+        input: { text: String(text ?? '').slice(0, 500), maPrilohu },
+        result: { ...rozhodnuti, odpoved: undefined, ...vysledek },
+        ok: true,
+      },
+    }).catch(() => {});
+    // Otazník je tu schválně: dokud se po nasazení nepustí `prisma generate`,
+    // klient tyhle modely nezná a bez něj by spadla celá zpráva.
+    await prisma.triageLog?.create({
+      data: {
+        playerId: hrac.id ?? null,
+        messageId: zpravaId,
+        category: rozhodnuti.kategorie,
+        handled: rozhodnuti.akce === 'ODPOVED',
+        ruleHit: rozhodnuti.ruleHit ?? null,
+        source: rozhodnuti.akce === 'ODPOVED' ? (rozhodnuti.zdrojDat ?? 'znalosti') : null,
+      },
+    }).catch(() => {});
+  };
 
   if (rozhodnuti.akce === 'ODPOVED') {
     const zprava = await prisma.message.create({
@@ -215,6 +255,19 @@ async function obsluz({ konverzace, hrac, text, zpravaId = null, maPrilohu = fal
     body: `${jmeno}: ${String(text ?? '').slice(0, 100)}`,
     screen: 'chat',
   })));
+
+  // Historie eskalací. Příznak na konverzaci říká jen „něco čeká" — tohle
+  // je to, z čeho se dá po sezóně říct, jak liga odpovídala.
+  await prisma.supportEscalation?.create({
+    data: {
+      conversationId: konverzace.id,
+      playerId: hrac.id ?? null,
+      messageId: zpravaId,
+      category: rozhodnuti.kategorie,
+      reason: rozhodnuti.duvod,
+      dueAt,
+    },
+  }).catch(() => {});
 
   await zapisAudit({ messageId: slib?.id ?? null, dueAt, jizCekalo: jizCeka });
   return { ...rozhodnuti, zpravaId: slib?.id ?? null, dueAt, puvodniZprava: zpravaId };

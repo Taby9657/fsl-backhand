@@ -184,5 +184,38 @@ je('ve ctvrtek', linka.vDen(new Date('2026-09-24T12:00:00Z')), 've čtvrtek 24. 
 je('v sobotu', linka.vDen(new Date('2026-09-26T12:00:00Z')), 'v sobotu 26. 9.');
 je('slib nese den', linka.textEskalace(new Date('2026-09-23T12:00:00Z')).includes('ve středu'), true);
 
+console.log('\nPanda - pravidla souteze');
+je('format hry', kat('kolik hracu je na hristi'), 'format-hry');
+je('delka zapasu', kat('jak dlouho trva zapas'), 'format-hry');
+je('kolik kol', kat('kolik kol ma zakladni cast'), 'zakladni-cast');
+je('playoff pro vsechny', kat('kdo postupuje do playoff'), 'zakladni-cast');
+je('soupiska a sestava', kat('kolik lidi musi byt na soupisce'), 'soupiska-sestava');
+je('splatnost', kat('dokdy musim zaplatit'), 'splatnost');
+je('dph', kat('je v cene dph'), 'dph');
+je('doporucovaci kod', kat('jak funguje doporucovaci kod'), 'doporuceni');
+je('pozdni prichod', kat('prijdu pozdeji na zapas'), 'pozdni-prichod');
+je('zaskok', kat('co je zaskok'), 'zaskok');
+je('dvojice', kat('chceme se prihlasit ve dvou'), 'dvojice');
+je('volba tymu do playoff', kat('za koho hraju v playoff'), 'playoff-volba');
+
+const pravidla = linka.rozhodni({ text: 'kolik hracu je na hristi' });
+je('format nese 5 + 1', pravidla.odpoved.includes('5 + 1'), true);
+je('format rozlisuje cas', pravidla.odpoved.includes('hrubý čas'), true);
+je('sestava nese 8 + 1',
+   linka.rozhodni({ text: 'kolik lidi musi byt na soupisce' }).odpoved.includes('8 + 1'), true);
+
+console.log('\nPanda - kontrola pred odeslanim');
+const model = require('../src/services/panda-model');
+const podklady = model.kontext();
+je('bez klice model nebezi', model.dostupny(), Boolean(process.env.ANTHROPIC_API_KEY));
+je('podklady nesou cenik', podklady.includes('300 Kč'), true);
+je('cena z podkladu projde', model.zkontroluj('Licence stoji 300 Kc.'.replace('Kc','Kč'), podklady) !== null, true);
+je('vymyslena cena neprojde', model.zkontroluj('Licence stoji 450 Kč.', podklady), 'null');
+je('telefon neprojde', model.zkontroluj('Zavolej na 605 123 456.', podklady), 'null');
+je('datum narozeni neprojde', model.zkontroluj('Narozen 5. 3. 1996.', podklady), 'null');
+je('prazdna odpoved neprojde', model.zkontroluj('', podklady), 'null');
+je('romanova odpoved neprojde', model.zkontroluj('a'.repeat(900), podklady), 'null');
+
+
 console.log(`\n${ok} v poradku, ${chyb} spatne\n`);
 process.exit(chyb === 0 ? 0 : 1);

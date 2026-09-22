@@ -290,6 +290,13 @@ router.post('/conversations/:id/messages', requireAuth, async (req, res, next) =
       if (majitel?.userId) {
         await createNotification(majitel.userId, 'Odpověď z ligy', text.slice(0, 120), 'chat');
       }
+      // Uzavřít otevřené eskalace téhle konverzace. Odpověď je jedna na
+      // vlákno, ne na dotaz — kdo se zeptal třikrát, dostane jednu odpověď
+      // a všechny tři řádky se uzavřou stejným okamžikem.
+      await prisma.supportEscalation?.updateMany({
+        where: { conversationId: konverzace.id, answeredAt: null },
+        data: { answeredAt: new Date(), answeredBy: req.user.id },
+      }).catch(() => {});
     } else {
       await prisma.conversation.update({ where: { id: konverzace.id }, data });
     }

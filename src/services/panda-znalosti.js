@@ -222,7 +222,9 @@ const ZNALOSTI = [
     zdroj: 'Můj tým — pravidla sestavy',
     odpoved: () =>
       'Bez brankáře se zápas nezačne — proto na něj upozorňuju dřív než na počet hráčů. '
-      + 'Kdo bránu vezme, přihlásí se normálně v Mém týmu a do brány ho zapíše sestava.',
+      + 'Brankáři drží na soupisce první dvě místa a dva nejsou luxus: tým s jediným gólmanem '
+      + 'je při běžné docházce bez brankáře zhruba každý třetí zápas. Do brány jde jeden, '
+      + 'druhý normálně hraje v poli.',
   },
   {
     klic: 'zapisovatel',
@@ -242,6 +244,107 @@ const ZNALOSTI = [
     odpoved: () =>
       'Superlicence stojí 300 Kč a umožňuje nastupovat i za cizí tým — nejvýš za tři '
       + 'soupisky za sezónu.',
+  },
+
+  /* ── pravidla soutěže (`fsl-pravidla-souteze.md`) ────────────────────── */
+
+  {
+    klic: 'format-hry',
+    klicova: ['format', 'kolik hracu na hristi', 'na hristi', 'hraci cas', 'hruby cas', 'cisty cas', 'tretin', 'jak dlouho trva zapas', 'jak dlouho se hraje'],
+    slova: ['minut', 'zapas', 'hracu'],
+    zdroj: 'Pravidla soutěže — formát hry',
+    odpoved: () =>
+      'Hraje se 5 + 1, tedy pět hráčů do pole a brankář, na 3 × 15 minut. Základní část '
+      + 'a předkolo se hrají na hrubý čas, od čtvrtfinále na čistý.',
+  },
+  {
+    klic: 'zakladni-cast',
+    klicova: ['kolik kol', 'zakladni cast', 'playoff', 'play off', 'postupuj', 'vyrazovac'],
+    slova: ['sezon', 'kol|', 'tabulk'],
+    zdroj: 'Pravidla soutěže — sezóna',
+    odpoved: () =>
+      'Základní část má 15 až 20 kol podle počtu přihlášených týmů a hraje se od listopadu '
+      + 'do března. Pak je play-off a postupují do něj všechny týmy — základní část rozhoduje '
+      + 'jen o nasazení. Předkolo a čtvrtfinále se hrají na dvě vítězná utkání, semifinále '
+      + 'a finále na tři.',
+  },
+  {
+    klic: 'soupiska-sestava',
+    klicova: ['soupisk', 'kolik lidi', 'kolik hracu', 'strop', 'maximum', 'minimum', 'nejmene'],
+    slova: ['tym', 'sestav'],
+    zdroj: 'Pravidla soutěže — soupiska a sestava',
+    odpoved: () =>
+      'Sestava na zápas je 8 + 1 až 18 + 2. Soupiska na sezónu má minimum 9 + 1 a horní strop '
+      + 'nemá — platí to i pro otevřené týmy. Nominace je schválně větší než šestice na hřišti: '
+      + 'hraje se hrubý čas a střídá se průběžně.',
+  },
+  {
+    klic: 'splatnost',
+    klicova: ['splatnost', 'dokdy zaplat', 'dokdy', '48 hodin', 'do kdy zaplat'],
+    slova: ['zaplat', 'start', 'zapas'],
+    zdroj: 'Pravidla soutěže — splatnost',
+    odpoved: () =>
+      'Každý poplatek musí být zaplacený nejpozději 48 hodin před začátkem nejbližšího zápasu. '
+      + 'Kdo nemá volný start, do sestavy nejde; kdo nemá licenci, nesmí nastoupit vůbec.',
+  },
+  {
+    klic: 'dph',
+    klicova: ['dph', 'danovy doklad', 'platce dane', 's dph', 'bez dph'],
+    slova: ['cena', 'doklad'],
+    zdroj: 'Pravidla soutěže — poplatky',
+    odpoved: () =>
+      'Liga není plátce DPH, takže ceny jsou konečné a daň se k nim nikde nepřipočítává. '
+      + 'Ke každé platbě chodí doklad — u karty od platební brány, u převodu ho vystaví systém '
+      + 'při spárování.',
+  },
+  {
+    klic: 'doporuceni',
+    klicova: ['doporuc', 'privedu', 'priveden', 'zapas zdarma', 'referral'],
+    slova: ['kod', 'kamarad'],
+    zdroj: 'Pravidla soutěže — přiveď hráče',
+    odpoved: () =>
+      'Přivedeš hráče, máš zápas zdarma. Když s tvým kódem přijde nový hráč, zaplatí registraci '
+      + 'a koupí si balíček od tří zápasů výš, připíše se ti jeden zápas zdarma — a kolik lidí '
+      + 'přivedeš, omezené není. Vlastní kód se ti v účtu odemkne po prvním odehraném zápase.',
+  },
+  {
+    klic: 'pozdni-prichod',
+    klicova: ['pozdni prichod', 'dorazim pozdeji', 'prijdu pozdeji', 'rozehran', 'pozde na zapas'],
+    slova: ['zapas', 'doplnit'],
+    zdroj: 'Pravidla soutěže — pozdní příchod',
+    odpoved: () =>
+      'Do rozehraného zápasu jde doplnit kmenový hráč s platnou licencí a volným startem. '
+      + 'Hostující hráč se po zahájení přidat nedá a doplnění zůstane v zápise vidět jako '
+      + 'štítek „doplněn".',
+  },
+  {
+    klic: 'zaskok',
+    klicova: ['zaskok', 'zaskoc', 'vypomoc', 'pujcit hrace'],
+    slova: ['otevren', 'tym'],
+    zdroj: 'Pravidla soutěže — záskok',
+    odpoved: () =>
+      'Záskok se spustí, jen když otevřený tým 48 hodin před zápasem nemá 8 + 1. Jde jen '
+      + 'z jiného otevřeného týmu, superlicenci nepotřebuje a je nejvýš třikrát za sezónu '
+      + 'na hráče. Do nároku na play-off se nepočítá — je to výpomoc, ne členství.',
+  },
+  {
+    klic: 'dvojice',
+    klicova: ['dvojice', 've dvou', 'stejny kod', 'spolu do tymu', 's kamaradem do stejneho'],
+    slova: ['kod', 'tym'],
+    zdroj: 'Pravidla soutěže — otevřené týmy',
+    odpoved: () =>
+      'Dvojice se drží pohromadě: obě přihlášky se stejným kódem zařadíme do stejného týmu. '
+      + 'Trojice a víc už ne — to je zárodek týmu a patří do běžné registrace.',
+  },
+  {
+    klic: 'playoff-volba',
+    klicova: ['za koho', 'primarni tym', 'sekundarni tym', 'volba tymu'],
+    slova: ['playoff', 'play off', 'tym'],
+    zdroj: 'Pravidla soutěže — play-off',
+    odpoved: () =>
+      'Po základní části si zvolíš primární tým a volitelně sekundární — vybírat můžeš jen '
+      + 'z týmů, za které jsi odehrál aspoň tři zápasy. Za sekundární tým smíš nastoupit, '
+      + 'teprve až primárnímu play-off skončí. Volba se zamyká, jakmile play-off začne.',
   },
 ];
 

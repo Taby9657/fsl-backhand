@@ -1409,3 +1409,49 @@ model MatchPreview {
 
   @@index([state, expiresAt])
 }
+
+/// Log třídění — co Panda viděla a jak se rozhodla.
+///
+/// Slouží k jediné otázce: **eskaluje se moc, nebo málo?** Bez řádku na
+/// každou zprávu to po měsíci nikdo nespočítá. Bez relací schválně, stejně
+/// jako zbytek chatu — záznam musí přežít smazání účtu.
+model TriageLog {
+  id        String   @id @default(uuid())
+  playerId  String?
+  messageId String?
+  category  String
+  /// Vyřídila to Panda sama?
+  handled   Boolean  @default(false)
+  /// Které slovo z tvrdého seznamu to chytilo, když ho chytilo.
+  ruleHit   String?
+  /// Odkud odpověď byla — klíč znalosti, nebo `model`.
+  source    String?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([category, createdAt])
+}
+
+/// Jedna eskalace na supervisora — od předání po odpověď.
+///
+/// Příznak `waitingSupervisor` na konverzaci říká jen „něco čeká". Tahle
+/// tabulka drží **historii**: co se eskalovalo, kdy to mělo být hotové, kdo
+/// odpověděl a jestli se to stihlo. Z toho se dá říct, jak liga odpovídá —
+/// z příznaku ne.
+model SupportEscalation {
+  id             String    @id @default(uuid())
+  conversationId String
+  playerId       String?
+  messageId      String?
+  category       String
+  reason         String
+  dueAt          DateTime
+  answeredAt     DateTime?
+  answeredBy     String?
+  /// Nastaví plánovač, když termín uplyne dřív než odpověď.
+  overdue        Boolean   @default(false)
+  createdAt      DateTime  @default(now())
+
+  @@index([answeredAt, dueAt])
+  @@index([conversationId, createdAt])
+}

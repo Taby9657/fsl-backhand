@@ -199,4 +199,64 @@ async function zpracujZapasy(ted = new Date()) {
   return { zapasu: zapasy.length, odeslano };
 }
 
-module.exports = { zpracujZapasy, posliTymu, stavSestavy, SABLONY, kdy, jednou };
+/**
+ * Co čeká na ligu po termínu.
+ *
+ * Dělá dvě věci, obojí jednou: **označí eskalaci jako prošlou** a **jednou
+ * dá vědět hráči**, že termín uplynul. To druhé je slib, který liga dala —
+ * když ho nedodrží, musí to říct sama, ne čekat, až se hráč ozve podruhé.
+ *
+ * Zpráva po termínu vzniká po půlnoci, takže **jde jen do aplikace**, žádný
+ * e-mail (zadání, oddíl 7). Pandin vypínač na tohle vliv nemá: je to slib
+ * ligy, ne zpráva kolem zápasu.
+ */
+async function zpracujPoTerminu(ted = new Date()) {
+  const prosle = await prisma.supportEscalation.updateMany({
+    where: { answeredAt: null, overdue: false, dueAt: { lt: ted } },
+    data: { overdue: true },
+  });
+
+  const konverzace = await prisma.conversation.findMany({
+    where: {
+      kind: 'SUPPORT',
+      waitingSupervisor: true,
+      overdueNotifiedAt: null,
+      dueAt: { lt: ted },
+    },
+    select: { id: true, dueAt: true },
+  });
+
+  for (const k of konverzace) {
+    const zprava = await prisma.message.create({
+      data: {
+        conversationId: k.id,
+        authorPlayerId: chat.PANDA,
+        class: 'PROVOZNI',
+        body: 'Termín, který jsem ti slíbila, uplynul a liga se zatím neozvala. '
+            + 'Připomněla jsem to — omlouvám se za zdržení.',
+      },
+    });
+    await prisma.conversation.update({
+      where: { id: k.id },
+      data: { overdueNotifiedAt: ted, lastMessageAt: zprava.createdAt },
+    });
+  }
+
+  // Supervisor se to dozví jednou za průchod, ne jednou za vlákno.
+  if (konverzace.length) {
+    const supervisori = await prisma.user.findMany({
+      where: { isSupervisor: true }, select: { id: true },
+    });
+    for (const u of supervisori) {
+      await createNotification(
+        u.id, 'Po termínu',
+        `${konverzace.length} ${konverzace.length === 1 ? 'vlákno čeká' : 'vláken čeká'} déle, než liga slíbila.`,
+        'chat',
+      );
+    }
+  }
+
+  return { oznaceno: prosle.count, upozorneno: konverzace.length };
+}
+
+module.exports = { zpracujZapasy, zpracujPoTerminu, posliTymu, stavSestavy, SABLONY, kdy, jednou };

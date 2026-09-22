@@ -327,8 +327,9 @@ const PANDA_INTERVAL_MS = 60 * 60 * 1000;
 
 async function runPanda() {
   try {
-    const { zpracujZapasy } = require('./src/services/panda');
+    const { zpracujZapasy, zpracujPoTerminu } = require('./src/services/panda');
     const vysledek = await zpracujZapasy();
+    await zpracujPoTerminu();
     if (vysledek.odeslano > 0) {
       console.log(`[Panda] ${vysledek.odeslano} zpráv k ${vysledek.zapasu} zápasům.`);
     }
