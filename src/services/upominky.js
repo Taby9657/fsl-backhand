@@ -34,6 +34,12 @@
  * kteří zaplatili. Skutečná páka je věcná a stojí v pravidlech — bez
  * licence hráč nenastoupí a tým bez registrace se do soutěže nezařadí.
  *
+ * **Jedna výjimka, a není to výjimka ze smazání:** kdo je zařazený do
+ * otevřeného týmu a nezaplatí vstupní balík do 72 hodin, přestane držet
+ * místo v soupisce (`services/vstupy.js`). Nic se mu nemaže, balík mu
+ * zůstává v košíku a po zaplacení se zařadí zpátky — drží se tedy jen
+ * místo, na které čeká někdo další, ne člověk.
+ *
  * ── Proč se neposílá dvakrát ────────────────────────────────────────────
  * `upominekPoslano` říká, kolikátá fáze je na řadě, `upominkaAt` kdy odešla
  * poslední. **Cron je jen budík, ne frekvence psaní** — že se každou hodinu
@@ -50,6 +56,7 @@
 
 const prisma = require('../lib/prisma');
 const mailer = require('./mailer');
+const vstupy = require('./vstupy');
 
 const HODINA = 60 * 60 * 1000;
 const DEN    = 24 * HODINA;
@@ -114,7 +121,18 @@ async function posliUpominky({ ted = new Date(), od = UPOMINKY_OD } = {}) {
     upominkyTymum(ted, od),
     nabidkyVDraftu(ted, od),
   ]);
-  return { hracu, tymu, draftu };
+
+  // Veze se na stejném budíku schválně: je to hodinový průchod se stejným
+  // denním oknem a vlastní cron by za to nestál. Spadlé uvolňování nesmí
+  // shodit rozesílku, proto `catch` — upomínky jsou důležitější.
+  let uvolneno = 0;
+  try {
+    uvolneno = await vstupy.uvolniNezaplacenaMista({ ted });
+  } catch (err) {
+    console.error('[upomínky] Uvolnění nezaplacených míst selhalo:', err.message);
+  }
+
+  return { hracu, tymu, draftu, uvolneno };
 }
 
 /** Hráč v týmu bez zaplacené licence. */

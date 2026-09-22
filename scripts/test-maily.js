@@ -16,7 +16,11 @@ const Module = require('module');
 
 let db;
 function reset() {
-  db = { playerPayments: [], teamPayments: [], odeslane: [] };
+  db = {
+    playerPayments: [], teamPayments: [], odeslane: [],
+    // Pro uvolňování nezaplacených míst v otevřených týmech.
+    soupisky: [], vstupy: [], hraci: [], ucty: [], polozky: [], oznameni: [],
+  };
 }
 
 const fakePrisma = {
@@ -32,6 +36,30 @@ const fakePrisma = {
       Object.assign(p, data);
       return p;
     },
+  },
+  teamRoster: {
+    findMany: async ({ where }) => db.soupisky
+      .filter(r => r.createdAt < where.createdAt.lt && r.team.isOpen === where.team.isOpen)
+      .map(r => ({ ...r, player: db.hraci.find(h => h.id === r.playerId) ?? null })),
+  },
+  openEntry: {
+    findUnique: async ({ where }) => db.vstupy.find(v =>
+      v.playerId === where.playerId_season.playerId
+      && v.season === where.playerId_season.season) ?? null,
+  },
+  player: {
+    update: async ({ where, data }) => {
+      const h = db.hraci.find(x => x.id === where.id);
+      Object.assign(h, data);
+      return h;
+    },
+  },
+  user: {
+    findUnique: async ({ where }) => db.ucty.find(u => u.id === where.id) ?? null,
+  },
+  cartItem: {
+    findFirst: async ({ where }) => db.polozky.find(i =>
+      i.kind === where.kind && i.playerId === where.playerId) ?? null,
   },
   teamPayment: {
     findMany: async ({ where }) => db.teamPayments.filter(t =>
@@ -49,6 +77,24 @@ const fakePrisma = {
 const orig = Module._load;
 Module._load = function (request) {
   if (request.endsWith('lib/prisma')) return fakePrisma;
+  if (/(^|\/)licence$/.test(request)) {
+    return {
+      // Kdo za tým nastoupil, se neodebírá — test to hlídá přes `starty`.
+      startyPodleTymu: async (playerId) => new Map(
+        db.soupisky
+          .filter(r => r.playerId === playerId && r.starty)
+          .map(r => [r.teamId, r.starty]),
+      ),
+      odebratZeSoupisky: async (playerId, teamId, season) => {
+        db.soupisky = db.soupisky.filter(r =>
+          !(r.playerId === playerId && r.teamId === teamId && r.season === season));
+        return { ok: true };
+      },
+    };
+  }
+  if (request.endsWith('routes/notifications')) {
+    return { createNotification: async (userId, title) => { db.oznameni.push({ userId, title }); } };
+  }
   return orig.apply(this, arguments);
 };
 
@@ -347,6 +393,67 @@ function osloveniTesty() {
   });
   ok(rano.hracu === 1 && db.odeslane.some(z => z.to === 'noc@test.cz'),
     'a ráno odejde');
+
+  // --- 9. nezaplacený vstup do otevřeného týmu: po 72 h se místo uvolní ---
+  //
+  // Text lhůty a lhůta, která se doopravdy vymáhá, se musí shodovat —
+  // e-mail, který slibuje jiné číslo než kód, je horší než žádný.
+  const vstupy = require('../src/services/vstupy');
+  ok(vstupy.LHUTA / vstupy.HODINA === mailer.LHUTA_HODIN,
+    `lhůta v kódu (${vstupy.LHUTA / vstupy.HODINA} h) sedí s tou, kterou slibuje e-mail`);
+
+  const uvolneni = mailer.uvolneneMistoMail({ jmeno: 'jan', tym: 'FSL Open A', castka: 800 });
+  projdi('uvolněné místo', uvolneni);
+  ok(/Nic jsi neztratil/.test(uvolneni.text) && /zpátky/.test(uvolneni.text),
+    'uvolněné místo: říká, že se nic nemaže a že se dá vrátit — jinak toho člověka ztratíme');
+  ok(/převodem/.test(uvolneni.text),
+    'a počítá s tím, že platba převodem mohla být zrovna na cestě');
+  ok(!/smaž|smaz|vymaž|propadne|nárok zaniká/i.test(`${uvolneni.subject} ${uvolneni.text}`),
+    'a nikde nehrozí smazáním — nic se nemaže, jen se uvolní místo');
+
+  reset();
+  const ZAR = new Date('2026-09-20T09:00:00Z');   // zařazení
+  const PO  = new Date('2026-09-23T12:00:00Z');   // o 75 h později, v okně
+  const otevreny = { id: 'T1', name: 'FSL Open A', isOpen: true };
+
+  function naSoupisce(id, { starty = 0, zaplaceno = false, kdy = ZAR } = {}) {
+    db.hraci.push({ id, firstName: 'jan', teamId: 'T1', userId: `U${id}` });
+    db.ucty.push({ id: `U${id}`, email: `${id.toLowerCase()}@test.cz` });
+    db.soupisky.push({ playerId: id, teamId: 'T1', season: '2026/27', createdAt: kdy, team: otevreny, starty });
+    db.polozky.push({ kind: 'OPEN_ENTRY', playerId: id, amount: 800 });
+    if (zaplaceno) db.vstupy.push({ playerId: id, season: '2026/27', status: 'PAID' });
+  }
+
+  naSoupisce('P1');                                   // nezaplatil → ven
+  naSoupisce('P2', { zaplaceno: true });              // zaplatil → zůstává
+  naSoupisce('P3', { starty: 2 });                    // odehrál → zůstává
+  naSoupisce('P4', { kdy: new Date('2026-09-23T09:00:00Z') }); // 3 h stará → zůstává
+
+  const uvolneno = await vstupy.uvolniNezaplacenaMista({ ted: PO });
+
+  ok(uvolneno === 1, 'uvolní se právě jedno místo ze čtyř');
+  ok(db.hraci.find(h => h.id === 'P1').teamId === null
+    && !db.soupisky.some(r => r.playerId === 'P1'),
+    'kdo do 72 h nezaplatil, přestane držet místo — z týmu i ze soupisky');
+  ok(db.odeslane.some(z => z.to === 'p1@test.cz' && /Uvolnili jsme/.test(z.subject))
+    && db.oznameni.some(o => o.userId === 'UP1'),
+    'a dozví se to e-mailem i v aplikaci');
+  ok(db.hraci.find(h => h.id === 'P2').teamId === 'T1',
+    'kdo zaplatil, zůstává');
+  ok(db.hraci.find(h => h.id === 'P3').teamId === 'T1'
+    && db.soupisky.some(r => r.playerId === 'P3'),
+    'a kdo za tým nastoupil, se neodebírá ani nezaplacený — na zápasech stojí statistiky');
+  ok(db.hraci.find(h => h.id === 'P4').teamId === 'T1',
+    'tři hodiny po zařazení se nesahá na nikoho');
+
+  // Klubový tým se tímhle neřeší vůbec — tam se soupiska nesmí měnit.
+  reset();
+  db.hraci.push({ id: 'P5', firstName: 'jan', teamId: 'T9', userId: 'U5' });
+  db.soupisky.push({ playerId: 'P5', teamId: 'T9', season: '2026/27', createdAt: ZAR,
+    team: { id: 'T9', name: 'Draci', isOpen: false } });
+  ok(await vstupy.uvolniNezaplacenaMista({ ted: PO }) === 0
+    && db.hraci.find(h => h.id === 'P5').teamId === 'T9',
+    'do klubového týmu se nesahá — tam licenci hlídá vedoucí, ne tenhle běh');
 
   console.log(fail === 0 ? '\nVŠE PROŠLO' : `\n${fail} SELHALO`);
   process.exit(fail === 0 ? 0 : 1);

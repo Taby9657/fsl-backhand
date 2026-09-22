@@ -189,6 +189,13 @@ Odpovědět můžeš přímo na tenhle e-mail.`;
 
 const WEB = 'https://fslleague.cz';
 
+/**
+ * Do kolika hodin musí být vstupní balík do otevřeného týmu zaplacený, než
+ * se místo uvolní. Vymáhá to `services/vstupy.js` — **když se změní tam,
+ * musí se změnit i tady**, jinak e-mail slíbí jinou lhůtu, než jaká platí.
+ */
+const LHUTA_HODIN = 72;
+
 /** Společná obálka, ať všechny zprávy vypadají stejně a drží se na šířku mobilu. */
 function obalka(nadpis, telo) {
   return `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:560px;color:#222">
@@ -672,10 +679,19 @@ function zarazeniDoTymuMail({
 Do košíku jsme ti vložili vstupní balík Virtuální vedoucí za ${castka} Kč na
 sezónu. ${rozpis} Bez něj tě do sestavy postavit nemůžeme.
 
-Zaplatit jde kartou i převodem: ${WEB}/platby`;
+Zaplatit jde kartou i převodem: ${WEB}/platby
+
+Zaplať prosím do ${LHUTA_HODIN} hodin. Otevřený tým se skládá na počet, takže dokud
+máš místo a nemáš zaplaceno, tým kvůli tobě není kompletní a nikdo jiný to
+místo nedostane. Po ${LHUTA_HODIN} hodinách ho proto uvolníme. Nic se tím neruší:
+balík ti zůstane v košíku a jakmile zaplatíš, zařadíme tě zpátky.`;
     jadroHtml = odstavec(coJeOtevreny)
       + ramecek(`<strong>Virtuální vedoucí — ${castka} Kč</strong> na sezónu, už ti leží v košíku.<br>${rozpis}`)
-      + tlacitko('Zaplatit v košíku', '/platby');
+      + tlacitko('Zaplatit v košíku', '/platby')
+      + odstavec(`<strong>Zaplať prosím do ${LHUTA_HODIN} hodin.</strong> Otevřený tým se skládá na počet, `
+        + 'takže dokud máš místo a nemáš zaplaceno, tým kvůli tobě není kompletní a nikdo jiný to místo '
+        + `nedostane — po ${LHUTA_HODIN} hodinách ho proto uvolníme. Nic se tím neruší: balík ti zůstane `
+        + 'v košíku a jakmile zaplatíš, zařadíme tě zpátky.');
   } else if (otevreny) {
     jadroText =
 `${coJeOtevreny}
@@ -719,6 +735,49 @@ Když ti zařazení nesedí, napiš nám na ${supervisorAddress()} — dá se to
 }
 
 /**
+ * Místo v otevřeném týmu se uvolnilo, protože nedorazila platba.
+ *
+ * **Tohle není výhrůžka ani trest a nesmí tak znít.** Nic se nemaže, hráč
+ * o nic nepřišel — jen přestal držet místo, na které čeká někdo další.
+ * Proto je v textu dvakrát řečeno, že se dá vrátit: kdyby si to člověk
+ * přečetl jako „vyhodili mě", ztratíme ho, i když zaplatit chtěl.
+ *
+ * Zvlášť to platí u **platby převodem**: peníze mohou být na cestě ve
+ * chvíli, kdy tahle zpráva odchází.
+ */
+function uvolneneMistoMail({ jmeno, tym, castka, hodin = LHUTA_HODIN }) {
+  const oslov = jmena.osloveni(jmeno);
+  const kolik = castka ? `${castka} Kč` : 'vstupní balík';
+
+  const text =
+`${oslov}
+
+do ${hodin} hodin nedorazila platba za vstupní balík, tak jsme tvoje místo
+v týmu ${tym} uvolnili. Otevřený tým se skládá na počet a na volné místo
+čekají další lidé — proto ho nedržíme donekonečna.
+
+Nic jsi neztratil. Účet, profil i ${kolik} v košíku zůstávají, jak byly.
+Zaplať, až se ti to bude hodit, a ozvi se nám na ${supervisorAddress()} —
+zařadíme tě zpátky, do stejného týmu nebo do nejbližšího, kde bude místo.
+
+Košík máš tady: ${WEB}/platby
+
+Jestli jsi platil převodem v posledních dnech, nic neřeš — jen nám napiš.
+Peníze mohly být na cestě zrovna ve chvíli, kdy tenhle e-mail odcházel.`;
+
+  const html = obalka(
+    'Uvolnili jsme tvoje místo',
+    odstavec(`${oslov} do ${hodin} hodin nedorazila platba za vstupní balík, tak jsme tvoje místo v týmu <strong>${tym}</strong> uvolnili. Otevřený tým se skládá na počet a na volné místo čekají další lidé.`)
+    + ramecek(`<strong>Nic jsi neztratil.</strong> Účet, profil i ${kolik} v košíku zůstávají, jak byly. Zaplať, až se ti to bude hodit, a ozvi se nám — zařadíme tě zpátky.`)
+    + tlacitko('Zaplatit v košíku', '/platby')
+    + odstavec(`Napsat nám můžeš na <a href="mailto:${supervisorAddress()}" style="color:#8a6d2f">${supervisorAddress()}</a>, nebo rovnou odpovědět na tenhle e-mail.`)
+    + odstavec('Jestli jsi platil převodem v posledních dnech, nic neřeš — jen nám napiš. Peníze mohly být na cestě zrovna ve chvíli, kdy tenhle e-mail odcházel.'),
+  );
+
+  return { subject: `Uvolnili jsme tvoje místo v týmu ${tym}`, text, html };
+}
+
+/**
  * Odeslání, které nesmí položit to, kvůli čemu se volá.
  *
  * Registrace se nesmí rozbít proto, že Resend zrovna neodpovídá — člověk
@@ -752,4 +811,6 @@ module.exports = {
   nabidkaVstupuMail,
   nabidkaTymuMail,
   zarazeniDoTymuMail,
+  uvolneneMistoMail,
+  LHUTA_HODIN,
 };
