@@ -17,14 +17,28 @@ const chat = require('../services/chat');
 const seasonSvc = require('../services/seasonTransition');
 const { createNotification } = require('./notifications');
 
-/** Hráčský profil přihlášeného, nebo 400. */
+/**
+ * Hráčský profil přihlášeného, nebo 400.
+ *
+ * **Supervisor projde i bez hráčského profilu.** Organizátor ligy hráč být
+ * nemusí (`User.isSupervisor` je nezávislé na `Player`) — a kdyby ho tahle
+ * kontrola vyhodila, neměl by kde odpovídat lidem, kteří píšou lize.
+ * Dostane zástupný profil bez id: nic, co se váže na hráče (soupiska,
+ * přihlášení na zápas), mu nepatří, ale konverzace a odpovědi ano.
+ */
 function mujHrac(req, res) {
   const p = req.user?.player;
-  if (!p) {
-    res.status(400).json({ error: 'Chat je pro hráče — nejdřív dokonči registraci hráče' });
-    return null;
+  if (p) return p;
+  if (jeSupervisorem(req)) {
+    return { id: null, firstName: 'Liga', lastName: '', teamId: null, isSupervisor: true };
   }
-  return p;
+  res.status(400).json({ error: 'Chat je pro hráče — nejdřív dokonči registraci hráče' });
+  return null;
+}
+
+/** Supervisor se pozná z účtu i z hráčského profilu. */
+function jeSupervisorem(req) {
+  return Boolean(req.user?.isSupervisor || req.user?.player?.isSupervisor);
 }
 
 const VYBER_AUTORA = {
@@ -45,7 +59,10 @@ function zpravaProKlienta(m, autoriPodleId) {
     replyToId: m.replyToId ?? null,
     createdAt: m.createdAt,
     odSupervisora: m.fromSupervisor,
-    autor: chat.autorProKlienta(m.authorPlayerId ? autoriPodleId[m.authorPlayerId] : null),
+    autor: chat.autorProKlienta(
+      m.authorPlayerId ? autoriPodleId[m.authorPlayerId] : null,
+      m.fromSupervisor,
+    ),
     prilohy: (m.prilohy ?? []).map(p => ({
       id: p.id, url: p.url, thumbUrl: p.thumbUrl, width: p.width, height: p.height,
     })),
@@ -76,12 +93,12 @@ async function autori(zpravy) {
 router.get('/conversations', requireAuth, async (req, res, next) => {
   try {
     const hrac = mujHrac(req, res); if (!hrac) return;
-    const jeSupervisor = Boolean(req.user.isSupervisor || hrac.isSupervisor);
+    const jeSupervisor = jeSupervisorem(req);
 
-    const clenstvi = await prisma.conversationMember.findMany({
+    const clenstvi = hrac.id ? await prisma.conversationMember.findMany({
       where: { playerId: hrac.id, removedAt: null },
       select: { conversationId: true, lastReadAt: true, mutedSocial: true },
-    });
+    }) : [];
     const mojeIds = clenstvi.map(c => c.conversationId);
 
     const kde = req.query.filter === 'waiting' && jeSupervisor
@@ -187,7 +204,7 @@ router.get('/conversations', requireAuth, async (req, res, next) => {
 router.get('/conversations/:id/messages', requireAuth, async (req, res, next) => {
   try {
     const hrac = mujHrac(req, res); if (!hrac) return;
-    const jeSupervisor = Boolean(req.user.isSupervisor || hrac.isSupervisor);
+    const jeSupervisor = jeSupervisorem(req);
     if (!jeSupervisor && !(await chat.jeClen(req.params.id, hrac.id))) {
       return res.status(403).json({ error: 'Do téhle konverzace nevidíš' });
     }
@@ -225,7 +242,7 @@ router.post('/conversations/:id/messages', requireAuth, async (req, res, next) =
     const konverzace = await prisma.conversation.findUnique({ where: { id: req.params.id } });
     if (!konverzace) return res.status(404).json({ error: 'Konverzace nenalezena' });
 
-    const jeSupervisor = Boolean(req.user.isSupervisor || hrac.isSupervisor);
+    const jeSupervisor = jeSupervisorem(req);
     const clen = await chat.jeClen(konverzace.id, hrac.id);
     if (!clen && !jeSupervisor) {
       return res.status(403).json({ error: 'Do téhle konverzace psát nemůžeš' });
@@ -239,8 +256,8 @@ router.post('/conversations/:id/messages', requireAuth, async (req, res, next) =
     const zprava = await prisma.message.create({
       data: {
         conversationId: konverzace.id,
-        authorPlayerId: hrac.id,
-        fromSupervisor: jeSupervisor && konverzace.kind === 'SUPPORT',
+        authorPlayerId: hrac.id,          // null u supervisora bez hráče
+        fromSupervisor: jeSupervisor,
         body: text,
         replyToId: replyToId ?? null,
         class: 'SPOLECENSKA',
@@ -282,7 +299,9 @@ router.patch('/messages/:id', requireAuth, async (req, res, next) => {
     const hrac = mujHrac(req, res); if (!hrac) return;
     const z = await prisma.message.findUnique({ where: { id: req.params.id } });
     if (!z || z.deletedAt) return res.status(404).json({ error: 'Zpráva nenalezena' });
-    if (z.authorPlayerId !== hrac.id) return res.status(403).json({ error: 'Cizí zprávu upravit nejde' });
+    if (!hrac.id || z.authorPlayerId !== hrac.id) {
+      return res.status(403).json({ error: 'Cizí zprávu upravit nejde' });
+    }
     const text = (req.body?.body ?? '').trim();
     if (!text) return res.status(400).json({ error: 'Prázdnou zprávu uložit nejde' });
     const upravena = await prisma.message.update({
@@ -302,10 +321,10 @@ router.patch('/messages/:id', requireAuth, async (req, res, next) => {
 router.delete('/messages/:id', requireAuth, async (req, res, next) => {
   try {
     const hrac = mujHrac(req, res); if (!hrac) return;
-    const jeSupervisor = Boolean(req.user.isSupervisor || hrac.isSupervisor);
+    const jeSupervisor = jeSupervisorem(req);
     const z = await prisma.message.findUnique({ where: { id: req.params.id } });
     if (!z) return res.status(404).json({ error: 'Zpráva nenalezena' });
-    if (z.authorPlayerId !== hrac.id && !jeSupervisor) {
+    if ((!hrac.id || z.authorPlayerId !== hrac.id) && !jeSupervisor) {
       return res.status(403).json({ error: 'Cizí zprávu smazat nejde' });
     }
     await prisma.message.update({
@@ -325,6 +344,7 @@ router.post('/messages/:id/reactions', requireAuth, async (req, res, next) => {
     const hrac = mujHrac(req, res); if (!hrac) return;
     const emoji = (req.body?.emoji ?? '').trim();
     if (!emoji) return res.status(400).json({ error: 'Chybí emoji' });
+    if (!hrac.id) return res.status(400).json({ error: 'Reagovat můžou hráči' });
     await prisma.messageReaction.upsert({
       where: { messageId_playerId_emoji: { messageId: req.params.id, playerId: hrac.id, emoji } },
       create: { messageId: req.params.id, playerId: hrac.id, emoji },
@@ -375,6 +395,9 @@ router.post('/direct/:playerId', requireAuth, async (req, res, next) => {
   try {
     const hrac = mujHrac(req, res); if (!hrac) return;
     const komu = req.params.playerId;
+    if (!hrac.id) {
+      return res.status(400).json({ error: 'Psát lidem můžou hráči — supervisor odpovídá ve vláknech' });
+    }
     const verdikt = await chat.muzePsat(hrac.id, komu);
 
     if (verdikt === 'NE') {
@@ -572,7 +595,7 @@ router.get('/team/:teamId', requireAuth, async (req, res, next) => {
     const hrac = mujHrac(req, res); if (!hrac) return;
     const teamId = req.params.teamId;
 
-    const jeSupervisor = Boolean(req.user.isSupervisor || hrac.isSupervisor);
+    const jeSupervisor = jeSupervisorem(req);
     const vedouci = await chat.jeVedouci(req.user.id, teamId);
     const naSoupisce = await prisma.teamRoster.findFirst({
       where: { teamId, playerId: hrac.id }, select: { id: true },

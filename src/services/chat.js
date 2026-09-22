@@ -292,9 +292,14 @@ const BARVY = [
  * zůstaly by v historii jeho staré profilovky. Barvu a iniciály počítá
  * backend z id, aby web i pozdější appka ukazovaly totéž.
  */
-function autorProKlienta(player) {
+function autorProKlienta(player, odSupervisora = false) {
   if (!player) {
-    return { id: null, jmeno: 'Panda', panda: true, photoUrl: null };
+    // Zpráva bez autora je Pandina — pokud ji ovšem nenapsal supervisor
+    // bez hráčského profilu. Tyhle dvě věci se nesmí plést: za Pandou
+    // není člověk, za „Ligou" ano.
+    return odSupervisora
+      ? { id: null, jmeno: 'Liga', panda: false, photoUrl: null, iniciely: 'FSL', barva: '#7C5CFF', barvaTextu: '#FFFFFF' }
+      : { id: null, jmeno: 'Panda', panda: true, photoUrl: null };
   }
   const jmeno = `${player.firstName} ${player.lastName}`.trim();
   let soucet = 0;
