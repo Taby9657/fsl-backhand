@@ -200,7 +200,8 @@ je('volba tymu do playoff', kat('za koho hraju v playoff'), 'playoff-volba');
 
 const pravidla = linka.rozhodni({ text: 'kolik hracu je na hristi' });
 je('format nese 5 + 1', pravidla.odpoved.includes('5 + 1'), true);
-je('format rozlisuje cas', pravidla.odpoved.includes('hrubý čas'), true);
+je('cisty cas ve vsech zapasech', pravidla.odpoved.includes('čistého času'), true);
+je('a rika proc to je poznat', pravidla.odpoved.includes('45 minut'), true);
 je('sestava nese 8 + 1',
    linka.rozhodni({ text: 'kolik lidi musi byt na soupisce' }).odpoved.includes('8 + 1'), true);
 

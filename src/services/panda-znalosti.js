@@ -250,12 +250,13 @@ const ZNALOSTI = [
 
   {
     klic: 'format-hry',
-    klicova: ['format', 'kolik hracu na hristi', 'na hristi', 'hraci cas', 'hruby cas', 'cisty cas', 'tretin', 'jak dlouho trva zapas', 'jak dlouho se hraje'],
+    klicova: ['format', 'kolik hracu na hristi', 'na hristi', 'hraci cas', 'cisty cas', 'hruby cas', 'tretin', 'jak dlouho trva zapas', 'jak dlouho se hraje'],
     slova: ['minut', 'zapas', 'hracu'],
     zdroj: 'Pravidla soutěže — formát hry',
     odpoved: () =>
-      'Hraje se 5 + 1, tedy pět hráčů do pole a brankář, na 3 × 15 minut. Základní část '
-      + 'a předkolo se hrají na hrubý čas, od čtvrtfinále na čistý.',
+      'Hraje se 5 + 1, tedy pět hráčů do pole a brankář, na 3 × 15 minut čistého času — '
+      + 'hodiny se při každém přerušení zastavují, a to ve všech zápasech od prvního kola '
+      + 'po finále. Odehraje se tedy celých 45 minut hry.',
   },
   {
     klic: 'zakladni-cast',
@@ -275,8 +276,8 @@ const ZNALOSTI = [
     zdroj: 'Pravidla soutěže — soupiska a sestava',
     odpoved: () =>
       'Sestava na zápas je 8 + 1 až 18 + 2. Soupiska na sezónu má minimum 9 + 1 a horní strop '
-      + 'nemá — platí to i pro otevřené týmy. Nominace je schválně větší než šestice na hřišti: '
-      + 'hraje se hrubý čas a střídá se průběžně.',
+      + 'nemá — platí to i pro otevřené týmy. Nominace je schválně větší než šestice na hřišti, '
+      + 'protože se střídá průběžně.',
   },
   {
     klic: 'splatnost',
