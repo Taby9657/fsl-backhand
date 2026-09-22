@@ -95,6 +95,56 @@ router.get('/conversations', requireAuth, async (req, res, next) => {
     });
 
     const cteni = Object.fromEntries(clenstvi.map(c => [c.conversationId, c.lastReadAt]));
+
+    // Názvy jedním dotazem na každou skupinu, ne dotazem na hlavu.
+    const tymy = await prisma.team.findMany({
+      where: { id: { in: konverzace.map(k => k.teamId).filter(Boolean) } },
+      select: { id: true, name: true },
+    });
+    const nazvyTymu = Object.fromEntries(tymy.map(t => [t.id, t.name]));
+
+    const majitele = await prisma.player.findMany({
+      where: { id: { in: konverzace.map(k => k.ownerPlayerId).filter(Boolean) } },
+      select: VYBER_AUTORA,
+    });
+    const majitelPodleId = Object.fromEntries(majitele.map(p => [p.id, p]));
+
+    // U přímých konverzací je název ten druhý člověk.
+    const protejsky = await prisma.conversationMember.findMany({
+      where: {
+        conversationId: { in: konverzace.filter(k => k.kind === 'DIRECT').map(k => k.id) },
+        playerId: { not: hrac.id },
+        removedAt: null,
+      },
+      select: { conversationId: true, playerId: true },
+    });
+    const protejskiLide = await prisma.player.findMany({
+      where: { id: { in: protejsky.map(p => p.playerId) } },
+      select: VYBER_AUTORA,
+    });
+    const protejsekPodleKonverzace = Object.fromEntries(
+      protejsky.map(p => [p.conversationId, protejskiLide.find(l => l.id === p.playerId)]),
+    );
+
+    /**
+     * Jak se konverzace jmenuje v seznamu.
+     *
+     * Vlákno s ligou se jmenuje jinak podle toho, kdo se dívá: hráč vidí
+     * „Liga", supervisor jméno člověka, který píše — jinak by měl frontu
+     * plnou stejně pojmenovaných řádků.
+     */
+    function nazev(k) {
+      if (k.kind === 'TEAM') return nazvyTymu[k.teamId] ?? 'Tým';
+      if (k.kind === 'PANDA') return 'Panda';
+      if (k.kind === 'SUPPORT') {
+        if (k.ownerPlayerId === hrac.id) return 'Liga';
+        const p = majitelPodleId[k.ownerPlayerId];
+        return p ? `${p.firstName} ${p.lastName}` : 'Hráč';
+      }
+      const d = protejsekPodleKonverzace[k.id];
+      return d ? `${d.firstName} ${d.lastName}` : 'Konverzace';
+    }
+
     const vysledek = [];
     for (const k of konverzace) {
       const posledni = await prisma.message.findFirst({
@@ -115,6 +165,10 @@ router.get('/conversations', requireAuth, async (req, res, next) => {
         id: k.id,
         kind: k.kind,
         teamId: k.teamId,
+        nazev: nazev(k),
+        protejsek: k.kind === 'DIRECT'
+          ? chat.autorProKlienta(protejsekPodleKonverzace[k.id] ?? null)
+          : null,
         cekaNaLigu: k.waitingSupervisor,
         dueAt: k.dueAt,
         lastMessageAt: k.lastMessageAt,
