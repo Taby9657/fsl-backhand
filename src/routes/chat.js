@@ -14,6 +14,7 @@ const router  = express.Router();
 const prisma = require('../lib/prisma');
 const { requireAuth } = require('../middleware/auth');
 const chat = require('../services/chat');
+const seasonSvc = require('../services/seasonTransition');
 const { createNotification } = require('./notifications');
 
 /** Hráčský profil přihlášeného, nebo 400. */
@@ -499,6 +500,126 @@ router.get('/people', requireAuth, async (req, res, next) => {
       });
     }
     res.json(vysledek);
+  } catch (err) { next(err); }
+});
+
+// ===========================================================================
+// Týmová konverzace a její členové
+// ===========================================================================
+
+/**
+ * GET /chat/team/:teamId
+ *
+ * Vrátí konverzaci týmu a cestou do ní doplní lidi ze soupisky. Zakládá se
+ * líně — první člověk, který chat otevře, ho tím vyrobí.
+ */
+router.get('/team/:teamId', requireAuth, async (req, res, next) => {
+  try {
+    const hrac = mujHrac(req, res); if (!hrac) return;
+    const teamId = req.params.teamId;
+
+    const jeSupervisor = Boolean(req.user.isSupervisor || hrac.isSupervisor);
+    const vedouci = await chat.jeVedouci(req.user.id, teamId);
+    const naSoupisce = await prisma.teamRoster.findFirst({
+      where: { teamId, playerId: hrac.id }, select: { id: true },
+    });
+    if (!jeSupervisor && !vedouci && !naSoupisce && hrac.teamId !== teamId) {
+      return res.status(403).json({ error: 'Do chatu cizího týmu nevidíš' });
+    }
+
+    const season = await seasonSvc.currentSeason();
+    if (season) await chat.synchronizujCleny(teamId, season);
+    const konverzace = await chat.tymovaKonverzace(teamId);
+
+    const clenove = await prisma.conversationMember.findMany({
+      where: { conversationId: konverzace.id, removedAt: null },
+      select: { playerId: true },
+    });
+    const lide = await prisma.player.findMany({
+      where: { id: { in: clenove.map(c => c.playerId) } }, select: VYBER_AUTORA,
+    });
+
+    res.json({
+      id: konverzace.id,
+      kind: konverzace.kind,
+      clenove: lide.map(p => chat.autorProKlienta(p)),
+      spravujeClenstvi: vedouci || jeSupervisor,
+    });
+  } catch (err) { next(err); }
+});
+
+/** Kdo smí sahat na členy týmové konverzace: vedoucí, u otevřených supervisor. */
+async function smiSpravovat(req, konverzace) {
+  const hrac = req.user?.player;
+  const jeSupervisor = Boolean(req.user?.isSupervisor || hrac?.isSupervisor);
+  if (jeSupervisor) return true;
+  if (!konverzace.teamId) return false;
+  const tym = await prisma.team.findUnique({
+    where: { id: konverzace.teamId }, select: { isOpen: true },
+  });
+  if (tym?.isOpen) return false;          // otevřený tým vedoucího nemá
+  return chat.jeVedouci(req.user.id, konverzace.teamId);
+}
+
+router.post('/conversations/:id/members', requireAuth, async (req, res, next) => {
+  try {
+    const hrac = mujHrac(req, res); if (!hrac) return;
+    const konverzace = await prisma.conversation.findUnique({ where: { id: req.params.id } });
+    if (!konverzace || konverzace.kind !== 'TEAM') {
+      return res.status(404).json({ error: 'Týmová konverzace nenalezena' });
+    }
+    if (!(await smiSpravovat(req, konverzace))) {
+      return res.status(403).json({ error: 'Členy týmové konverzace spravuje vedoucí' });
+    }
+    const playerId = req.body?.playerId;
+    if (!playerId) return res.status(400).json({ error: 'Chybí hráč' });
+
+    const pridavany = await prisma.player.findUnique({
+      where: { id: playerId }, select: { id: true, teamId: true },
+    });
+    if (!pridavany) return res.status(404).json({ error: 'Hráč nenalezen' });
+
+    const season = await seasonSvc.currentSeason();
+    const naSoupisce = season
+      ? await prisma.teamRoster.findFirst({
+          where: { teamId: konverzace.teamId, playerId, season }, select: { id: true },
+        })
+      : null;
+    if (!naSoupisce && pridavany.teamId !== konverzace.teamId) {
+      return res.status(400).json({ error: 'Do týmového chatu patří jen hráči toho týmu' });
+    }
+
+    await prisma.conversationMember.upsert({
+      where: { conversationId_playerId: { conversationId: konverzace.id, playerId } },
+      create: { conversationId: konverzace.id, playerId, addedById: hrac.id },
+      update: { removedAt: null, addedById: hrac.id },
+    });
+    res.json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+/**
+ * Odebrání z týmové konverzace.
+ *
+ * **Není to vyřazení ze zápasu.** Přihlašování, uzávěrka i výzvy chodí
+ * odebranému dál — vedoucí nesmí být schopen odstřihnout hráče od
+ * informací k zápasu, za který zaplatil.
+ */
+router.delete('/conversations/:id/members/:playerId', requireAuth, async (req, res, next) => {
+  try {
+    const hrac = mujHrac(req, res); if (!hrac) return;
+    const konverzace = await prisma.conversation.findUnique({ where: { id: req.params.id } });
+    if (!konverzace || konverzace.kind !== 'TEAM') {
+      return res.status(404).json({ error: 'Týmová konverzace nenalezena' });
+    }
+    if (!(await smiSpravovat(req, konverzace))) {
+      return res.status(403).json({ error: 'Členy týmové konverzace spravuje vedoucí' });
+    }
+    await prisma.conversationMember.updateMany({
+      where: { conversationId: konverzace.id, playerId: req.params.playerId },
+      data: { removedAt: new Date() },
+    });
+    res.json({ ok: true });
   } catch (err) { next(err); }
 });
 

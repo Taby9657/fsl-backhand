@@ -26,6 +26,7 @@ const licenceRoutes = require('./src/routes/licence');
 const draftRoutes        = require('./src/routes/draft');
 const { processExpiredWindows } = require('./src/routes/draft');
 const chatRoutes    = require('./src/routes/chat');
+const ucastRoutes   = require('./src/routes/ucast');
 const supportRoutes = require('./src/routes/support');
 const searchRoutes       = require('./src/routes/search');
 const requestRoutes      = require('./src/routes/requests');
@@ -165,6 +166,9 @@ app.use('/api/licence',      licenceRoutes);
 app.use('/api/draft',        draftRoutes);
 app.use('/api/search',       searchRoutes);
 // Chat a „napsat lize" — obojí jen pro přihlášené s hráčským profilem.
+// Hraju / Nemůžu visí na /api/matches vedle matchRoutes — co první router
+// nezná, propadne sem.
+app.use('/api/matches',      ucastRoutes);
 app.use('/api/chat',         chatRoutes);
 app.use('/api/support',      supportRoutes);
 

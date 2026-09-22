@@ -296,8 +296,76 @@ function autorProKlienta(player) {
   };
 }
 
+
+// ---------------------------------------------------------------------------
+// Členství v týmové konverzaci
+// ---------------------------------------------------------------------------
+
+/**
+ * Doplní do týmového chatu hráče ze soupisky.
+ *
+ * **Koho vedoucí odebral, nevrací zpátky.** Odebraný člen má řádek
+ * s `removedAt` a ten se při synchronizaci nechává být — jinak by ho každé
+ * doplnění soupisky vrátilo do konverzace, ze které ho vedoucí vyhodil.
+ *
+ * Vrací, kolik lidí přibylo.
+ */
+async function synchronizujCleny(teamId, season) {
+  const konverzace = await tymovaKonverzace(teamId);
+
+  const soupiska = await prisma.teamRoster.findMany({
+    where: { teamId, season },
+    select: { playerId: true },
+  });
+  const kmenovi = await prisma.player.findMany({
+    where: { teamId }, select: { id: true },
+  });
+  const maByt = [...new Set([...soupiska.map(r => r.playerId), ...kmenovi.map(p => p.id)])];
+  if (!maByt.length) return 0;
+
+  const uz = await prisma.conversationMember.findMany({
+    where: { conversationId: konverzace.id, playerId: { in: maByt } },
+    select: { playerId: true },
+  });
+  const uzJsou = new Set(uz.map(m => m.playerId));
+  const chybi = maByt.filter(id => !uzJsou.has(id));
+  if (!chybi.length) return 0;
+
+  await prisma.conversationMember.createMany({
+    data: chybi.map(playerId => ({ conversationId: konverzace.id, playerId })),
+    skipDuplicates: true,
+  });
+  return chybi.length;
+}
+
+/** Je ten účet vedoucím daného týmu? */
+async function jeVedouci(userId, teamId) {
+  if (!userId || !teamId) return false;
+  const m = await prisma.manager.findFirst({
+    where: { userId, teamId }, select: { id: true },
+  });
+  return Boolean(m);
+}
+
+// ---------------------------------------------------------------------------
+// Zápas
+// ---------------------------------------------------------------------------
+
+/** 48 h před výkopem se sestava uzavírá. */
+const UZAVERKA_MS = 48 * 3600 * 1000;
+
+function uzaverka(datumZapasu) {
+  return new Date(new Date(datumZapasu).getTime() - UZAVERKA_MS);
+}
+
+/** Minimum, bez kterého zápas nezačne: 8 do pole + brankář. */
+const MIN_HRACU = 9;
+const MIN_BRANKARU = 1;
+
 module.exports = {
   PANDA,
+  synchronizujCleny, jeVedouci,
+  uzaverka, UZAVERKA_MS, MIN_HRACU, MIN_BRANKARU,
   prazskeCasti, offsetPrahy, konecDalsihoDne,
   sankce, maSankci,
   muzePsat, hraliProtiSobe,

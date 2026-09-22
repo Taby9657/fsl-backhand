@@ -57,5 +57,14 @@ const panda = chat.autorProKlienta(null);
 je('autor null je Panda', panda.panda, true);
 je('Panda nema fotku z profilu', panda.photoUrl, 'null');
 
+
+console.log('\nUzaverka sestavy');
+je('zavira se 48 h pred vykopem',
+   chat.uzaverka(new Date('2026-11-12T18:00:00Z')).toISOString(), '2026-11-10T18:00:00.000Z');
+je('minimum je 8 + 1', chat.MIN_HRACU, 9);
+je('bez brankare se nezacne', chat.MIN_BRANKARU, 1);
+je('uzaverka bere i retezec', chat.uzaverka('2026-11-12T18:00:00Z').getTime(),
+   new Date('2026-11-10T18:00:00Z').getTime());
+
 console.log(`\n${ok} v poradku, ${chyb} spatne\n`);
 process.exit(chyb === 0 ? 0 : 1);
