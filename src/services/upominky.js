@@ -113,6 +113,8 @@ function naRade(plan, poslano, registrace, ted) {
  * záležel na tom, kolikátého zrovna je — a `UPOMINKY_OD` je pevné datum.
  */
 async function posliUpominky({ ted = new Date(), od = UPOMINKY_OD } = {}) {
+  // Ročník je odložený na 2027/28 (31. 10. 2026) — za nic se teď neplatí.
+  if (require('../utils/sezona').ODLOZENO) return { hracu: 0, tymu: 0, draftu: 0, odlozeno: true };
   // Mimo okno se ani nesahá do databáze — co dozrálo, počká na ráno.
   if (!vOkne(ted)) return { hracu: 0, tymu: 0, draftu: 0, mimoOkno: true };
 

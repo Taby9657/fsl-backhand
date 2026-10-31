@@ -1,4 +1,5 @@
 const express = require('express');
+const { zavrenoPriOdlozeni } = require('../utils/sezona');
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const { requireAuth, requireSupervisor, isSupervisorUser } = require('../middleware/auth');
@@ -218,7 +219,7 @@ router.get('/methods', requireAuth, (req, res) => {
 // ==================== STRIPE – HRÁČSKÁ LICENCE ====================
 
 // POST /payments/player-license – vytvoření platební relace (Stripe Checkout / Payment Intent)
-router.post('/player-license', requireAuth, async (req, res, next) => {
+router.post('/player-license', requireAuth, zavrenoPriOdlozeni, async (req, res, next) => {
   try {
     if (!assertStripe(res)) return;
     const player = await prisma.player.findUnique({
@@ -284,7 +285,7 @@ router.get('/packs', requireAuth, async (req, res, next) => {
 // Balíček vzniká rovnou, ale jako PENDING — kredit z něj hráč dostane teprve
 // ve chvíli, kdy platba doopravdy dorazí. Rozdělaná Checkout session hrát
 // nikoho nepustí.
-router.post('/pack', requireAuth, async (req, res, next) => {
+router.post('/pack', requireAuth, zavrenoPriOdlozeni, async (req, res, next) => {
   try {
     if (!assertStripe(res)) return;
     const definice = kredit.balicek(req.body.size);
@@ -381,7 +382,7 @@ router.post('/home-fee', requireAuth, (req, res) => {
 });
 
 // POST /payments/super-license – super licence hráče
-router.post('/super-license', requireAuth, async (req, res, next) => {
+router.post('/super-license', requireAuth, zavrenoPriOdlozeni, async (req, res, next) => {
   try {
     if (!assertStripe(res)) return;
     const player = await prisma.player.findUnique({
@@ -413,7 +414,7 @@ router.post('/super-license', requireAuth, async (req, res, next) => {
 });
 
 // POST /payments/team-registration – registrační poplatek týmu
-router.post('/team-registration', requireAuth, async (req, res, next) => {
+router.post('/team-registration', requireAuth, zavrenoPriOdlozeni, async (req, res, next) => {
   try {
     if (!assertStripe(res)) return;
     const managerTeamIds = (req.user.manager ?? []).map(m => m.teamId);
@@ -659,7 +660,7 @@ router.get('/cart', requireAuth, async (req, res, next) => {
 });
 
 // POST /payments/cart/items – vložení položky
-router.post('/cart/items', requireAuth, async (req, res, next) => {
+router.post('/cart/items', requireAuth, zavrenoPriOdlozeni, async (req, res, next) => {
   try {
     const sezona = await seasonSvc.currentSeason();
     if (!sezona) {
@@ -699,7 +700,7 @@ router.delete('/cart/items/:id', requireAuth, async (req, res, next) => {
 });
 
 // POST /payments/cart/checkout – zaplacení celého košíku kartou
-router.post('/cart/checkout', requireAuth, async (req, res, next) => {
+router.post('/cart/checkout', requireAuth, zavrenoPriOdlozeni, async (req, res, next) => {
   try {
     if (!assertStripe(res)) return;
 

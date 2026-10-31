@@ -1,4 +1,5 @@
 const express = require('express');
+const { zavrenoPriOdlozeni } = require('../utils/sezona');
 
 const { requireAuth, requireManager, optionalAuth, isSupervisorUser, mojeTymy } = require('../middleware/auth');
 const { createNotification } = require('./notifications');
@@ -135,7 +136,7 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
 });
 
 // POST /teams – registrace nového týmu (vedoucí)
-router.post('/', requireAuth, async (req, res, next) => {
+router.post('/', requireAuth, zavrenoPriOdlozeni, async (req, res, next) => {
   try {
     const { name, abbr, color, colorSecondary, venue, manager } = req.body;
 
@@ -614,7 +615,7 @@ router.put('/:id/roster/:playerId/slot', requireAuth, async (req, res, next) => 
 // Ověření kódu je veřejné — tajemstvím je samotný kód a stránka pozvánky
 // musí ukázat tým i tomu, kdo ještě není přihlášený. Připojení k týmu
 // přihlášení pořád vyžaduje (POST /players a POST /players/join).
-router.post('/join/:code', optionalAuth, async (req, res, next) => {
+router.post('/join/:code', optionalAuth, zavrenoPriOdlozeni, async (req, res, next) => {
   try {
     const invite = await prisma.inviteCode.findUnique({
       where: { code: req.params.code.toUpperCase() },

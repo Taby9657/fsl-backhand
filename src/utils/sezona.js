@@ -13,6 +13,23 @@
  * čte, že o něj nikdo nestojí, místo aby věděl, že se zatím nic dít nemá.
  */
 
+/**
+ * **Odložení 1. ročníku na sezónu 2027/28 — rozhodnuto 31. 10. 2026.**
+ *
+ * Haly se rezervovaly pozdě a na 2026/27 zbyly jen nevhodné termíny. Start je
+ * v září 2027, přihlášky se otevřou v dubnu 2027, zaplacené peníze se vrátily.
+ *
+ * Dokud platí, backend **nepřijímá nové přihlášky ani platby**
+ * (`zavrenoPriOdlozeni`), draft se neotevře a upomínky plateb se neposílají.
+ * Supervisor projde, aby šlo cokoli opravit ručně.
+ *
+ * Stejný příznak je na webu: `fsl-web/src/lib/sezona.ts` (`ODLOZENI.aktivni`).
+ * **V dubnu 2027 přepsat termíny na 2027/28 a tohle dát na `false`.**
+ */
+// `FSL_ODLOZENO=0` jen pro testy, které ověřují normální provoz registrace a plateb.
+const ODLOZENO = process.env.FSL_ODLOZENO !== '0';
+const ODLOZENI_TEXT = '1. ročník FSL startuje v září 2027, přihlášky otevřeme v dubnu 2027.';
+
 /** Poslední okamžik, kdy jde odeslat přihlášku. */
 const KONEC_PRIHLASEK = new Date('2026-11-01T23:59:59+01:00');
 
@@ -71,6 +88,7 @@ function den(d) {
 
 /** Vidí už vedoucí seznam volných hráčů? */
 function draftOtevren(ted = new Date()) {
+  if (ODLOZENO) return false;
   return ted.getTime() >= OTEVRENI_DRAFTU.getTime();
 }
 
@@ -82,10 +100,27 @@ function draftOtevren(ted = new Date()) {
  * musí umět složit soupisku a hráče k tomu potřebuje najít.
  */
 function sezonaZacala(ted = new Date()) {
+  if (ODLOZENO) return false;
   return ted.getTime() >= START_SEZONY.getTime();
 }
 
+/**
+ * Middleware: při odložení ročníku odmítne novou přihlášku nebo platbu.
+ * `410 Gone` — staré buildy appky i web dostanou srozumitelnou hlášku.
+ */
+function zavrenoPriOdlozeni(req, res, next) {
+  if (!ODLOZENO) return next();
+  // Líný require — auth.js si sezona.js nenatahuje, cyklus nehrozí, ale ať je to jisté.
+  const { isSupervisorUser } = require('../middleware/auth');
+  if (req.user && isSupervisorUser(req.user)) return next();
+  return res.status(410).json({
+    error: `Registrace i platby na sezónu 2026/27 jsou uzavřené. ${ODLOZENI_TEXT}`,
+    code: 'SEZONA_ODLOZENA',
+  });
+}
+
 module.exports = {
+  ODLOZENO, ODLOZENI_TEXT, zavrenoPriOdlozeni,
   KONEC_PRIHLASEK, OTEVRENI_DRAFTU, START_SEZONY, LOS,
   NAZEV, MESTO, HRACI_DNY, HRACI_CAS,
   den, draftOtevren, sezonaZacala,

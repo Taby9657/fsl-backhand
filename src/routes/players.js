@@ -1,4 +1,5 @@
 const express = require('express');
+const { zavrenoPriOdlozeni } = require('../utils/sezona');
 
 const { requireAuth, optionalAuth, isSupervisorUser, mojeTymy } = require('../middleware/auth');
 const { uploadPhoto } = require('../utils/fileUpload');
@@ -228,7 +229,7 @@ router.get('/:id', optionalAuth, async (req, res, next) => {
 
 // POST /players – registrace hráče do týmu
 // Vyžaduje: jméno, příjmení, číslo dresu, pozici, teamId
-router.post('/', requireAuth, async (req, res, next) => {
+router.post('/', requireAuth, zavrenoPriOdlozeni, async (req, res, next) => {
   try {
     const {
       firstName, lastName, jersey, position, birthdate, phone, teamId, inviteCode,
@@ -412,7 +413,7 @@ router.post('/', requireAuth, async (req, res, next) => {
 // POST /players/join – hráč, který tým nemá, se připojí pozvánkovým kódem.
 // Bez tohohle endpointu se hráč po opuštění týmu dostal jinam jen draftem:
 // nový profil mu brání unikátní userId a PUT /players/:id teamId nemění.
-router.post('/join', requireAuth, async (req, res, next) => {
+router.post('/join', requireAuth, zavrenoPriOdlozeni, async (req, res, next) => {
   try {
     const { inviteCode, jersey } = req.body;
     if (!inviteCode) return res.status(400).json({ error: 'Chybí pozvánkový kód' });

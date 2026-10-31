@@ -592,8 +592,9 @@ function nabidkaTymuMail({
     + 'Zabere to pár minut.';
   const nahradni = 'Kdyby ti termín nevyšel nebo ti víc sedí jiný čas, stačí '
     + 'odepsat na tenhle e-mail a zavoláme, kdy ti to vyhovuje.';
-  const patka = 'Sezóna 2026/27 startuje 9. 11., hraje se pondělí až čtvrtek '
-    + 'večer v Praze.';
+  const patka = sezona.ODLOZENO
+    ? sezona.ODLOZENI_TEXT
+    : 'Sezóna 2026/27 startuje 9. 11., hraje se pondělí až čtvrtek večer v Praze.';
 
   const predmet = brankar
     ? 'Máme pro tebe tým — a brankáře sháníme nejvíc'

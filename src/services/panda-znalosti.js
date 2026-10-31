@@ -132,9 +132,10 @@ const ZNALOSTI = [
     klicova: ['termin', 'deadline', 'rozlosov', 'prihlask', 'prihlasit se do', 'zacina', 'zacne'],
     slova: ['kdy', 'dokdy', 'los|', 'sezon', 'hrat', 'hraje', 'start'],
     zdroj: 'Termíny sezóny — fslleague.cz',
-    odpoved: () =>
-      `Přihlášky běží do ${den(sezona.KONEC_PRIHLASEK)}, hned nato je ${den(sezona.LOS)} los `
-      + `a první zápasy se hrají od ${den(sezona.START_SEZONY)}.`,
+    odpoved: () => (sezona.ODLOZENO
+      ? `Start ligy jsme odložili: ${sezona.ODLOZENI_TEXT} Kdo zaplatil, dostal peníze zpátky.`
+      : `Přihlášky běží do ${den(sezona.KONEC_PRIHLASEK)}, hned nato je ${den(sezona.LOS)} los `
+        + `a první zápasy se hrají od ${den(sezona.START_SEZONY)}.`),
   },
   {
     klic: 'kde-se-hraje',

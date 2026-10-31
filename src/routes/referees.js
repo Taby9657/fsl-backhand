@@ -1,4 +1,5 @@
 const express = require('express');
+const { zavrenoPriOdlozeni } = require('../utils/sezona');
 
 const { requireAuth, requireSupervisor, isSupervisorUser } = require('../middleware/auth');
 const { uploadPhoto } = require('../utils/fileUpload');
@@ -59,7 +60,7 @@ router.get('/:id', requireAuth, async (req, res, next) => {
 });
 
 // POST /referees – onboarding nového rozhodčího (krok 1+2)
-router.post('/', requireAuth, async (req, res, next) => {
+router.post('/', requireAuth, zavrenoPriOdlozeni, async (req, res, next) => {
   try {
     const {
       firstName, lastName, phone, birthdate,
