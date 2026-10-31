@@ -420,9 +420,17 @@ async function runStatusNaboru() {
 
 // Dvě minuty po startu, ať se to nepotká s migracemi a prvním připojením
 // k databázi. Zmeškaný slot se tím neztratí — okno je celá hodina.
-setTimeout(() => {
-  runStatusNaboru();
-  setInterval(runStatusNaboru, STATUS_INTERVAL_MS);
-}, 2 * 60 * 1000);
+//
+// VYPNUTO 31. 10. 2026: 1. ročník je odložený na 2027/28 a nábor skončil,
+// status jen zahlcoval schránku info@fslleague.cz. Znovu zapnout jde bez
+// změny kódu proměnnou STATUS_NABORU=zapnuto na Railway.
+if (process.env.STATUS_NABORU === 'zapnuto') {
+  setTimeout(() => {
+    runStatusNaboru();
+    setInterval(runStatusNaboru, STATUS_INTERVAL_MS);
+  }, 2 * 60 * 1000);
+} else {
+  console.log('[Status] Status náboru vypnutý (STATUS_NABORU != zapnuto).');
+}
 
 start();
